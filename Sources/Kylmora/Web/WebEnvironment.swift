@@ -112,12 +112,18 @@ final class WebEnvironment {
 
         // The chosen filter lists, applied inside WebKit.
         ContentBlocker.shared.attach(configuration.userContentController)
+        // Automatic cookie banner rejection for common CMPs.
+        CookieConsentAutoReject.shared.attach(configuration.userContentController)
+        // Interactive element picker and zapper message handler.
+        ElementPickerCoordinator.shared.attach(configuration.userContentController)
         // JSON documents, made readable.
         JSONFormatting.shared.attach(configuration.userContentController)
         // The per-site settings that live in the page.
         SitePolicy.shared.attach(configuration.userContentController)
         // Save and fill logins from the macOS Keychain.
         PasswordAutofill.shared.attach(configuration.userContentController)
+        // Site Boosts (custom CSS, JS, and Universal Dark Mode).
+        BoostCoordinator.shared.attach(configuration.userContentController)
         // The space's default fonts.
         WebFontStyling.install(fonts(for: identity), in: configuration.userContentController)
 

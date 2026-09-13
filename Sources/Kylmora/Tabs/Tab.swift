@@ -73,11 +73,17 @@ final class Tab: Identifiable {
     ///
     /// Because archiving only ever takes already-suspended tabs, a tab kept
     /// awake is also never archived: one switch, both promises.
-    private(set) var keepsAwake = false
+    private var explicitlyKeepsAwake = false
+    var keepsAwake: Bool {
+        explicitlyKeepsAwake || !SiteSettings.shared.allowsSuspension(for: url)
+    }
 
     /// Never archive this tab. It may still suspend -- giving its memory back
     /// costs the user nothing -- but it does not leave the sidebar.
-    private(set) var keepsInSidebar = false
+    private var explicitlyKeepsInSidebar = false
+    var keepsInSidebar: Bool {
+        explicitlyKeepsInSidebar || !SiteSettings.shared.allowsSuspension(for: url)
+    }
 
     /// Set when the current navigation failed, cleared when a new one starts.
     private(set) var failure: NavigationFailure?
@@ -207,15 +213,15 @@ final class Tab: Identifiable {
     /// to the caller: the flag says what happens from now on, and reloading a
     /// page the user cannot see is not what they asked for.
     func setKeepsAwake(_ keeps: Bool) {
-        guard keeps != keepsAwake else { return }
-        keepsAwake = keeps
+        guard keeps != explicitlyKeepsAwake else { return }
+        explicitlyKeepsAwake = keeps
         didChange.send()
     }
 
     /// Set from the sidebar's menu.
     func setKeepsInSidebar(_ keeps: Bool) {
-        guard keeps != keepsInSidebar else { return }
-        keepsInSidebar = keeps
+        guard keeps != explicitlyKeepsInSidebar else { return }
+        explicitlyKeepsInSidebar = keeps
         didChange.send()
     }
 
@@ -274,8 +280,8 @@ final class Tab: Identifiable {
         // now", which is the safe direction to be wrong in: a tab is never
         // archived for idleness it accrued while nobody was measuring.
         self.lastActiveAt = snapshot.lastActiveAt ?? .now
-        self.keepsAwake = snapshot.keepsAwake ?? false
-        self.keepsInSidebar = snapshot.keepsInSidebar ?? false
+        self.explicitlyKeepsAwake = snapshot.keepsAwake ?? false
+        self.explicitlyKeepsInSidebar = snapshot.keepsInSidebar ?? false
         TabNameStore.shared.restore(snapshot.customName, for: id)
     }
 
@@ -291,8 +297,8 @@ final class Tab: Identifiable {
             lastActiveAt: lastActiveAt,
             // Written only when set, so a session file does not grow a pair of
             // `false`s on every tab the user never touched.
-            keepsAwake: keepsAwake ? true : nil,
-            keepsInSidebar: keepsInSidebar ? true : nil
+            keepsAwake: explicitlyKeepsAwake ? true : nil,
+            keepsInSidebar: explicitlyKeepsInSidebar ? true : nil
         )
     }
 
@@ -548,6 +554,7 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
 
     @MainActor
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        BoostCoordinator.shared.apply(to: webView)
         tab?.reportVisit()
     }
 
@@ -609,6 +616,7 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
             webView.customUserAgent = sites.userAgent(for: url)
             ContentBlocker.shared.applySiteChoice(for: url, to: webView.configuration.userContentController)
             SitePolicy.shared.apply(for: url, to: webView.configuration.userContentController)
+            BoostCoordinator.shared.apply(for: url, to: webView.configuration.userContentController)
         }
         if navigationAction.shouldPerformDownload {
             guard sites.allowsDownloads(for: url) else {

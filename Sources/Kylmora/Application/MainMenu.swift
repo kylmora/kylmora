@@ -23,6 +23,7 @@ enum MainMenu {
         root.addItem(dynamicMenuItem(titled: "Bookmarks", delegate: bookmarks))
         root.addItem(dynamicMenuItem(titled: "History", delegate: history))
         root.addItem(windowMenuItem())
+        ShortcutManager.shared.apply(to: root)
         return root
     }
 
@@ -80,10 +81,26 @@ enum MainMenu {
     private static func fileMenuItem() -> NSMenuItem {
         submenu("File", [
             item("New Tab", #selector(BrowserWindowController.newTab(_:)), "t"),
+            item("New Little Arc Window\u{2026}", #selector(BrowserWindowController.openLittleArcWindow(_:)), "n",
+                 modifiers: [.command, .option]),
+            item("Pin / Unpin Tab", #selector(BrowserWindowController.togglePinActiveTab(_:)), "p",
+                 modifiers: [.command, .shift]),
+            item("Duplicate Tab", #selector(BrowserWindowController.duplicateActiveTab(_:)), "d",
+                 modifiers: [.command, .shift]),
             item("Reopen Closed Tab", #selector(BrowserWindowController.reopenClosedTab(_:)), "t",
                  modifiers: [.command, .shift]),
             item("Close Tab", #selector(BrowserWindowController.closeTab(_:)), "w"),
+            item("Close All Tabs in Current Space", #selector(BrowserWindowController.closeAllTabsInCurrentSpace(_:)), "w",
+                 modifiers: [.command, .shift, .option]),
             .separator(),
+            item("Install Site as Web App\u{2026}", #selector(BrowserWindowController.installCurrentSiteAsWebApp(_:))),
+            item("Open in Standalone Window", #selector(BrowserWindowController.openCurrentSiteAsStandaloneWebApp(_:))),
+            .separator(),
+            item("Sync Now", #selector(AppDelegate.syncNow(_:)), "s", modifiers: [.command, .option]),
+            item("Sync Settings\u{2026}", #selector(AppDelegate.showSyncSettings(_:))),
+            item("Export Sidebar & Data\u{2026}", #selector(AppDelegate.exportBackup(_:))),
+            item("Import Sidebar & Data\u{2026}", #selector(AppDelegate.importBackup(_:))),
+            item("Import From Arc Sidebar\u{2026}", #selector(AppDelegate.importArcSidebar(_:))),
             item("Import From Browser\u{2026}", #selector(AppDelegate.importFromBrowser(_:))),
             .separator(),
             item("Close Window", #selector(NSWindow.performClose(_:)), "w", modifiers: [.command, .shift])
@@ -97,6 +114,8 @@ enum MainMenu {
             .separator(),
             item("Cut", #selector(NSText.cut(_:)), "x"),
             item("Copy", #selector(NSText.copy(_:)), "c"),
+            item("Copy URL", #selector(BrowserWindowController.copyCurrentURL(_:)), "c",
+                 modifiers: [.command, .shift]),
             item("Paste", #selector(NSText.paste(_:)), "v"),
             item("Select All", #selector(NSText.selectAll(_:)), "a"),
             .separator(),
@@ -156,7 +175,8 @@ enum MainMenu {
         var items: [NSMenuItem] = [
             appearanceMenuItem(),
             .separator(),
-            item("Open Command Bar", #selector(BrowserWindowController.openCommandBar(_:)), "l"),
+            item("Command Palette\u{2026}", #selector(BrowserWindowController.openCommandBar(_:)), "k"),
+            item("Open Location\u{2026}", #selector(BrowserWindowController.openLocation(_:)), "l"),
             item("Reload Page", #selector(BrowserWindowController.reloadPage(_:)), "r"),
             item("Stop Loading", #selector(BrowserWindowController.stopLoading(_:)), "."),
             .separator(),
@@ -212,7 +232,20 @@ enum MainMenu {
                  #selector(BrowserWindowController.toggleCompactSidebarPin(_:)), "s",
                  modifiers: [.command, .control, .option]),
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f",
-                 modifiers: [.command, .control])
+                 modifiers: [.command, .control]),
+            .separator(),
+            item("Block Element on Page\u{2026}",
+                 #selector(BrowserWindowController.startElementPickerFromMenu(_:)), "b",
+                 modifiers: [.command, .option]),
+            item("Toggle Content Blocking on This Site",
+                 #selector(BrowserWindowController.toggleContentBlockingFromMenu(_:)), ""),
+            .separator(),
+            item("Boost This Site\u{2026}",
+                 #selector(BrowserWindowController.openBoostEditorFromMenu(_:)), "e",
+                 modifiers: [.command, .option]),
+            item("Toggle Universal Dark Mode",
+                 #selector(BrowserWindowController.toggleDarkModeFromMenu(_:)), "d",
+                 modifiers: [.command, .option])
         ]
 
         return submenu("View", items)

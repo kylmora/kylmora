@@ -14,12 +14,14 @@ final class SettingsWindowController: NSWindowController {
         case general
         case importData
         case browsing
+        case shortcuts
         case passwords
         case privacy
         case search
         case spaces
         case extensions
         case websites
+        case sync
         case advanced
         case about
 
@@ -28,12 +30,14 @@ final class SettingsWindowController: NSWindowController {
             case .general: return "General"
             case .importData: return "Import"
             case .browsing: return "Browsing"
+            case .shortcuts: return "Shortcuts"
             case .passwords: return "Passwords"
             case .privacy: return "Privacy"
             case .search: return "Search"
             case .spaces: return "Spaces"
             case .extensions: return "Extensions"
             case .websites: return "Websites"
+            case .sync: return "Sync"
             case .advanced: return "Advanced"
             case .about: return "About"
             }
@@ -44,12 +48,14 @@ final class SettingsWindowController: NSWindowController {
             case .general: return "gearshape"
             case .importData: return "square.and.arrow.down"
             case .browsing: return "menubar.rectangle"
+            case .shortcuts: return "keyboard"
             case .passwords: return "key"
             case .privacy: return "hand.raised"
             case .search: return "magnifyingglass"
             case .spaces: return "square.stack"
             case .extensions: return "puzzlepiece.extension"
             case .websites: return "globe"
+            case .sync: return "arrow.triangle.2.circlepath"
             case .advanced: return "slider.horizontal.3"
             case .about: return "info.circle"
             }
@@ -65,19 +71,21 @@ final class SettingsWindowController: NSWindowController {
         }
     }
 
-    static let windowWidth: CGFloat = 720
+    static let windowWidth: CGFloat = 860
     private var widthPinned: Set<Pane> = []
     private var keyboardParking: [Pane: NSView] = [:]
 
     private let session: BrowserSession
+    private let syncCoordinator: SyncCoordinator?
     private let settings: Settings
     private var panes: [Pane: NSViewController] = [:]
     private var shown: Pane?
     /// Where "Set to Current Page" reads from.
     var currentPageURL: (() -> URL?)?
 
-    init(session: BrowserSession, settings: Settings = .shared) {
+    init(session: BrowserSession, syncCoordinator: SyncCoordinator? = nil, settings: Settings = .shared) {
         self.session = session
+        self.syncCoordinator = syncCoordinator
         self.settings = settings
 
         let window = NSWindow(
@@ -208,6 +216,7 @@ final class SettingsWindowController: NSWindowController {
             return general
         case .importData: return ImportSettingsViewController(session: session)
         case .browsing: return BrowsingSettingsViewController(settings: settings, session: session)
+        case .shortcuts: return ShortcutsSettingsViewController()
         case .passwords: return PasswordsSettingsViewController(settings: settings, session: session)
         case .privacy: return PrivacySettingsViewController(settings: settings, session: session)
         case .search: return SearchSettingsViewController(settings: settings)
@@ -217,6 +226,7 @@ final class SettingsWindowController: NSWindowController {
             let websites = WebsitesSettingsViewController()
             websites.currentPageURL = { [weak self] in self?.currentPageURL?() }
             return websites
+        case .sync: return SyncSettingsViewController(coordinator: syncCoordinator, settings: settings)
         case .advanced: return AdvancedSettingsViewController(settings: settings)
         case .about: return AboutSettingsViewController()
         }

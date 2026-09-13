@@ -30,6 +30,7 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
     case compatibilityMode
     case externalApps
     case pictureInPicture
+    case tabSuspension
 
     struct Option: Equatable, Sendable, Identifiable {
         let id: String
@@ -58,6 +59,7 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .compatibilityMode: return "Compatibility Mode"
         case .externalApps: return "External Apps"
         case .pictureInPicture: return "Picture in Picture"
+        case .tabSuspension: return "Tab Sleeping & Archiving"
         }
     }
 
@@ -83,6 +85,7 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .compatibilityMode: return "iphone.and.arrow.forward"
         case .externalApps: return "arrow.up.forward.app.fill"
         case .pictureInPicture: return "pip.fill"
+        case .tabSuspension: return "moon.stars.fill"
         }
     }
 
@@ -96,6 +99,7 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .cookies: return .systemBrown
         case .javaScript: return .systemYellow
         case .compatibilityMode: return .systemTeal
+        case .tabSuspension: return .systemPurple
         }
     }
 
@@ -122,6 +126,7 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .compatibilityMode: return "Ask for the desktop or mobile site on the websites below:"
         case .externalApps: return "Allow or deny opening other apps from the websites below:"
         case .pictureInPicture: return "Allow or deny picture in picture on the websites below:"
+        case .tabSuspension: return "Allow or prevent tab sleeping and auto-archiving on the websites below:"
         }
     }
 
@@ -159,6 +164,11 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
             ]
         case .compatibilityMode: return [Option(id: "desktop", title: "Desktop"), Option(id: "mobile", title: "Mobile")]
         case .pictureInPicture: return [Option(id: "allow", title: "Allow"), Option(id: "deny", title: "Deny")]
+        case .tabSuspension:
+            return [
+                Option(id: "allow", title: "Allow Sleeping & Archiving"),
+                Option(id: "never", title: "Never Sleep or Archive (Keep Awake)")
+            ]
         }
     }
 
@@ -180,6 +190,7 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .userAgent: return "default"
         case .compatibilityMode: return "desktop"
         case .pictureInPicture: return "allow"
+        case .tabSuspension: return "allow"
         }
     }
 
@@ -252,6 +263,10 @@ struct SiteSettingsState: Codable, Equatable, Sendable {
 @MainActor
 final class SiteSettings {
     static let shared = SiteSettings()
+
+    static func normalise(_ text: String) -> String {
+        SiteSettingsState.normalise(text)
+    }
 
     private(set) var state: SiteSettingsState
     private let file: URL
@@ -348,6 +363,7 @@ final class SiteSettings {
     func blocksContent(for url: URL?) -> Bool { resolve(.contentBlockers, for: url) == "on" }
     func allowsJavaScript(for url: URL?) -> Bool { resolve(.javaScript, for: url) == "on" }
     func prefersMobile(for url: URL?) -> Bool { resolve(.compatibilityMode, for: url) == "mobile" }
+    func allowsSuspension(for url: URL?) -> Bool { resolve(.tabSuspension, for: url) != "never" }
 
     /// The content rules the per-site cookie and font choices become: a
     /// small rule list compiled beside the filter lists.

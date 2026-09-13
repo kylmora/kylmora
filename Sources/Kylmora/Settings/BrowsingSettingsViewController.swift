@@ -11,7 +11,7 @@ final class BrowsingSettingsViewController: NSViewController {
     private let bookmarksInNewTabs = NSButton(checkboxWithTitle: "Open bookmarks in new tabs", target: nil, action: nil)
     private let favourites = NSButton(checkboxWithTitle: "Use \u{2325}\u{2318}-1 to \u{2325}\u{2318}-9 to open pinned sites", target: nil, action: nil)
     private let wraps = NSButton(checkboxWithTitle: "Wrap around when switching spaces", target: nil, action: nil)
-    private let glance = NSButton(checkboxWithTitle: "Open links from other apps in a Glance (Shift for a tab)", target: nil, action: nil)
+    private let externalLinks = NSPopUpButton()
     private let compactButtons = NSButton(checkboxWithTitle: "Show standard window buttons in Compact Mode", target: nil, action: nil)
     private let pictureInPicture = NSButton(checkboxWithTitle: "Confirm closing tabs when Picture in Picture video is playing", target: nil, action: nil)
     private let minimumFont = NSButton(checkboxWithTitle: "Minimum font size", target: nil, action: nil)
@@ -38,7 +38,7 @@ final class BrowsingSettingsViewController: NSViewController {
     }
 
     private func buildLayout(in form: SettingsForm) {
-        for box in [https, fullAddress, unicodeDomains, bookmarksInNewTabs, favourites, wraps, glance,
+        for box in [https, fullAddress, unicodeDomains, bookmarksInNewTabs, favourites, wraps,
                     compactButtons, pictureInPicture, minimumFont, tabFocus, escape] {
             box.target = self
             box.action = #selector(changed)
@@ -53,10 +53,15 @@ final class BrowsingSettingsViewController: NSViewController {
         form.addRow("URL display", display)
         form.addNote("Show domains with special characters (e.g. na\u{00ef}ve.com) instead of encoded format. May make some spoofed domains harder to recognise.")
 
+        externalLinks.addItems(withTitles: ExternalLinkPresentation.allCases.map(\.title))
+        externalLinks.target = self
+        externalLinks.action = #selector(changed)
+
         form.addRow("Bookmarks", bookmarksInNewTabs)
         form.addRow("Navigation", favourites)
         form.addRow("Space switcher", wraps)
-        form.addRow("Link Preview", glance)
+        form.addRow("Links from other apps", SettingsForm.fill(externalLinks))
+        form.addNote("A Little Arc window opens where you are, so a link from another app does not pull you to the desktop the browser is on. A Glance shows the page over the one you are reading. Hold Shift as the link arrives to open a tab instead.")
         form.addRow("Compact Mode", compactButtons)
         form.addRow("Picture in Picture", pictureInPicture)
 
@@ -87,7 +92,7 @@ final class BrowsingSettingsViewController: NSViewController {
         bookmarksInNewTabs.state = settings.opensBookmarksInNewTabs ? .on : .off
         favourites.state = settings.favouriteShortcutsEnabled ? .on : .off
         wraps.state = settings.spaceSwitchWraps ? .on : .off
-        glance.state = settings.opensExternalLinksInGlance ? .on : .off
+        externalLinks.selectItem(withTitle: settings.externalLinkPresentation.title)
         compactButtons.state = settings.compactModeShowsWindowButtons ? .on : .off
         pictureInPicture.state = settings.confirmsClosingPictureInPicture ? .on : .off
         minimumFont.state = settings.minimumFontSizeEnabled ? .on : .off
@@ -106,7 +111,9 @@ final class BrowsingSettingsViewController: NSViewController {
         settings.opensBookmarksInNewTabs = bookmarksInNewTabs.state == .on
         settings.favouriteShortcutsEnabled = favourites.state == .on
         settings.spaceSwitchWraps = wraps.state == .on
-        settings.opensExternalLinksInGlance = glance.state == .on
+        let presentations = ExternalLinkPresentation.allCases
+        guard presentations.indices.contains(externalLinks.indexOfSelectedItem) else { return }
+        settings.externalLinkPresentation = presentations[externalLinks.indexOfSelectedItem]
         settings.compactModeShowsWindowButtons = compactButtons.state == .on
         settings.confirmsClosingPictureInPicture = pictureInPicture.state == .on
         settings.minimumFontSizeEnabled = minimumFont.state == .on

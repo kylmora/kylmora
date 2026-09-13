@@ -124,13 +124,24 @@ final class Space: Identifiable {
 
     /// Sites pinned to the tile strip at the top of the sidebar.
     private(set) var pinnedSites: [PinnedSite] = []
+    /// Per-space auto-archive delay in hours, or nil to follow global preferences.
+    /// Setting to 0 disables auto-archiving for this space.
+    var archiveHours: Int?
 
-    init(name: String, identity: Identity, theme: SpaceTheme = .default, border: WindowBorder = .none, look: SpaceLook = SpaceLook()) {
+    init(
+        name: String,
+        identity: Identity,
+        theme: SpaceTheme = .default,
+        border: WindowBorder = .none,
+        look: SpaceLook = SpaceLook(),
+        archiveHours: Int? = nil
+    ) {
         self.name = name
         self.identity = identity
         self.theme = theme
         self.border = border
         self.look = look
+        self.archiveHours = archiveHours
     }
 
     var activeTab: Tab? {

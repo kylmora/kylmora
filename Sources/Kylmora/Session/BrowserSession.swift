@@ -330,6 +330,33 @@ final class BrowserSession {
         return tab
     }
 
+    /// Adopts the page a Little Arc window was showing, as a tab of the space
+    /// the user kept it in.
+    ///
+    /// The live web view is adopted only when the destination is the space it
+    /// was loaded in. Anywhere else the page opens fresh, because a web view is
+    /// bound to a data store when it is created: carrying one across spaces
+    /// would put one space's cookies on another space's tab, which is exactly
+    /// what spaces exist to prevent. So a page kept in a different space loads
+    /// again there, signed in as that space -- which is what "move this to
+    /// Personal" has to mean.
+    @discardableResult
+    func adoptLittleArcPage(
+        _ webView: WKWebView,
+        loadedAs identity: Space.Identity,
+        url: URL,
+        into space: Space
+    ) -> Tab {
+        let tab = space.identity == identity
+            ? Tab(adopting: webView, identity: identity)
+            : Tab(url: url, identity: space.identity)
+        insert(tab, into: space, at: space.tabs.count, select: true)
+        // Kept means the page is in the sidebar now, so the user is shown it:
+        // the little window is gone and this is where the page went.
+        if space.id != activeSpaceID { selectSpace(space) }
+        return tab
+    }
+
     /// Whether an address is one of the active space's pinned sites. Glance's
     /// off-site rule asks this; it ships switched off.
     func isPinnedSite(_ url: URL) -> Bool {
@@ -356,6 +383,59 @@ final class BrowserSession {
         let space = activeSpace
         guard let index = space.index(of: tab) else { return }
         for other in space.tabs[(index + 1)...] { closeTab(other) }
+    }
+
+    /// Closes a collection of tabs in batch.
+    func closeTabs(_ tabsToClose: [Tab]) {
+        for tab in tabsToClose {
+            closeTab(tab)
+        }
+    }
+
+    /// Closes all unpinned tabs in the given space.
+    func closeAllTabs(in space: Space) {
+        let tabs = space.tabs
+        for tab in tabs {
+            closeTab(tab)
+        }
+    }
+
+    /// Moves a collection of tabs to another space in batch.
+    func moveTabs(_ tabsToMove: [Tab], toSpace space: Space) {
+        for tab in tabsToMove {
+            move(tab, toSpace: space)
+        }
+    }
+
+    /// Reloads a collection of tabs in batch.
+    func reloadTabs(_ tabsToReload: [Tab]) {
+        for tab in tabsToReload {
+            tab.reload()
+        }
+    }
+
+    /// Duplicates a collection of tabs in batch.
+    @discardableResult
+    func duplicateTabs(_ tabsToDuplicate: [Tab]) -> [Tab] {
+        tabsToDuplicate.compactMap { duplicate($0) }
+    }
+
+    /// Pins a collection of tabs in batch.
+    func pinTabs(_ tabsToPin: [Tab]) {
+        for tab in tabsToPin {
+            if !isPinned(tab) {
+                pin(tab)
+            }
+        }
+    }
+
+    /// Unpins a collection of tabs in batch.
+    func unpinTabs(_ tabsToUnpin: [Tab]) {
+        for tab in tabsToUnpin {
+            if isPinned(tab) {
+                unpin(tab)
+            }
+        }
     }
 
     /// Takes a tab out of its space and out of the window, tearing its page
@@ -789,6 +869,13 @@ final class BrowserSession {
         scheduleSave()
     }
 
+    /// Unpins a tab if it was pinned as a tile shortcut.
+    func unpin(_ tab: Tab) {
+        if let site = activeSpace.pinnedSites.first(where: { $0.id == tab.pinnedSiteID || $0.matches(tab.url) }) {
+            removePinnedSite(site)
+        }
+    }
+
     func removePinnedSite(_ site: PinnedSite) {
         // The tab outlives the shortcut and rejoins the list, rather than
         // disappearing with a tile the user only meant to unpin.
@@ -1217,6 +1304,7 @@ final class BrowserSession {
                     pinnedSites: space.pinnedSites.map {
                         SessionSnapshot.Pinned(id: $0.id, url: $0.url, title: $0.title)
                     },
+                    archiveHours: space.archiveHours,
                     // Written in the order archived, so the list restores the
                     // way it was built; the reading order is applied on the way
                     // out, in `archivedTabs(in:)`.
@@ -1238,7 +1326,7 @@ final class BrowserSession {
     /// that shared it starts signed out with a store of its own. A space whose
     /// profile was private or is missing takes the default store if no space
     /// has it yet, which is where that space's pages were loading from before.
-    private static func spaces(from snapshot: SessionSnapshot) -> [Space]? {
+    static func spaces(from snapshot: SessionSnapshot) -> [Space]? {
         let legacyProfiles = snapshot.profiles ?? []
         var claimed: Set<Space.Identity> = []
 
@@ -1259,7 +1347,8 @@ final class BrowserSession {
                 identity: identity,
                 theme: SpaceTheme(storedValue: stored.theme ?? legacyTheme),
                 border: stored.border ?? .none,
-                look: stored.look ?? SpaceLook()
+                look: stored.look ?? SpaceLook(),
+                archiveHours: stored.archiveHours
             )
             WebEnvironment.shared.setFonts(space.look.fonts, for: space.identity)
             let groups = (stored.groups ?? []).map {
@@ -1304,6 +1393,91 @@ final class BrowserSession {
         }
         return spaces.isEmpty ? nil : spaces
     }
+
+    /// Merges spaces, folders, pinned sites, and tabs from a snapshot into the current session.
+    func mergeSnapshot(_ snapshot: SessionSnapshot, mergeTabs: Bool = true) {
+        guard let incomingSpaces = Self.spaces(from: snapshot), !incomingSpaces.isEmpty else { return }
+
+        for incomingSpace in incomingSpaces {
+            if let existing = spaces.first(where: {
+                $0.name.localizedCaseInsensitiveCompare(incomingSpace.name) == .orderedSame
+            }) {
+                // Merge groups
+                let existingGroupIDs = Set(existing.groups.map(\.id))
+                for group in incomingSpace.groups where !existingGroupIDs.contains(group.id) {
+                    existing.addGroup(group)
+                }
+
+                // Merge pinned sites
+                let existingPinnedURLs = Set(existing.pinnedSites.map(\.url.absoluteString))
+                for pin in incomingSpace.pinnedSites where !existingPinnedURLs.contains(pin.url.absoluteString) {
+                    existing.addPinnedSite(pin)
+                }
+
+                // Merge tabs if enabled
+                if mergeTabs {
+                    let existingURLs = Set(existing.tabs.map(\.url.absoluteString))
+                    for tab in incomingSpace.tabs where !existingURLs.contains(tab.url.absoluteString) {
+                        adopt(tab)
+                        existing.insert(tab, at: existing.tabs.count)
+                    }
+                }
+            } else {
+                for tab in incomingSpace.tabs { adopt(tab) }
+                if incomingSpace.tabs.isEmpty {
+                    let tab = Tab(url: settings.newTabURL(isPrivate: incomingSpace.isPrivate), identity: incomingSpace.identity)
+                    adopt(tab)
+                    incomingSpace.insert(tab, at: 0)
+                }
+                spaces.append(incomingSpace)
+            }
+        }
+
+        changes.send(.spaces)
+        changes.send(.tabs)
+        changes.send(.structure)
+        scheduleSave()
+    }
+
+    /// Replaces the session completely with the snapshot.
+    func replaceWithSnapshot(_ snapshot: SessionSnapshot) {
+        guard let newSpaces = Self.spaces(from: snapshot), !newSpaces.isEmpty else { return }
+
+        tabSubscriptions.removeAll()
+        self.spaces = newSpaces
+        let index = min(max(snapshot.activeSpaceIndex, 0), newSpaces.count - 1)
+        self.activeSpaceID = newSpaces[index].id
+
+        for space in newSpaces {
+            for tab in space.tabs { adopt(tab) }
+            if space.tabs.isEmpty {
+                let tab = Tab(url: settings.newTabURL(isPrivate: space.isPrivate), identity: space.identity)
+                adopt(tab)
+                space.insert(tab, at: 0)
+            }
+        }
+
+        changes.send(.spaces)
+        changes.send(.tabs)
+        changes.send(.activeTab)
+        changes.send(.structure)
+        scheduleSave()
+    }
+
+    /// Fetches all bookmarks asynchronously.
+    func allBookmarks() async -> [Bookmark] {
+        guard let database else { return bookmarks }
+        return (try? await database.bookmarks()) ?? bookmarks
+    }
+
+    /// Imports sync bookmarks into the database and reloads bookmarks.
+    func importSyncBookmarks(_ items: [SyncBookmark]) async {
+        guard let database, !items.isEmpty else { return }
+        let tuples = items.map { ($0.url, $0.title, $0.folder, $0.created) }
+        try? await database.importBookmarks(tuples)
+        loadBookmarks()
+    }
+
 
     // MARK: - Bookkeeping
 

@@ -63,6 +63,7 @@ struct SessionSnapshot: Codable, Equatable {
         /// Absent in sessions written before groups and pins existed.
         var groups: [Group]?
         var pinnedSites: [Pinned]?
+        var archiveHours: Int?
         /// Tabs auto-archived out of this space's sidebar. Held on the space
         /// rather than at the top level because a snapshot identifies spaces by
         /// position, so anything filed by space id would not survive a reorder.

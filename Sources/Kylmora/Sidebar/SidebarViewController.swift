@@ -25,6 +25,9 @@ final class SidebarViewController: NSViewController {
     /// `SidebarHeaderView`'s label button borrows.
     private let spaceMenuButton = NSPopUpButton(frame: .zero, pullsDown: true)
 
+    /// Table view displaying tabs and groups.
+    var tabListTableView: NSTableView { tableView }
+
     /// Told which space is in front, so the window can wash the strip beside
     /// the page card with its colour and draw its border as well. The sidebar
     /// is the only thing watching the session for this, and duplicating that
@@ -49,6 +52,14 @@ final class SidebarViewController: NSViewController {
     /// The space whose look the window should wear: the one in front, or
     /// the one being previewed by a drag.
     var shownSpaceForLook: Space { shownSpace }
+
+    /// All tabs currently selected in the sidebar table view (multi-selection).
+    var selectedTabs: [Tab] {
+        tableView.selectedRowIndexes.compactMap { index in
+            guard rows.indices.contains(index), case .tab(let tab, _, _) = rows[index] else { return nil }
+            return tab
+        }
+    }
 
     /// Stops the material showing the desktop through the window, for a
     /// space that wants full screen opaque. Blending within the window
@@ -303,7 +314,7 @@ final class SidebarViewController: NSViewController {
         tableView.style = .plain
         tableView.selectionHighlightStyle = .none
         tableView.allowsEmptySelection = true
-        tableView.allowsMultipleSelection = false
+        tableView.allowsMultipleSelection = true
         tableView.dataSource = self
         tableView.delegate = self
         // A secondary click on a tab row gets the tab's menu; anywhere else
@@ -919,7 +930,7 @@ final class SidebarViewController: NSViewController {
     private func syncActiveTab() {
         let space = shownSpace
         if let tab = space.activeTab, let index = row(of: tab) {
-            if tableView.selectedRow != index {
+            if !tableView.selectedRowIndexes.contains(index) {
                 tableView.selectRowIndexes([index], byExtendingSelection: false)
             }
             // Selection can move from a keyboard shortcut or a menu item, which
@@ -931,7 +942,7 @@ final class SidebarViewController: NSViewController {
         // Rows draw their own selection, so every visible one has to be told.
         for index in rows.indices {
             let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? TabRowView
-            cell?.isSelected = index == tableView.selectedRow
+            cell?.isSelected = tableView.selectedRowIndexes.contains(index)
         }
         // Which tile is active depends on the visible page, so it moves with it.
         refreshPinnedTiles()
@@ -1272,6 +1283,13 @@ final class SidebarViewController: NSViewController {
         compact.keyEquivalentModifierMask = [.command, .control]
         menu.addItem(compact)
 
+        menu.addItem(.separator())
+        let closeAll = NSMenuItem(title: "Close All Tabs in Space", action: #selector(closeAllTabsInSpaceFromMenu(_:)), keyEquivalent: "")
+        closeAll.target = self
+        closeAll.image = NSImage(systemSymbolName: "xmark.square", accessibilityDescription: nil)
+        closeAll.isEnabled = !shownSpace.tabs.isEmpty
+        menu.addItem(closeAll)
+
         return menu
     }
 
@@ -1343,6 +1361,7 @@ final class SidebarViewController: NSViewController {
         add("Close Other Tabs", #selector(closeOtherTabsFromMenu(_:)), enabled: space.tabs.count > 1)
         let isLast = space.index(of: tab).map { $0 == space.tabs.count - 1 } ?? true
         add("Close Tabs Below", #selector(closeTabsBelowFromMenu(_:)), enabled: !isLast)
+        add("Close All Tabs in Space", #selector(closeAllTabsInSpaceFromMenu(_:)), symbol: "xmark.square")
         return menu
     }
 
@@ -1586,6 +1605,136 @@ final class SidebarViewController: NSViewController {
         session.closeTabs(below: tab)
     }
 
+    /// Context menu presented when multiple tabs are selected in the sidebar.
+    func makeMultiTabMenu(for tabs: [Tab]) -> NSMenu {
+        let menu = NSMenu()
+        let space = session.activeSpace
+        menu.autoenablesItems = false
+
+        let count = tabs.count
+        let reloadItem = NSMenuItem(title: "Reload \(count) Tabs", action: #selector(reloadSelectedTabsFromMenu(_:)), keyEquivalent: "r")
+        reloadItem.target = self
+        reloadItem.representedObject = tabs
+        reloadItem.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
+        menu.addItem(reloadItem)
+
+        let duplicateItem = NSMenuItem(title: "Duplicate \(count) Tabs", action: #selector(duplicateSelectedTabsFromMenu(_:)), keyEquivalent: "")
+        duplicateItem.target = self
+        duplicateItem.representedObject = tabs
+        duplicateItem.image = NSImage(systemSymbolName: "plus.square.on.square", accessibilityDescription: nil)
+        menu.addItem(duplicateItem)
+
+        let allPinned = tabs.allSatisfy { session.isPinned($0) }
+        let pinTitle = allPinned ? "Unpin \(count) Tabs" : "Pin \(count) Tabs"
+        let pinItem = NSMenuItem(title: pinTitle, action: #selector(pinSelectedTabsFromMenu(_:)), keyEquivalent: "")
+        pinItem.target = self
+        pinItem.representedObject = tabs
+        pinItem.image = NSImage(systemSymbolName: "pin", accessibilityDescription: nil)
+        menu.addItem(pinItem)
+
+        menu.addItem(.separator())
+
+        let groupItem = NSMenuItem(title: "New Group with \(count) Tabs", action: #selector(newGroupWithSelectedTabsFromMenu(_:)), keyEquivalent: "")
+        groupItem.target = self
+        groupItem.representedObject = tabs
+        groupItem.image = NSImage(systemSymbolName: "folder.badge.plus", accessibilityDescription: nil)
+        menu.addItem(groupItem)
+
+        let moveItem = NSMenuItem(title: "Move to Space", action: nil, keyEquivalent: "")
+        moveItem.image = NSImage(systemSymbolName: "square.stack", accessibilityDescription: nil)
+        let spacesMenu = NSMenu()
+        for candidate in session.spaces where candidate !== space {
+            let item = NSMenuItem(title: candidate.name, action: #selector(moveSelectedTabsToSpaceFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = [tabs, candidate]
+            item.image = candidate.isPrivate
+                ? NSImage(systemSymbolName: "eyeglasses", accessibilityDescription: nil)
+                : candidate.dotImage()
+            spacesMenu.addItem(item)
+        }
+        moveItem.submenu = spacesMenu
+        moveItem.isEnabled = !spacesMenu.items.isEmpty
+        menu.addItem(moveItem)
+
+        menu.addItem(.separator())
+
+        let closeItem = NSMenuItem(title: "Close \(count) Tabs", action: #selector(closeSelectedTabsFromMenu(_:)), keyEquivalent: "w")
+        closeItem.target = self
+        closeItem.representedObject = tabs
+        closeItem.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)
+        menu.addItem(closeItem)
+
+        let otherCount = shownSpace.tabs.filter { candidate in
+            !tabs.contains(where: { $0.id == candidate.id }) && !session.isPinned(candidate)
+        }.count
+        let closeOthersItem = NSMenuItem(title: "Close Other Tabs", action: #selector(closeOtherThanSelectedTabsFromMenu(_:)), keyEquivalent: "")
+        closeOthersItem.target = self
+        closeOthersItem.representedObject = tabs
+        closeOthersItem.isEnabled = otherCount > 0
+        menu.addItem(closeOthersItem)
+
+        let closeAllItem = NSMenuItem(title: "Close All Tabs in Space", action: #selector(closeAllTabsInSpaceFromMenu(_:)), keyEquivalent: "")
+        closeAllItem.target = self
+        closeAllItem.image = NSImage(systemSymbolName: "xmark.square", accessibilityDescription: nil)
+        closeAllItem.isEnabled = !shownSpace.tabs.isEmpty
+        menu.addItem(closeAllItem)
+
+        return menu
+    }
+
+    @objc private func reloadSelectedTabsFromMenu(_ sender: Any?) {
+        guard let tabs = (sender as? NSMenuItem)?.representedObject as? [Tab] else { return }
+        session.reloadTabs(tabs)
+    }
+
+    @objc private func duplicateSelectedTabsFromMenu(_ sender: Any?) {
+        guard let tabs = (sender as? NSMenuItem)?.representedObject as? [Tab] else { return }
+        session.duplicateTabs(tabs)
+    }
+
+    @objc private func pinSelectedTabsFromMenu(_ sender: Any?) {
+        guard let tabs = (sender as? NSMenuItem)?.representedObject as? [Tab] else { return }
+        let allPinned = tabs.allSatisfy { session.isPinned($0) }
+        for tab in tabs {
+            if allPinned {
+                session.unpin(tab)
+            } else if !session.isPinned(tab) {
+                session.pin(tab)
+            }
+        }
+    }
+
+    @objc private func newGroupWithSelectedTabsFromMenu(_ sender: Any?) {
+        guard let tabs = (sender as? NSMenuItem)?.representedObject as? [Tab],
+              let name = prompt(title: "New Group", message: "Name this group.", initial: "")
+        else { return }
+        session.createGroup(named: name, containing: tabs)
+    }
+
+    @objc private func moveSelectedTabsToSpaceFromMenu(_ sender: Any?) {
+        guard let pair = (sender as? NSMenuItem)?.representedObject as? [Any],
+              pair.count == 2, let tabs = pair[0] as? [Tab], let space = pair[1] as? Space
+        else { return }
+        session.moveTabs(tabs, toSpace: space)
+    }
+
+    @objc private func closeSelectedTabsFromMenu(_ sender: Any?) {
+        guard let tabs = (sender as? NSMenuItem)?.representedObject as? [Tab] else { return }
+        session.closeTabs(tabs)
+    }
+
+    @objc private func closeOtherThanSelectedTabsFromMenu(_ sender: Any?) {
+        guard let tabs = (sender as? NSMenuItem)?.representedObject as? [Tab] else { return }
+        let toClose = shownSpace.tabs.filter { candidate in
+            !tabs.contains(where: { $0.id == candidate.id }) && !session.isPinned(candidate)
+        }
+        session.closeTabs(toClose)
+    }
+
+    @objc func closeAllTabsInSpaceFromMenu(_ sender: Any?) {
+        session.closeAllTabs(in: shownSpace)
+    }
+
     @objc private func newGroupFromMenu() {
         guard let name = prompt(title: "New Group", message: "Name this group.", initial: "") else { return }
         session.createGroup(named: name)
@@ -1643,7 +1792,10 @@ extension SidebarViewController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         let clicked = tableView.clickedRow
         let source: NSMenu
-        if rows.indices.contains(clicked), case .tab(let tab, _, _) = rows[clicked] {
+        let selection = selectedTabs
+        if selection.count > 1, clicked >= 0, tableView.selectedRowIndexes.contains(clicked) {
+            source = makeMultiTabMenu(for: selection)
+        } else if rows.indices.contains(clicked), case .tab(let tab, _, _) = rows[clicked] {
             source = makeTabMenu(for: tab)
         } else if rows.indices.contains(clicked), case .group(let group, _, _) = rows[clicked] {
             source = makeGroupMenu(for: group)
@@ -1715,7 +1867,7 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
                 return cell
             }()
             configure(cell, with: tab, depth: depth)
-            cell.isSelected = row == tableView.selectedRow
+            cell.isSelected = tableView.selectedRowIndexes.contains(row)
             // A row with plate slices sits on a group plate, where its pill
             // needs a matching trailing margin so it does not run flush into
             // the plate's rounded right edge.
@@ -1809,9 +1961,17 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        let row = tableView.selectedRow
-        guard rows.indices.contains(row), case .tab(let tab, _, _) = rows[row] else { return }
-        session.selectTab(tab)
+        let selectedIndexes = tableView.selectedRowIndexes
+        for index in rows.indices {
+            let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? TabRowView
+            cell?.isSelected = selectedIndexes.contains(index)
+        }
+        let targetRow = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
+        if rows.indices.contains(targetRow), case .tab(let tab, _, _) = rows[targetRow] {
+            if session.activeTab?.id != tab.id {
+                session.selectTab(tab)
+            }
+        }
     }
 
     // Drag reordering, using AppKit's own table-view drag machinery.
