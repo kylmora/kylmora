@@ -40,8 +40,13 @@ jobs:
 
       - name: Package the .dmg
         run: |
+          # Stage the app beside an /Applications alias so the mounted disk image
+          # shows the standard drag-to-Applications layout.
+          mkdir -p dmg
+          cp -R "build/Kylmora.app" "dmg/Kylmora.app"
+          ln -s /Applications "dmg/Applications"
           hdiutil create -volname "Kylmora" \
-            -srcfolder "build/Kylmora.app" \
+            -srcfolder "dmg" \
             -ov -format UDZO \
             "build/Kylmora.dmg"
 
