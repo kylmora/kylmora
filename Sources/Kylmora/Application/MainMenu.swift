@@ -23,6 +23,7 @@ enum MainMenu {
         root.addItem(dynamicMenuItem(titled: "Bookmarks", delegate: bookmarks))
         root.addItem(dynamicMenuItem(titled: "History", delegate: history))
         root.addItem(windowMenuItem())
+        ShortcutManager.shared.apply(to: root)
         return root
     }
 

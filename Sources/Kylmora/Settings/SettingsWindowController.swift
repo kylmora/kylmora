@@ -14,6 +14,7 @@ final class SettingsWindowController: NSWindowController {
         case general
         case importData
         case browsing
+        case shortcuts
         case passwords
         case privacy
         case search
@@ -29,6 +30,7 @@ final class SettingsWindowController: NSWindowController {
             case .general: return "General"
             case .importData: return "Import"
             case .browsing: return "Browsing"
+            case .shortcuts: return "Shortcuts"
             case .passwords: return "Passwords"
             case .privacy: return "Privacy"
             case .search: return "Search"
@@ -46,6 +48,7 @@ final class SettingsWindowController: NSWindowController {
             case .general: return "gearshape"
             case .importData: return "square.and.arrow.down"
             case .browsing: return "menubar.rectangle"
+            case .shortcuts: return "keyboard"
             case .passwords: return "key"
             case .privacy: return "hand.raised"
             case .search: return "magnifyingglass"
@@ -68,7 +71,7 @@ final class SettingsWindowController: NSWindowController {
         }
     }
 
-    static let windowWidth: CGFloat = 720
+    static let windowWidth: CGFloat = 860
     private var widthPinned: Set<Pane> = []
     private var keyboardParking: [Pane: NSView] = [:]
 
@@ -213,6 +216,7 @@ final class SettingsWindowController: NSWindowController {
             return general
         case .importData: return ImportSettingsViewController(session: session)
         case .browsing: return BrowsingSettingsViewController(settings: settings, session: session)
+        case .shortcuts: return ShortcutsSettingsViewController()
         case .passwords: return PasswordsSettingsViewController(settings: settings, session: session)
         case .privacy: return PrivacySettingsViewController(settings: settings, session: session)
         case .search: return SearchSettingsViewController(settings: settings)
