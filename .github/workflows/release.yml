@@ -14,7 +14,7 @@ jobs:
     name: Build & attach .dmg
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -46,7 +46,7 @@ jobs:
             "build/Kylmora-${GITHUB_REF_NAME}.dmg"
 
       - name: Publish the GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: build/Kylmora-*.dmg
           generate_release_notes: true

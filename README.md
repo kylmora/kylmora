@@ -9,6 +9,10 @@
 one window with Spaces inside it, and no bundled engine or third-party
 dependencies — the release build is around 1.2 MB.
 
+<p align="center">
+  <img src="assets/screenshot.png" alt="Kylmora's vertical sidebar with Spaces, pinned sites and tab groups" width="440">
+</p>
+
 [kylmora.com](https://kylmora.com)
 
 > **Status:** feature-complete for everyday browsing, and sandboxed. Downloads,
