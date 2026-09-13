@@ -1,0 +1,9 @@
+.build/
+.build-*/
+build/
+.swiftpm/
+.DS_Store
+*.xcuserdatad
+
+# Local-only working files, not published.
+_local/

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>Kylmora</string>
+	<key>NSCameraUsageDescription</key>
+	<string>A website is asking to use the camera. Your website settings decide which sites may.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>A website is asking to use the microphone. Your website settings decide which sites may.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>A website is asking where you are. Your website settings decide which sites may know.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>A website is asking where you are. Your website settings decide which sites may know.</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.kylmora.Kylmora</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Kylmora</string>
+	<key>CFBundleDisplayName</key>
+	<string>Kylmora</string>
+	<key>CFBundleIconFile</key>
+	<string>Kylmora</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 Kylmora · kylmora.com</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSSupportsAutomaticGraphicsSwitching</key>
+	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>Web site URL</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>http</string>
+				<string>https</string>
+			</array>
+		</dict>
+	</array>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<!-- Apple's sanctioned exception for browsers: web content may load
+		     plain HTTP, while the app's own networking stays ATS-protected. -->
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+		<!-- Loopback and .local addresses. Measured: without this, a page on
+		     127.0.0.1 never loads at all, because the web-content exception
+		     above does not cover local networking. A browser that cannot open
+		     localhost:3000 is useless to the person developing against it. -->
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+</dict>
+</plist>

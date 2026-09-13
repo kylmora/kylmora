@@ -1,0 +1,200 @@
+import AppKit
+
+/// The About pane: the logo and version over what the browser is, who makes
+/// it, what the mark means, and a button that asks kylmora.com whether this
+/// is the newest version.
+///
+/// The standard About panel shows an icon and a version and nothing else.
+/// This pane is where the story goes, and it is a pane rather than a panel so
+/// the update check has somewhere to put its answer.
+@MainActor
+final class AboutSettingsViewController: NSViewController {
+    /// The copy, in one place, so it can be edited without touching layout.
+    enum Copy {
+        static let tagline = "A lightweight native browser for the Mac."
+        static let browser = """
+            Kylmora is built on the WebKit that ships with macOS, the engine behind \
+            Safari, so pages render the way the system expects and web content stays \
+            in WebKit's own sandboxed processes. The app around it is written in \
+            Swift with AppKit: one window, Spaces that keep their own identities, \
+            tabs that cost nothing until you look at them, and browsing tools \
+            designed with AI agents in mind.
+            """
+        static let aboutUs = """
+            Kylmora is made independently, by people who wanted a browser that is \
+            fast, honest and quiet. Nothing in it is a mock: if a control is there, \
+            it does something. Nothing phones home: there is no telemetry, crash \
+            reports stay on your Mac unless you choose otherwise, and the browser \
+            contains no third-party code. It is built by hand, one decision at a \
+            time, and every decision is written down.
+            """
+        static let logo = """
+            The mark is a K drawn as two ribbons of blue: an upright stem, and one \
+            sweeping stroke that folds over it to make both arms. It reads as a \
+            letter at a glance and as a fold of paper on a second look, which is \
+            the browser in a shape: simple on the surface, with more underneath.
+            """
+        static let copyright = "© 2026 Kylmora"
+    }
+
+    private let checkButton = NSButton(title: "Check for Updates\u{2026}", target: nil, action: nil)
+    private let downloadButton = NSButton(title: "Download", target: nil, action: nil)
+    private let updateStatus = NSTextField(wrappingLabelWithString: "")
+    private var checking = false
+    private var downloadURL: URL?
+
+    /// The check, replaceable so a test can answer without the network.
+    var check: (String) async -> UpdateCheck.Outcome = { current in
+        await UpdateCheck.run(current: current)
+    }
+
+    init() {
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("AboutSettingsViewController is created in code only")
+    }
+
+    override func loadView() {
+        let form = SettingsForm()
+        view = SettingsScrollingPane(form: form)
+        buildLayout(in: form)
+    }
+
+    private func buildLayout(in form: SettingsForm) {
+        form.addHero(makeHero())
+        form.addSeparator()
+
+        form.addRow("Browser", Self.paragraph(Copy.browser), alignment: .top)
+        form.addRow("Engine", Self.value("WebKit, the system's own, shared with Safari"))
+        form.addRow("Built with", Self.value("Swift 6 and AppKit, with no third-party code"))
+        form.addRow("Website", Self.link("kylmora.com", url: AppInfo.website))
+
+        form.addSeparator()
+        form.addRow("About us", Self.paragraph(Copy.aboutUs), alignment: .top)
+        form.addRow("The logo", Self.paragraph(Copy.logo), alignment: .top)
+
+        form.addSeparator()
+        checkButton.target = self
+        checkButton.action = #selector(checkForUpdates)
+        checkButton.bezelStyle = .rounded
+        downloadButton.target = self
+        downloadButton.action = #selector(download)
+        downloadButton.bezelStyle = .rounded
+        downloadButton.isHidden = true
+        form.addRow("Updates", [checkButton, downloadButton])
+        updateStatus.stringValue = "Kylmora asks kylmora.com only when you click, and sends nothing about you or your Mac."
+        form.addNote(updateStatus)
+
+        form.addSeparator()
+        form.addRow("", Self.value(Copy.copyright, secondary: true))
+    }
+
+    /// The icon, the name, the tagline and the version, centred.
+    private func makeHero() -> NSView {
+        let icon = NSImageView(image: NSApp.applicationIconImage)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 112),
+            icon.heightAnchor.constraint(equalToConstant: 112)
+        ])
+
+        let name = NSTextField(labelWithString: AppInfo.name)
+        name.font = .systemFont(ofSize: 26, weight: .semibold)
+        name.alignment = .center
+
+        let tagline = NSTextField(labelWithString: Copy.tagline)
+        tagline.font = .systemFont(ofSize: 13)
+        tagline.textColor = .secondaryLabelColor
+        tagline.alignment = .center
+
+        let version = NSTextField(labelWithString: "Version \(AppInfo.version) (\(AppInfo.build))")
+        version.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        version.textColor = .tertiaryLabelColor
+        version.alignment = .center
+
+        let stack = NSStackView(views: [icon, name, tagline, version])
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 4
+        stack.setCustomSpacing(12, after: icon)
+        stack.setCustomSpacing(10, after: tagline)
+        return stack
+    }
+
+    private static func paragraph(_ text: String) -> NSTextField {
+        let field = NSTextField(wrappingLabelWithString: text)
+        field.font = .systemFont(ofSize: 12)
+        field.preferredMaxLayoutWidth = SettingsForm.controlWidth
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.widthAnchor.constraint(equalToConstant: SettingsForm.controlWidth).isActive = true
+        return field
+    }
+
+    private static func value(_ text: String, secondary: Bool = false) -> NSTextField {
+        let field = NSTextField(labelWithString: text)
+        if secondary { field.textColor = .secondaryLabelColor }
+        return field
+    }
+
+    private static func link(_ text: String, url: URL) -> NSTextField {
+        let attributed = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 13), .link: url, .foregroundColor: NSColor.linkColor
+        ])
+        let field = NSTextField(labelWithAttributedString: attributed)
+        field.allowsEditingTextAttributes = true
+        field.isSelectable = true
+        return field
+    }
+
+    // MARK: - Updates
+
+    @objc private func checkForUpdates() {
+        guard !checking else { return }
+        checking = true
+        checkButton.isEnabled = false
+        downloadButton.isHidden = true
+        downloadURL = nil
+        updateStatus.textColor = .secondaryLabelColor
+        updateStatus.stringValue = "Checking with kylmora.com\u{2026}"
+        let current = AppInfo.version
+        Task { [weak self] in
+            guard let self else { return }
+            let outcome = await self.check(current)
+            self.show(outcome)
+        }
+    }
+
+    /// Puts the answer on the pane.
+    func show(_ outcome: UpdateCheck.Outcome) {
+        checking = false
+        checkButton.isEnabled = true
+        switch outcome {
+        case .upToDate(let current):
+            updateStatus.textColor = .secondaryLabelColor
+            updateStatus.stringValue = "You\u{2019}re on the latest version. Kylmora \(current) is the newest there is."
+        case .available(let version, let url, let notes):
+            updateStatus.textColor = .labelColor
+            var text = "Kylmora \(version) is available; you have \(AppInfo.version)."
+            if let notes, !notes.isEmpty { text += " \(notes)" }
+            updateStatus.stringValue = text
+            downloadURL = url
+            downloadButton.isHidden = url == nil
+        case .unreachable(let reason):
+            updateStatus.textColor = .secondaryLabelColor
+            updateStatus.stringValue = reason
+        }
+        view.window?.windowController.flatMap { $0 as? SettingsWindowController }?.paneDidResize()
+    }
+
+    @objc private func download() {
+        guard let downloadURL else { return }
+        NSWorkspace.shared.open(downloadURL)
+    }
+
+    /// What the status line says right now; for tests.
+    var updateStatusText: String { updateStatus.stringValue }
+    var showsDownloadButton: Bool { !downloadButton.isHidden }
+}
