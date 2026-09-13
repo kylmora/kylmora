@@ -38,17 +38,15 @@ jobs:
       - name: Build the app bundle
         run: make bundle
 
-      - name: Package the .dmg
+      # A styled installer image: a compact window, the app beside an
+      # /Applications shortcut, and an arrow background. dmgbuild writes the
+      # window layout directly (no Finder scripting), so it works headlessly.
+      - name: Package the styled .dmg
         run: |
-          # Stage the app beside an /Applications alias so the mounted disk image
-          # shows the standard drag-to-Applications layout.
-          mkdir -p dmg
-          cp -R "build/Kylmora.app" "dmg/Kylmora.app"
-          ln -s /Applications "dmg/Applications"
-          hdiutil create -volname "Kylmora" \
-            -srcfolder "dmg" \
-            -ov -format UDZO \
-            "build/Kylmora.dmg"
+          python3 -m venv dmgvenv
+          ./dmgvenv/bin/pip install --quiet dmgbuild Pillow
+          ./dmgvenv/bin/dmgbuild -D app="build/Kylmora.app" \
+            -s Tools/dmg-settings.py "Kylmora" "build/Kylmora.dmg"
 
       - name: Publish the GitHub Release
         uses: softprops/action-gh-release@v3
