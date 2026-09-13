@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Needed so the built-in token can create a Release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & attach .dmg
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      # The icon (Resources/Kylmora.icns) is committed. Keep its timestamp newer
+      # than its sources so `make bundle` uses it instead of regenerating it,
+      # which would require Pillow.
+      - name: Use the committed icon
+        run: touch Resources/Kylmora.icns
+
+      - name: Build the app bundle
+        run: make bundle
+
+      - name: Package the .dmg
+        run: |
+          hdiutil create -volname "Kylmora" \
+            -srcfolder "build/Kylmora.app" \
+            -ov -format UDZO \
+            "build/Kylmora-${GITHUB_REF_NAME}.dmg"
+
+      - name: Publish the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/Kylmora-*.dmg
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            ### Install
+
+            Download `Kylmora-${{ github.ref_name }}.dmg` below, open it, and drag
+            **Kylmora** to Applications.
+
+            This build is **unsigned**, so on first launch macOS may block it. To
+            open it: **System Settings → Privacy & Security**, scroll to the
+            Kylmora notice and click **Open Anyway** (or right-click the app and
+            choose **Open**). You only need to do this once.
