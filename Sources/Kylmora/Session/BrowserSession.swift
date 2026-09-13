@@ -1217,6 +1217,7 @@ final class BrowserSession {
                     pinnedSites: space.pinnedSites.map {
                         SessionSnapshot.Pinned(id: $0.id, url: $0.url, title: $0.title)
                     },
+                    archiveHours: space.archiveHours,
                     // Written in the order archived, so the list restores the
                     // way it was built; the reading order is applied on the way
                     // out, in `archivedTabs(in:)`.
@@ -1259,7 +1260,8 @@ final class BrowserSession {
                 identity: identity,
                 theme: SpaceTheme(storedValue: stored.theme ?? legacyTheme),
                 border: stored.border ?? .none,
-                look: stored.look ?? SpaceLook()
+                look: stored.look ?? SpaceLook(),
+                archiveHours: stored.archiveHours
             )
             WebEnvironment.shared.setFonts(space.look.fonts, for: space.identity)
             let groups = (stored.groups ?? []).map {
