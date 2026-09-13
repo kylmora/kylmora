@@ -48,13 +48,7 @@ final class Settings {
         static let showsUnicodeDomains = "showsUnicodeDomains"
         static let bookmarksInNewTabs = "opensBookmarksInNewTabs"
         static let favouriteShortcuts = "favouriteShortcutsEnabled"
-        /// Superseded by `externalLinkPresentation`, and read only to carry a
-        /// checkbox's answer over to it.
         static let externalLinksInGlance = "opensExternalLinksInGlance"
-        static let externalLinkPresentation = "externalLinkPresentation"
-        /// Set once the carry-over above has run. Deliberately absent from the
-        /// registered defaults: see the migration in `init`.
-        static let externalLinkMigrated = "externalLinkPresentationMigrated"
         static let compactShowsButtons = "compactModeShowsWindowButtons"
         static let confirmsClosingPiP = "confirmsClosingPictureInPicture"
         static let minimumFontSizeEnabled = "minimumFontSizeEnabled"
@@ -75,45 +69,12 @@ final class Settings {
         static let passwordOfferSave = "passwordOfferSave"
         static let passwordSubmitAutomatically = "passwordSubmitAutomatically"
         static let passwordUsesTouchID = "passwordUsesTouchID"
-        static let syncEnabled = "syncEnabled"
-        static let syncOpenTabs = "syncOpenTabs"
-        static let syncBookmarks = "syncBookmarks"
-        static let syncSiteSettings = "syncSiteSettings"
-        static let syncCustomDirectory = "syncCustomDirectory"
-        static let syncLastTimestamp = "syncLastTimestamp"
-        static let syncService = "syncService"
-        static let syncPassphrase = "syncPassphrase"
-        static let syncWebDAVURL = "syncWebDAVURL"
-        static let syncWebDAVUsername = "syncWebDAVUsername"
-        static let syncWebDAVPassword = "syncWebDAVPassword"
-        static let openCommandBarOnNewTab = "openCommandBarOnNewTab"
-        static let userRulesText = "contentBlockingUserRulesText"
-        static let customFilterLists = "contentBlockingCustomFilterLists"
-        static let autoRejectCookieBanners = "contentBlockingAutoRejectCookieBanners"
     }
 
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        // One-time: this replaced the "open links from other apps in a Glance"
-        // checkbox, so a build that had it ticked keeps opening them in a
-        // glance.
-        //
-        // Once, on the first launch of a build that has this key. Keyed on its
-        // own marker rather than on "the new key has no value":
-        // `register(defaults:)` fills a registration domain that every
-        // `UserDefaults` in the process reads, so as soon as one `Settings`
-        // exists the new key always has a value -- and its absence can never
-        // mean "the user has not chosen". A choice made in Settings afterwards
-        // is therefore never revisited.
-        if defaults.object(forKey: Key.externalLinkMigrated) == nil {
-            if defaults.bool(forKey: Key.externalLinksInGlance) {
-                defaults.set(ExternalLinkPresentation.glance.rawValue, forKey: Key.externalLinkPresentation)
-            }
-            defaults.set(true, forKey: Key.externalLinkMigrated)
-        }
-
         defaults.register(defaults: [
             Key.searchEngine: SearchEngine.duckDuckGo.id,
             Key.restoresSession: true,
@@ -151,7 +112,7 @@ final class Settings {
             Key.showsUnicodeDomains: false,
             Key.bookmarksInNewTabs: true,
             Key.favouriteShortcuts: true,
-            Key.externalLinkPresentation: ExternalLinkPresentation.tab.rawValue,
+            Key.externalLinksInGlance: false,
             Key.compactShowsButtons: true,
             Key.confirmsClosingPiP: true,
             Key.minimumFontSizeEnabled: false,
@@ -170,20 +131,7 @@ final class Settings {
             Key.passwordOfferAutofill: true,
             Key.passwordOfferSave: true,
             Key.passwordSubmitAutomatically: false,
-            Key.passwordUsesTouchID: true,
-            Key.syncEnabled: false,
-            Key.syncOpenTabs: true,
-            Key.syncBookmarks: true,
-            Key.syncSiteSettings: true,
-            Key.syncCustomDirectory: "",
-            Key.syncLastTimestamp: 0.0,
-            Key.syncService: SyncService.iCloud.rawValue,
-            Key.syncPassphrase: "",
-            Key.syncWebDAVURL: "",
-            Key.syncWebDAVUsername: "",
-            Key.syncWebDAVPassword: "",
-            Key.userRulesText: "",
-            Key.autoRejectCookieBanners: true
+            Key.passwordUsesTouchID: true
         ])
     }
 
@@ -297,15 +245,10 @@ final class Settings {
         set { defaults.set(newValue, forKey: Key.favouriteShortcuts) }
     }
 
-    /// How a link from another app is shown: a tab, a Little Arc window, or a
-    /// glance. Shift held is always a tab, wherever this points
-    /// (`LittleArcRouting`).
-    var externalLinkPresentation: ExternalLinkPresentation {
-        get {
-            ExternalLinkPresentation(rawValue: defaults.string(forKey: Key.externalLinkPresentation) ?? "")
-                ?? .tab
-        }
-        set { defaults.set(newValue.rawValue, forKey: Key.externalLinkPresentation) }
+    /// A link from another app opens in a glance; Shift held opens a tab.
+    var opensExternalLinksInGlance: Bool {
+        get { defaults.bool(forKey: Key.externalLinksInGlance) }
+        set { defaults.set(newValue, forKey: Key.externalLinksInGlance) }
     }
 
     var compactModeShowsWindowButtons: Bool {
@@ -413,13 +356,6 @@ final class Settings {
         set { defaults.set(newValue.rawValue, forKey: Key.newTabTarget) }
     }
 
-    /// Whether Cmd-T opens the floating command palette over the current page
-    /// without replacing or creating a blank page first.
-    var openCommandBarOnNewTab: Bool {
-        get { defaults.object(forKey: Key.openCommandBarOnNewTab) as? Bool ?? true }
-        set { defaults.set(newValue, forKey: Key.openCommandBarOnNewTab) }
-    }
-
     /// The content-blocking switches and per-list choices. On by default:
     /// a browser that ships with the lists and does not apply them is
     /// asking the user to discover a setting before the web is bearable.
@@ -437,33 +373,6 @@ final class Settings {
             defaults.set(newValue.blocksCookieBanners, forKey: Key.blocksCookieBanners)
             defaults.set(newValue.blocksTrackers, forKey: Key.blocksTrackers)
             defaults.set(newValue.listOverrides, forKey: Key.listOverrides)
-        }
-    }
-
-    /// The user's custom Adblock Plus rules (cosmetic hiding, network blocks, exceptions).
-    var userRulesText: String {
-        get { defaults.string(forKey: Key.userRulesText) ?? "" }
-        set { defaults.set(newValue, forKey: Key.userRulesText) }
-    }
-
-    /// Whether common CMP cookie consent banners should be automatically declined/rejected.
-    var autoRejectCookieBanners: Bool {
-        get { defaults.object(forKey: Key.autoRejectCookieBanners) as? Bool ?? true }
-        set { defaults.set(newValue, forKey: Key.autoRejectCookieBanners) }
-    }
-
-    /// Third-party filter lists subscribed to by URL.
-    var customFilterLists: [CustomFilterList] {
-        get {
-            guard let data = defaults.data(forKey: Key.customFilterLists),
-                  let lists = try? JSONDecoder().decode([CustomFilterList].self, from: data) else {
-                return []
-            }
-            return lists
-        }
-        set {
-            let data = try? JSONEncoder().encode(newValue)
-            defaults.set(data, forKey: Key.customFilterLists)
         }
     }
 
@@ -645,93 +554,4 @@ final class Settings {
         if newTabTarget == .homepage, let homepage = homepageURL { return homepage }
         return searchEngine(isPrivate: isPrivate).homeURL
     }
-
-    // MARK: - Sync
-
-    var syncEnabled: Bool {
-        get { defaults.bool(forKey: Key.syncEnabled) }
-        set { defaults.set(newValue, forKey: Key.syncEnabled) }
-    }
-
-    var syncOpenTabs: Bool {
-        get { defaults.bool(forKey: Key.syncOpenTabs) }
-        set { defaults.set(newValue, forKey: Key.syncOpenTabs) }
-    }
-
-    var syncBookmarks: Bool {
-        get { defaults.bool(forKey: Key.syncBookmarks) }
-        set { defaults.set(newValue, forKey: Key.syncBookmarks) }
-    }
-
-    var syncSiteSettings: Bool {
-        get { defaults.bool(forKey: Key.syncSiteSettings) }
-        set { defaults.set(newValue, forKey: Key.syncSiteSettings) }
-    }
-
-    var syncCustomDirectory: String {
-        get { defaults.string(forKey: Key.syncCustomDirectory) ?? "" }
-        set { defaults.set(newValue, forKey: Key.syncCustomDirectory) }
-    }
-
-    var syncLastTimestamp: Double {
-        get { defaults.double(forKey: Key.syncLastTimestamp) }
-        set { defaults.set(newValue, forKey: Key.syncLastTimestamp) }
-    }
-
-    var syncService: SyncService {
-        get {
-            guard let raw = defaults.string(forKey: Key.syncService),
-                  let service = SyncService(rawValue: raw) else {
-                return .iCloud
-            }
-            return service
-        }
-        set {
-            defaults.set(newValue.rawValue, forKey: Key.syncService)
-        }
-    }
-
-    var syncPassphrase: String {
-        get { defaults.string(forKey: Key.syncPassphrase) ?? "" }
-        set {
-            defaults.set(newValue, forKey: Key.syncPassphrase)
-        }
-    }
-
-    var syncWebDAVURL: String {
-        get { defaults.string(forKey: Key.syncWebDAVURL) ?? "" }
-        set {
-            defaults.set(newValue, forKey: Key.syncWebDAVURL)
-        }
-    }
-
-    var syncWebDAVUsername: String {
-        get { defaults.string(forKey: Key.syncWebDAVUsername) ?? "" }
-        set {
-            defaults.set(newValue, forKey: Key.syncWebDAVUsername)
-        }
-    }
-
-    var syncWebDAVPassword: String {
-        get { defaults.string(forKey: Key.syncWebDAVPassword) ?? "" }
-        set {
-            defaults.set(newValue, forKey: Key.syncWebDAVPassword)
-        }
-    }
 }
-
-/// A user-subscribed external Adblock Plus / uBlock Origin filter list.
-public struct CustomFilterList: Codable, Identifiable, Equatable, Sendable {
-    public var id: UUID
-    public var name: String
-    public var url: URL
-    public var isEnabled: Bool
-
-    public init(id: UUID = UUID(), name: String, url: URL, isEnabled: Bool = true) {
-        self.id = id
-        self.name = name
-        self.url = url
-        self.isEnabled = isEnabled
-    }
-}
-

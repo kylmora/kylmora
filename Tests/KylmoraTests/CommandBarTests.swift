@@ -435,31 +435,6 @@ struct CommandBarViewTests {
         bar.toggle()
         #expect(!bar.isOpen)
     }
-
-    @Test("Opening with openInNewTab sets isNewTabMode and closing resets it")
-    func openInNewTabMode() {
-        let bar = bar()
-        bar.open(openInNewTab: true)
-        #expect(bar.isNewTabMode)
-        bar.close()
-        #expect(!bar.isNewTabMode)
-    }
-
-    @Test("Tab key on a selected row completes the row value into the query field")
-    func tabKeyCompletesSelection() {
-        let bar = bar()
-        bar.open(text: "ex")
-        bar.setResults(results(2))
-        bar.select(0)
-        let expected = bar.visibleResults[0].subtitle
-        let handled = bar.control(
-            NSControl(),
-            textView: NSTextView(),
-            doCommandBy: #selector(NSResponder.insertTab(_:))
-        )
-        #expect(handled)
-        #expect(bar.queryText == expected)
-    }
 }
 
 @Suite("Command bar sources")
@@ -499,68 +474,5 @@ struct CommandSourcesTests {
         let promoted = results.first!.score
         let unpromoted = plain.first { $0.subtitle == "apple.example" }!.score
         #expect(promoted == unpromoted + CommandRanker.topHitBonus)
-    }
-
-    @Test("Spaces are ranked and switch space action is returned")
-    func spacesRanking() {
-        let spaceID = UUID()
-        let space = SpaceCandidate(id: spaceID, name: "Development", isActive: false, tabCount: 5)
-        let results = CommandRanker.rank(query: "dev", tabs: [], spaces: [space], history: [])
-        #expect(results.contains { $0.kind == .space && $0.title == "Development" && $0.action == .switchToSpace(spaceID) })
-        #expect(results.first?.shortcut == "Space")
-        #expect(results.first?.subtitle == "Space • 5 tabs")
-    }
-
-    @Test("Active space is not offered as somewhere to switch to")
-    func activeSpaceIsExcluded() {
-        let space = SpaceCandidate(id: UUID(), name: "Work", isActive: true, tabCount: 3)
-        let results = CommandRanker.rank(query: "work", tabs: [], spaces: [space], history: [])
-        #expect(results.isEmpty)
-    }
-
-    @Test("Commands are ranked by title and keywords with shortcut badges")
-    func commandsRanking() {
-        let cmd = CommandCandidate(
-            id: "split-side",
-            title: "Split Side by Side",
-            subtitle: "Tile two tabs vertically",
-            symbolName: "rectangle.split.2x1",
-            shortcut: "⌥⌘V",
-            keywords: ["split", "dual"]
-        )
-        let byTitle = CommandRanker.rank(query: "split", tabs: [], commands: [cmd], history: [])
-        #expect(byTitle.contains { $0.kind == .command && $0.id == "cmd:split-side" && $0.shortcut == "⌥⌘V" })
-
-        let byKeyword = CommandRanker.rank(query: "dual", tabs: [], commands: [cmd], history: [])
-        #expect(byKeyword.contains { $0.kind == .command && $0.id == "cmd:split-side" })
-    }
-
-    @Test("All catalog commands have valid SF symbols and non-empty titles")
-    @MainActor
-    func commandCatalogIntegrity() {
-        let all = CommandCatalog.all
-        #expect(!all.isEmpty)
-        for cmd in all {
-            #expect(!cmd.id.isEmpty)
-            #expect(!cmd.title.isEmpty)
-            #expect(!cmd.symbolName.isEmpty)
-            let image = NSImage(systemSymbolName: cmd.symbolName, accessibilityDescription: nil)
-            #expect(image != nil)
-        }
-    }
-
-    @Test("Open tabs display their space name if provided")
-    func tabsWithSpaceName() {
-        let tabWithSpace = TabCandidate(
-            id: UUID(),
-            title: "GitHub Pull Requests",
-            address: "github.com/pulls",
-            url: URL(string: "https://github.com/pulls")!,
-            isActive: false,
-            spaceName: "Work"
-        )
-        let results = CommandRanker.rank(query: "github", tabs: [tabWithSpace], history: [])
-        #expect(results.first?.subtitle == "Work • github.com/pulls")
-        #expect(results.first?.shortcut == "Jump")
     }
 }

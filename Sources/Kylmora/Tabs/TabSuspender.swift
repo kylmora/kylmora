@@ -107,22 +107,16 @@ final class TabSuspender {
     /// *next* one -- a full check interval of being genuinely unloaded before
     /// anything is removed.
     private func archiveIfDue(_ trigger: TabSuspension.Trigger) {
-        guard trigger == .idle else { return }
-        for space in session.spaces {
-            guard !space.isPrivate else { continue }
-            let hours = space.archiveHours ?? settings.tabArchiveHours
-            guard hours > 0 else { continue }
-            let threshold = TimeInterval(hours) * 3_600
-            let stale = TabArchiving.candidates(
-                among: space.tabs,
-                protecting: session.visibleTabIDs,
-                threshold: threshold,
-                isPinned: { [session] in session.isPinned($0) },
-                isProviderManaged: { [session] in session.isInLiveFolder($0) },
-                cohorts: session.splitCohorts
-            )
-            guard !stale.isEmpty else { continue }
-            session.archive(stale)
-        }
+        guard trigger == .idle, let threshold = settings.tabArchiveDelay else { return }
+        let stale = TabArchiving.candidates(
+            among: session.allTabs,
+            protecting: session.visibleTabIDs,
+            threshold: threshold,
+            isPinned: { [session] in session.isPinned($0) },
+            isProviderManaged: { [session] in session.isInLiveFolder($0) },
+            cohorts: session.splitCohorts
+        )
+        guard !stale.isEmpty else { return }
+        session.archive(stale)
     }
 }

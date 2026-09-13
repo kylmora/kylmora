@@ -205,7 +205,7 @@ struct SitePolicyScriptTests {
 
     @Test("Every category on the pane has options, a default among them, a glyph and a line of instruction")
     func everyCategoryIsComplete() {
-        #expect(SiteSettingCategory.allCases.count == 21)
+        #expect(SiteSettingCategory.allCases.count == 20)
         for category in SiteSettingCategory.allCases {
             #expect(!category.options.isEmpty, Comment(rawValue: category.title))
             #expect(category.option(category.builtInDefault) != nil, Comment(rawValue: category.title))

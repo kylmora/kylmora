@@ -957,8 +957,7 @@ struct SidebarContextMenuTests {
             "New Space\u{2026}", "-",
             "Archive\u{2026}", "-",
             "Bookmark All Tabs", "-",
-            "Hide Sidebar", "Compact Mode", "-",
-            "Close All Tabs in Space"
+            "Hide Sidebar", "Compact Mode"
         ])
     }
 
@@ -982,7 +981,7 @@ struct SidebarContextMenuTests {
             "Open as Split", "Duplicate", "-",
             "New Group with Tab", "Move to Space", "-",
             "Rename\u{2026}", "-",
-            "Close", "Close Other Tabs", "Close Tabs Below", "Close All Tabs in Space"
+            "Close", "Close Other Tabs", "Close Tabs Below"
         ])
     }
 

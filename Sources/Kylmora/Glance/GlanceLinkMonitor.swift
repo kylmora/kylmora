@@ -14,8 +14,6 @@ final class GlanceLinkMonitor: NSObject {
     /// Set by `GlanceController` when it installs itself. Every invocation
     /// path that starts inside a page arrives here.
     var onOpenGlance: ((URL, GlanceOriginHint, GlanceSource) -> Void)?
-    /// Opens the link in a Little Arc window directly.
-    var onOpenLittleArc: ((URL) -> Void)?
 
     /// So the interceptor can stand aside while a glance is already up: a
     /// modifier-click inside a glance must navigate the glance rather than be

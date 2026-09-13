@@ -162,27 +162,6 @@ enum DownloadLocation: String, CaseIterable, Sendable {
     }
 }
 
-/// How a link from another app is shown.
-///
-/// Ordered from the least surprising to the most: a tab is what every browser
-/// does, a Little Arc window is a small window that does not move the user away
-/// from where they clicked, and a glance is a look at the page over the one
-/// being read. The order is the order of the Settings pop-up, which is why it
-/// is written down rather than left to `allCases`'s alphabetical accident.
-enum ExternalLinkPresentation: String, CaseIterable, Sendable {
-    case tab
-    case littleArc
-    case glance
-
-    var title: String {
-        switch self {
-        case .tab: return "A new tab"
-        case .littleArc: return "A Little Arc window"
-        case .glance: return "A Glance"
-        }
-    }
-}
-
 /// Where a link from another app opens.
 enum ExternalLinkTarget: String, CaseIterable, Sendable {
     case currentSpace

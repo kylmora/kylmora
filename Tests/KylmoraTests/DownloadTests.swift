@@ -373,6 +373,5 @@ struct GeneralMachineryTests {
         #expect(again.downloadLocation == .ask && again.downloadRemoval == .afterDay)
         #expect(again.opensSafeFilesAfterDownloading && again.defaultSpaceID == id)
         #expect(again.externalLinkTarget == .defaultSpace && again.warnsBeforeQuitting == false)
-        #expect(again.externalLinkPresentation == .tab)
     }
 }

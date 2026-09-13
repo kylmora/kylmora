@@ -19,10 +19,6 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     private let commandBar = CommandBar()
     /// Held while shown so it is not deallocated mid-display.
     private var siteSettingsPopover: NSPopover?
-    private var shieldPopover: NSPopover?
-    /// The small windows links from other apps open in. Owned here because this
-    /// is the browser window they belong to, and it outlives every one of them.
-    private lazy var littleArcs = LittleArcCoordinator(session: session)
     /// Compact mode. Implicitly unwrapped because it needs `self` as its
     /// sidebar slot, which is not available until after `super.init`.
     private var compact: CompactChrome!
@@ -119,10 +115,6 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         applyLook(of: session.activeSpace)
 
         content.onOpenBookmark = { [weak self] url in self?.open(stored: url) }
-        GlanceLinkMonitor.shared.onOpenLittleArc = { [weak self] url in
-            guard let self else { return }
-            self.littleArcs.open(url: url, in: self.externalLinkSpace)
-        }
         content.topBar.onHoverChanged = { [weak self] isHovered in
             self?.isTopBarHovered = isHovered
             self?.updateTrafficLights()
@@ -220,9 +212,6 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         bar.zoomControl.zoomIn.setClickHandler { [weak self] in self?.stepZoom(by: 1) }
         bar.zoomControl.onReset = { [weak self] in self?.resetZoom() }
         var actions = [
-            TopBarAction(symbolName: "checkmark.shield.fill", label: "Shield") { [weak self] in
-                self?.showShieldPopover()
-            },
             TopBarAction(symbolName: "gearshape.fill", label: "Site Settings") { [weak self] in
                 self?.showSiteSettings()
             },
@@ -300,34 +289,6 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         siteSettings.target = self
         menu.addItem(siteSettings)
 
-        menu.addItem(.separator())
-
-        let boostItem = NSMenuItem(title: "Boost This Site\u{2026}", action: #selector(openBoostEditorFromMenu(_:)), keyEquivalent: "")
-        boostItem.target = self
-        menu.addItem(boostItem)
-
-        if let host = url.host?.lowercased() {
-            let isDark = BoostStore.shared.boost(for: host)?.isDarkModeEnabled ?? false
-            let darkItem = NSMenuItem(
-                title: isDark ? "Disable Universal Dark Mode" : "Enable Universal Dark Mode",
-                action: #selector(toggleDarkModeFromMenu(_:)),
-                keyEquivalent: ""
-            )
-            darkItem.target = self
-            darkItem.state = isDark ? .on : .off
-            menu.addItem(darkItem)
-        }
-
-        menu.addItem(.separator())
-
-        let installAppItem = NSMenuItem(title: "Install Site as Web App\u{2026}", action: #selector(installCurrentSiteAsWebApp(_:)), keyEquivalent: "")
-        installAppItem.target = self
-        menu.addItem(installAppItem)
-
-        let openStandaloneItem = NSMenuItem(title: "Open in Standalone Window", action: #selector(openCurrentSiteAsStandaloneWebApp(_:)), keyEquivalent: "")
-        openStandaloneItem.target = self
-        menu.addItem(openStandaloneItem)
-
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.maxY + 4), in: anchor)
     }
 
@@ -363,156 +324,6 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         popover.behavior = .transient
         siteSettingsPopover = popover
         popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
-    }
-
-    // MARK: - Content Blocking & Element Picker
-
-    @objc func showShieldPopover() {
-        guard let tab = session.activeTab, let anchor = content.topBar.actionButton(labelled: "Shield") else { return }
-        let popover = NSPopover()
-        popover.behavior = .transient
-        let shieldVC = ShieldPopoverViewController(
-            url: tab.displayURL,
-            webView: tab.currentWebView,
-            onReload: { [weak tab] in tab?.reload() },
-            onBlockElement: { [weak self, weak tab] in
-                guard let self, let webView = tab?.currentWebView else { return }
-                self.startElementPicker(in: webView)
-            },
-            onOpenSettings: { [weak self] in
-                self?.showAdvancedBlockingSettings()
-            }
-        )
-        popover.contentViewController = shieldVC
-        shieldPopover = popover
-        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
-    }
-
-    @objc func startElementPickerFromMenu(_ sender: Any?) {
-        startElementPicker()
-    }
-
-    func startElementPicker() {
-        guard let tab = session.activeTab, let webView = tab.currentWebView else { return }
-        startElementPicker(in: webView)
-    }
-
-    func startElementPicker(in webView: WKWebView) {
-        ElementPickerCoordinator.shared.startPicking(in: webView)
-    }
-
-    @objc func toggleContentBlockingFromMenu(_ sender: Any?) {
-        toggleCurrentSiteContentBlocking()
-    }
-
-    func toggleCurrentSiteContentBlocking() {
-        guard let tab = session.activeTab, let host = tab.displayURL.host() else { return }
-        let url = tab.displayURL
-        let current = SiteSettings.shared.blocksContent(for: url)
-        let normalizedHost = SiteSettings.normalise(host)
-        SiteSettings.shared.update {
-            $0.set(current ? "off" : "on", for: normalizedHost, in: .contentBlockers)
-        }
-        if let controller = tab.currentWebView?.configuration.userContentController {
-            ContentBlocker.shared.applySiteChoice(for: url, to: controller)
-        }
-        content.updateTopBar()
-    }
-
-    func showAdvancedBlockingSettings() {
-        let blockerVC = AdvancedBlockingViewController()
-        content.presentAsSheet(blockerVC)
-    }
-
-    @objc func openBoostEditorFromMenu(_ sender: Any?) {
-        openBoostEditor()
-    }
-
-    func openBoostEditor() {
-        guard let tab = session.activeTab,
-              let host = tab.displayURL.host?.lowercased(),
-              let webView = tab.currentWebView else { return }
-        let editor = BoostEditorViewController(host: host, webView: webView)
-        content.presentAsSheet(editor)
-    }
-
-    @objc func toggleDarkModeFromMenu(_ sender: Any?) {
-        toggleDarkModeForCurrentSite()
-    }
-
-    func toggleDarkModeForCurrentSite() {
-        guard let tab = session.activeTab,
-              let host = tab.displayURL.host?.lowercased(),
-              let webView = tab.currentWebView else { return }
-        _ = BoostStore.shared.toggleDarkMode(for: host)
-        if let boost = BoostStore.shared.boost(for: host) {
-            BoostCoordinator.shared.applyLive(boost: boost, to: webView)
-        }
-    }
-
-    @objc func installCurrentSiteAsWebApp(_ sender: Any?) {
-        guard let tab = session.activeTab else { return }
-        let url = tab.displayURL
-        let host = url.host ?? "Web App"
-        let name = tab.displayTitle.isEmpty ? host : tab.displayTitle
-        let spaces = session.spaces.map { ($0.id, $0.name) }
-        let currentSpaceID = session.activeSpace.id
-
-        let installer = WebAppInstallViewController(
-            name: name,
-            url: url,
-            icon: nil,
-            spaces: spaces,
-            defaultSpaceID: currentSpaceID
-        )
-
-        installer.onInstall = { (finalName: String, targetURL: URL, spaceID: UUID?, icon: NSImage?) in
-            do {
-                let app = try WebAppManager.shared.install(
-                    name: finalName,
-                    url: targetURL,
-                    spaceID: spaceID,
-                    icon: icon
-                )
-                WebAppManager.shared.open(app: app)
-                if let bundlePath = app.appBundlePath {
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: bundlePath)])
-                }
-            } catch {
-                NSLog("Kylmora: Failed to install web app: \(error.localizedDescription)")
-            }
-        }
-
-        content.presentAsSheet(installer)
-    }
-
-    @objc func openCurrentSiteAsStandaloneWebApp(_ sender: Any?) {
-        guard let tab = session.activeTab else { return }
-        let url = tab.displayURL
-        let title = tab.displayTitle
-        let spaceID = session.activeSpace.id
-        WebAppManager.shared.openStandalone(url: url, title: title, spaceID: spaceID)
-    }
-
-    @objc func copyCurrentURL(_ sender: Any?) {
-        guard let url = session.activeTab?.displayURL else { return }
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(url.absoluteString, forType: .string)
-    }
-
-    @objc func togglePinActiveTab(_ sender: Any?) {
-        guard let tab = session.activeTab else { return }
-        if let site = session.activeSpace.pinnedSites.first(where: { $0.id == tab.pinnedSiteID || $0.matches(tab.url) }) {
-            session.removePinnedSite(site)
-        } else {
-            session.pin(tab)
-        }
-    }
-
-    @objc func duplicateActiveTab(_ sender: Any?) {
-        guard let tab = session.activeTab else { return }
-        _ = session.duplicate(tab)
     }
 
     /// The macOS share sheet for the current page, hung off the share button.
@@ -614,36 +425,17 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             let engine = settings.searchEngine(isPrivate: self.session.activeSpace.isPrivate)
             let search = engine.url(for: query.trimmingCharacters(in: .whitespacesAndNewlines))
                 .map { SearchCandidate(engineName: engine.name, url: $0) }
-
-            let allTabs: [TabCandidate] = self.session.spaces.flatMap { space in
-                space.tabs.map { tab in
+            return CommandRanker.rank(
+                query: query,
+                tabs: self.session.allTabs.map { tab in
                     TabCandidate(
                         id: tab.id,
                         title: tab.displayTitle,
                         address: AddressFormatter.display(tab.url),
                         url: tab.url,
-                        isActive: tab.id == activeID,
-                        spaceName: space.name
+                        isActive: tab.id == activeID
                     )
-                }
-            }
-
-            let spaces: [SpaceCandidate] = self.session.spaces.map { space in
-                SpaceCandidate(
-                    id: space.id,
-                    name: space.name,
-                    isActive: space.id == self.session.activeSpace.id,
-                    tabCount: space.tabs.count
-                )
-            }
-
-            let commands = CommandCatalog.all
-
-            return CommandRanker.rank(
-                query: query,
-                tabs: allTabs,
-                spaces: spaces,
-                commands: commands,
+                },
                 history: history.map {
                     HistoryCandidate(
                         url: $0.url,
@@ -657,13 +449,8 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
                 },
                 search: search,
                 sources: CommandSources(
-                    openTabs: sources.openTabs,
-                    spaces: true,
-                    commands: true,
-                    history: sources.history,
-                    bookmarks: sources.bookmarks,
-                    searchEngine: sources.searchEngine,
-                    topHits: sources.topHits
+                    openTabs: sources.openTabs, history: sources.history, bookmarks: sources.bookmarks,
+                    searchEngine: sources.searchEngine, topHits: sources.topHits
                 )
             )
         }
@@ -679,17 +466,10 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
                 }), let tab = space.tabs.first(where: { $0.id == id }) else { return }
                 self.session.selectSpace(space)
                 self.session.selectTab(tab)
-            case .switchToSpace(let id):
-                guard let space = self.session.spaces.first(where: { $0.id == id }) else { return }
-                self.session.selectSpace(space)
-            case .runCommand(let commandId):
-                self.executeCommand(commandId)
             case .openURL(let url):
                 // The same chord that peeks at a link peeks at a result.
                 if GlanceInvocation.isGlanceChord(NSEvent.modifierFlags) {
                     self.content.openGlance(url)
-                } else if self.commandBar.isNewTabMode {
-                    self.session.newTab(url: url)
                 } else if let tab = self.session.activeTab {
                     tab.load(url)
                 } else {
@@ -776,20 +556,6 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
 
     @objc func openCommandBar(_ sender: Any?) {
         commandBar.toggle()
-        updateCompactSidebarForCommandBar()
-    }
-
-    @objc func openLocation(_ sender: Any?) {
-        if commandBar.isOpen {
-            commandBar.toggle()
-        } else {
-            let initialText = session.activeTab.map { AddressFormatter.display($0.url) } ?? ""
-            commandBar.open(text: initialText, openInNewTab: false)
-        }
-        updateCompactSidebarForCommandBar()
-    }
-
-    private func updateCompactSidebarForCommandBar() {
         // The command bar is a reveal trigger; a missed close leaves the
         // floating sidebar pinned open.
         let reason = CompactRevealReason.commandBar
@@ -977,143 +743,12 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     }
 
     @objc func newTab(_ sender: Any?) {
-        if Settings.shared.openCommandBarOnNewTab {
-            commandBar.open(openInNewTab: true)
-            updateCompactSidebarForCommandBar()
-        } else {
-            session.newTab()
-            commandBar.open(openInNewTab: false)
-            updateCompactSidebarForCommandBar()
-        }
+        session.newTab()
+        commandBar.open()
     }
     @objc func closeTab(_ sender: Any?) {
-        let multiSelected = sidebar.selectedTabs
-        if multiSelected.count > 1 {
-            session.closeTabs(multiSelected)
-            return
-        }
         guard let tab = session.activeTab, TabClosing.confirm(closing: tab) else { return }
         session.closeTab(tab)
-    }
-
-    @objc func closeAllTabsInCurrentSpace(_ sender: Any?) {
-        session.closeAllTabs(in: session.activeSpace)
-    }
-
-    private func executeCommand(_ id: String) {
-        switch id {
-        case "new-tab":
-            _ = session.newTab()
-        case "close-tab":
-            let multiSelected = sidebar.selectedTabs
-            if multiSelected.count > 1 {
-                session.closeTabs(multiSelected)
-            } else if let tab = session.activeTab, TabClosing.confirm(closing: tab) {
-                session.closeTab(tab)
-            }
-        case "close-all-tabs-in-space":
-            closeAllTabsInCurrentSpace(nil)
-        case "close-selected-tabs":
-            let multiSelected = sidebar.selectedTabs
-            if !multiSelected.isEmpty {
-                session.closeTabs(multiSelected)
-            } else if let tab = session.activeTab, TabClosing.confirm(closing: tab) {
-                session.closeTab(tab)
-            }
-        case "reload-selected-tabs":
-            let multiSelected = sidebar.selectedTabs
-            if !multiSelected.isEmpty {
-                session.reloadTabs(multiSelected)
-            } else if let tab = session.activeTab {
-                tab.reload()
-            }
-        case "reopen-closed-tab":
-            _ = session.reopenClosedTab()
-        case "duplicate-tab":
-            duplicateActiveTab(nil)
-        case "pin-tab":
-            togglePinActiveTab(nil)
-        case "copy-url":
-            copyCurrentURL(nil)
-        case "next-tab":
-            selectNextTab(nil)
-        case "previous-tab":
-            selectPreviousTab(nil)
-        case "next-space":
-            selectNextSpace(nil)
-        case "previous-space":
-            selectPreviousSpace(nil)
-        case "new-space":
-            _ = session.addSpace(named: "New Space")
-        case "split-side-by-side":
-            splitSideBySide(nil)
-        case "split-stacked":
-            splitStacked(nil)
-        case "split-grid":
-            splitGrid(nil)
-        case "unsplit":
-            unsplit(nil)
-        case "reload-page":
-            reloadPage(nil)
-        case "stop-loading":
-            stopLoading(nil)
-        case "go-back":
-            goBack(nil)
-        case "go-forward":
-            goForward(nil)
-        case "find-in-page":
-            performFind(nil)
-        case "reader-mode":
-            togglePageReaderMode()
-        case "zoom-in":
-            stepZoom(by: 1)
-        case "zoom-out":
-            stepZoom(by: -1)
-        case "zoom-reset":
-            resetZoom()
-        case "toggle-sidebar":
-            toggleKylmoraSidebar(nil)
-        case "toggle-compact":
-            toggleCompactMode(nil)
-        case "toggle-archive":
-            toggleArchive(nil)
-        case "full-screen":
-            window?.toggleFullScreen(nil)
-        case "downloads":
-            DownloadManager.shared.showList()
-        case "settings":
-            (NSApp.delegate as? AppDelegate)?.showSettings(nil)
-        case "sync-settings":
-            (NSApp.delegate as? AppDelegate)?.showSyncSettings(nil)
-        case "sync-now":
-            (NSApp.delegate as? AppDelegate)?.syncNow(nil)
-        case "export-backup":
-            (NSApp.delegate as? AppDelegate)?.exportBackup(nil)
-        case "import-backup":
-            (NSApp.delegate as? AppDelegate)?.importBackup(nil)
-        case "import-arc":
-            (NSApp.delegate as? AppDelegate)?.importArcSidebar(nil)
-        case "clear-history":
-            session.clearHistory()
-        case "block-element":
-            startElementPicker()
-        case "toggle-content-blocking":
-            toggleCurrentSiteContentBlocking()
-        case "blocking-settings":
-            showAdvancedBlockingSettings()
-        case "boost-site":
-            openBoostEditor()
-        case "toggle-dark-mode":
-            toggleDarkModeForCurrentSite()
-        case "open-little-arc":
-            openLittleArc()
-        case "install-site-as-app":
-            installCurrentSiteAsWebApp(nil)
-        case "open-standalone-app":
-            openCurrentSiteAsStandaloneWebApp(nil)
-        default:
-            break
-        }
     }
 
     /// Option-Command-1 to 9: the space's pinned sites, in tile order. The
@@ -1147,57 +782,17 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     @objc func selectNextSpace(_ sender: Any?) { switchSpace(by: 1, wraps: Settings.shared.spaceSwitchWraps) }
     @objc func selectPreviousSpace(_ sender: Any?) { switchSpace(by: -1, wraps: Settings.shared.spaceSwitchWraps) }
 
-    /// How many Little Arc windows are open. The quit warning counts them: a
-    /// little window holds a page the user has not kept, and quitting discards
-    /// it.
-    var openLittleArcCount: Int { littleArcs.openCount }
-
-    @objc func openLittleArcWindow(_ sender: Any?) {
-        openLittleArc()
-    }
-
-    func openLittleArc(url: URL? = nil) {
-        let destination = url
-            ?? session.activeTab?.displayURL
-            ?? Settings.shared.newTabURL(isPrivate: externalLinkSpace.isPrivate)
-        littleArcs.open(url: destination, in: externalLinkSpace)
-    }
-
-    /// A link handed over by another app: a Little Arc window, a glance or a
-    /// tab, as the Browsing pane says, and a tab in every case if Shift is held
-    /// as the link arrives.
+    /// A link handed over by another app: a glance if the Browsing pane says
+    /// so and Shift is not held, else a tab.
     func openExternal(_ url: URL) {
-        switch LittleArcRouting.destination(
-            for: Settings.shared.externalLinkPresentation,
-            shiftHeld: NSEvent.modifierFlags.contains(.shift)
-        ) {
-        case .littleArc:
-            // Deliberately without raising this window: staying where the link
-            // was clicked is the entire point of a Little Arc.
-            littleArcs.open(url: url, in: externalLinkSpace)
-        case .glance:
-            showBrowserWindow()
+        if Settings.shared.externalLinkTarget == .defaultSpace, session.defaultSpace.id != session.activeSpaceID {
+            session.selectSpace(session.defaultSpace)
+        }
+        if Settings.shared.opensExternalLinksInGlance, !NSEvent.modifierFlags.contains(.shift) {
             content.openGlance(url)
-        case .tab:
-            showBrowserWindow()
+        } else {
             session.newTab(url: url, origin: .external)
         }
-    }
-
-    /// The space links from other apps belong to: the one in front, unless the
-    /// General pane names a default space.
-    private var externalLinkSpace: Space {
-        Settings.shared.externalLinkTarget == .defaultSpace ? session.defaultSpace : session.activeSpace
-    }
-
-    /// Brings the browser forward for a link that is about to become a tab or a
-    /// glance inside it -- the one path where leaving the window where it is
-    /// would hide the thing the user just asked for.
-    private func showBrowserWindow() {
-        let space = externalLinkSpace
-        if space.id != session.activeSpaceID { session.selectSpace(space) }
-        showWindow(nil)
-        NSApp.activate(ignoringOtherApps: true)
     }
 
     /// The one path a space switch takes, so the swipe, the menu and the

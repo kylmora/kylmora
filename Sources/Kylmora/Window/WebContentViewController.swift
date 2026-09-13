@@ -100,7 +100,6 @@ final class WebContentViewController: NSViewController {
         container.onNewTab = { [weak self] in self?.session.newTab() }
         find.install(in: container)
         session.showToast = { [weak self] toast in self?.toasts.show(toast) }
-        SiteSettings.shared.addChangeObserver { [weak self] in self?.updateTopBar() }
 
         glance.install(
             in: container,
@@ -207,7 +206,7 @@ final class WebContentViewController: NSViewController {
     /// Kylmora has no site-name source yet, so the breadcrumb shows the title
     /// alone and drops the separator with it (D-UI4). The real address stays
     /// in the tooltip and the accessibility value either way.
-    func updateTopBar() {
+    private func updateTopBar() {
         let tab = session.activeTab
         topBar.update(
             canGoBack: tab?.canGoBack ?? false,
@@ -215,16 +214,6 @@ final class WebContentViewController: NSViewController {
             isLoading: tab?.isLoading ?? false,
             hasPage: tab != nil
         )
-        if let shieldButton = topBar.actionButton(labelled: "Shield") as? IconButton {
-            let isBlocked = SiteSettings.shared.blocksContent(for: tab?.displayURL)
-            if isBlocked {
-                shieldButton.setSymbol("checkmark.shield.fill", label: "Shield")
-                shieldButton.contentTintColor = .systemGreen
-            } else {
-                shieldButton.setSymbol("shield.slash.fill", label: "Shield")
-                shieldButton.contentTintColor = .secondaryLabelColor
-            }
-        }
         let settings = Settings.shared
         // The full address, so what the user edits or copies is the whole URL
         // rather than a bare host that would drop the path.
