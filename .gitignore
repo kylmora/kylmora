@@ -8,3 +8,5 @@ build/
 # Local-only working files, not published.
 _local/
 CLAUDE.md
+
+.env
