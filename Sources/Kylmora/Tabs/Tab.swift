@@ -554,6 +554,7 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
 
     @MainActor
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        BoostCoordinator.shared.apply(to: webView)
         tab?.reportVisit()
     }
 
@@ -615,6 +616,7 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
             webView.customUserAgent = sites.userAgent(for: url)
             ContentBlocker.shared.applySiteChoice(for: url, to: webView.configuration.userContentController)
             SitePolicy.shared.apply(for: url, to: webView.configuration.userContentController)
+            BoostCoordinator.shared.apply(for: url, to: webView.configuration.userContentController)
         }
         if navigationAction.shouldPerformDownload {
             guard sites.allowsDownloads(for: url) else {

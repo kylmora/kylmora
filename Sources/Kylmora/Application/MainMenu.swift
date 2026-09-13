@@ -228,6 +228,13 @@ enum MainMenu {
                  modifiers: [.command, .option]),
             item("Toggle Content Blocking on This Site",
                  #selector(BrowserWindowController.toggleContentBlockingFromMenu(_:)), ""),
+            .separator(),
+            item("Boost This Site\u{2026}",
+                 #selector(BrowserWindowController.openBoostEditorFromMenu(_:)), "e",
+                 modifiers: [.command, .option]),
+            item("Toggle Universal Dark Mode",
+                 #selector(BrowserWindowController.toggleDarkModeFromMenu(_:)), "d",
+                 modifiers: [.command, .option])
         ]
 
         return submenu("View", items)

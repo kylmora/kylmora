@@ -293,6 +293,25 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         siteSettings.target = self
         menu.addItem(siteSettings)
 
+        menu.addItem(.separator())
+
+        let boostItem = NSMenuItem(title: "Boost This Site\u{2026}", action: #selector(openBoostEditorFromMenu(_:)), keyEquivalent: "")
+        boostItem.target = self
+        menu.addItem(boostItem)
+
+        if let host = url.host?.lowercased() {
+            let isDark = BoostStore.shared.boost(for: host)?.isDarkModeEnabled ?? false
+            let darkItem = NSMenuItem(
+                title: isDark ? "Disable Universal Dark Mode" : "Enable Universal Dark Mode",
+                action: #selector(toggleDarkModeFromMenu(_:)),
+                keyEquivalent: ""
+            )
+            darkItem.target = self
+            darkItem.state = isDark ? .on : .off
+            menu.addItem(darkItem)
+        }
+
+        menu.addItem(.separator())
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.maxY + 4), in: anchor)
     }
 
@@ -387,6 +406,32 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     func showAdvancedBlockingSettings() {
         let blockerVC = AdvancedBlockingViewController()
         content.presentAsSheet(blockerVC)
+    }
+
+    @objc func openBoostEditorFromMenu(_ sender: Any?) {
+        openBoostEditor()
+    }
+
+    func openBoostEditor() {
+        guard let tab = session.activeTab,
+              let host = tab.displayURL.host?.lowercased(),
+              let webView = tab.currentWebView else { return }
+        let editor = BoostEditorViewController(host: host, webView: webView)
+        content.presentAsSheet(editor)
+    }
+
+    @objc func toggleDarkModeFromMenu(_ sender: Any?) {
+        toggleDarkModeForCurrentSite()
+    }
+
+    func toggleDarkModeForCurrentSite() {
+        guard let tab = session.activeTab,
+              let host = tab.displayURL.host?.lowercased(),
+              let webView = tab.currentWebView else { return }
+        _ = BoostStore.shared.toggleDarkMode(for: host)
+        if let boost = BoostStore.shared.boost(for: host) {
+            BoostCoordinator.shared.applyLive(boost: boost, to: webView)
+        }
     }
 
     @objc func copyCurrentURL(_ sender: Any?) {
@@ -986,6 +1031,10 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             toggleCurrentSiteContentBlocking()
         case "blocking-settings":
             showAdvancedBlockingSettings()
+        case "boost-site":
+            openBoostEditor()
+        case "toggle-dark-mode":
+            toggleDarkModeForCurrentSite()
         default:
             break
         }
