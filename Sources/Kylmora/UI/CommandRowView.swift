@@ -16,6 +16,7 @@ final class CommandRowView: NSView {
     private let iconView = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
+    private let shortcutLabel = NSTextField(labelWithString: "")
     private var trackingArea: NSTrackingArea?
 
     var isSelected = false {
@@ -46,6 +47,14 @@ final class CommandRowView: NSView {
         // The address is the row's caption, not its point: it gives way first.
         subtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
+        shortcutLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+        shortcutLabel.alignment = .right
+        shortcutLabel.cell?.usesSingleLineMode = true
+        shortcutLabel.setAccessibilityElement(false)
+        shortcutLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        shortcutLabel.setContentHuggingPriority(.required, for: .horizontal)
+        shortcutLabel.translatesAutoresizingMaskIntoConstraints = false
+
         let labels = NSStackView(views: [titleLabel, subtitleLabel])
         labels.orientation = .horizontal
         labels.alignment = .lastBaseline
@@ -54,6 +63,7 @@ final class CommandRowView: NSView {
 
         addSubview(iconView)
         addSubview(labels)
+        addSubview(shortcutLabel)
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: CommandBarMetrics.rowHeight),
@@ -68,11 +78,20 @@ final class CommandRowView: NSView {
                 equalTo: iconView.trailingAnchor,
                 constant: Style.Metrics.rowContentSpacing
             ),
-            labels.trailingAnchor.constraint(
-                lessThanOrEqualTo: trailingAnchor,
+            labels.centerYAnchor.constraint(equalTo: centerYAnchor),
+            shortcutLabel.trailingAnchor.constraint(
+                equalTo: trailingAnchor,
                 constant: -CommandBarMetrics.rowInset
             ),
-            labels.centerYAnchor.constraint(equalTo: centerYAnchor)
+            shortcutLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            shortcutLabel.leadingAnchor.constraint(
+                greaterThanOrEqualTo: labels.trailingAnchor,
+                constant: Style.Metrics.rowContentSpacing
+            ),
+            labels.trailingAnchor.constraint(
+                lessThanOrEqualTo: shortcutLabel.leadingAnchor,
+                constant: -Style.Metrics.rowContentSpacing
+            )
         ])
 
         setAccessibilityRole(.button)
@@ -87,7 +106,15 @@ final class CommandRowView: NSView {
         iconView.image = NSImage(systemSymbolName: result.symbolName, accessibilityDescription: nil)
         titleLabel.stringValue = result.title
         subtitleLabel.stringValue = result.subtitle
-        setAccessibilityLabel("\(result.title), \(result.subtitle)")
+        if let shortcut = result.shortcut, !shortcut.isEmpty {
+            shortcutLabel.stringValue = shortcut
+            shortcutLabel.isHidden = false
+            setAccessibilityLabel("\(result.title), \(result.subtitle), shortcut \(shortcut)")
+        } else {
+            shortcutLabel.stringValue = ""
+            shortcutLabel.isHidden = true
+            setAccessibilityLabel("\(result.title), \(result.subtitle)")
+        }
     }
 
     /// A selected row is filled with the system's selection colour, so its text
@@ -96,6 +123,7 @@ final class CommandRowView: NSView {
     private func applySelectionColours() {
         titleLabel.textColor = isSelected ? .alternateSelectedControlTextColor : Style.Colors.primaryText
         subtitleLabel.textColor = isSelected ? .alternateSelectedControlTextColor : Style.Colors.secondaryText
+        shortcutLabel.textColor = isSelected ? .alternateSelectedControlTextColor : Style.Colors.tertiaryText
         iconView.contentTintColor = isSelected ? .alternateSelectedControlTextColor : Style.Colors.secondaryText
     }
 

@@ -101,6 +101,11 @@ final class CommandBar: NSView, NSTextFieldDelegate {
     /// was typed rather than to a row.
     private(set) var selectedIndex: Int?
 
+    /// Whether this opening was triggered to create a new tab (e.g. Cmd-T).
+    private(set) var isNewTabMode = false
+
+    var queryText: String { field.stringValue }
+
     var isOpen: Bool { !isHidden }
 
     override init(frame frameRect: NSRect) {
@@ -199,11 +204,9 @@ final class CommandBar: NSView, NSTextFieldDelegate {
         field.textColor = Style.Colors.primaryText
         field.lineBreakMode = .byTruncatingTail
         field.cell?.usesSingleLineMode = true
-        // No promise of anything Kylmora cannot do: this bar searches and
-        // navigates, so that is what it offers.
-        field.placeholderString = "Search or enter address"
+        field.placeholderString = "Search, enter address, or type a command"
         field.delegate = self
-        field.setAccessibilityLabel("Search or enter address")
+        field.setAccessibilityLabel("Search, enter address, or type a command")
         field.translatesAutoresizingMaskIntoConstraints = false
 
         fieldRow.translatesAutoresizingMaskIntoConstraints = false
@@ -276,7 +279,8 @@ final class CommandBar: NSView, NSTextFieldDelegate {
     // MARK: - Opening and closing
 
     /// Opens the bar with `text` selected, so the first keystroke replaces it.
-    func open(text: String = "") {
+    func open(text: String = "", openInNewTab: Bool = false) {
+        isNewTabMode = openInNewTab
         if !isOpen {
             previousResponder = window?.firstResponder
         }
@@ -293,6 +297,7 @@ final class CommandBar: NSView, NSTextFieldDelegate {
     /// keeping until next time.
     func close() {
         guard isOpen else { return }
+        isNewTabMode = false
         queryTask?.cancel()
         queryTask = nil
         isHidden = true
@@ -457,8 +462,14 @@ final class CommandBar: NSView, NSTextFieldDelegate {
         let text = field.stringValue
         let engine = searchEngineProvider?() ?? Settings.shared.searchEngine
         guard let url = URLResolver.resolve(text, using: engine, engines: Settings.shared.searchEngines) else { return }
+        if NSEvent.modifierFlags.contains(.command) {
+            isNewTabMode = true
+        }
+        let openInNewTab = isNewTabMode
         close()
+        isNewTabMode = openInNewTab
         onRun?(.openURL(url))
+        isNewTabMode = false
     }
 
     // MARK: - Querying
@@ -531,6 +542,22 @@ final class CommandBar: NSView, NSTextFieldDelegate {
         case #selector(NSResponder.moveUp(_:)):
             moveSelection(by: -1)
             return true
+        case #selector(NSResponder.insertTab(_:)):
+            if let selectedIndex, visibleResults.indices.contains(selectedIndex) {
+                let item = visibleResults[selectedIndex]
+                let fillText: String
+                switch item.kind {
+                case .search, .command, .space:
+                    fillText = item.title
+                case .openTab, .history, .bookmark:
+                    fillText = item.subtitle
+                }
+                field.stringValue = fillText
+                field.currentEditor()?.moveToEndOfLine(nil)
+                scheduleQuery(for: fillText)
+                return true
+            }
+            return false
         case #selector(NSResponder.insertNewline(_:)):
             submit()
             return true

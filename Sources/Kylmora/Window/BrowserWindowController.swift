@@ -425,17 +425,36 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             let engine = settings.searchEngine(isPrivate: self.session.activeSpace.isPrivate)
             let search = engine.url(for: query.trimmingCharacters(in: .whitespacesAndNewlines))
                 .map { SearchCandidate(engineName: engine.name, url: $0) }
-            return CommandRanker.rank(
-                query: query,
-                tabs: self.session.allTabs.map { tab in
+
+            let allTabs: [TabCandidate] = self.session.spaces.flatMap { space in
+                space.tabs.map { tab in
                     TabCandidate(
                         id: tab.id,
                         title: tab.displayTitle,
                         address: AddressFormatter.display(tab.url),
                         url: tab.url,
-                        isActive: tab.id == activeID
+                        isActive: tab.id == activeID,
+                        spaceName: space.name
                     )
-                },
+                }
+            }
+
+            let spaces: [SpaceCandidate] = self.session.spaces.map { space in
+                SpaceCandidate(
+                    id: space.id,
+                    name: space.name,
+                    isActive: space.id == self.session.activeSpace.id,
+                    tabCount: space.tabs.count
+                )
+            }
+
+            let commands = CommandCatalog.all
+
+            return CommandRanker.rank(
+                query: query,
+                tabs: allTabs,
+                spaces: spaces,
+                commands: commands,
                 history: history.map {
                     HistoryCandidate(
                         url: $0.url,
@@ -449,8 +468,13 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
                 },
                 search: search,
                 sources: CommandSources(
-                    openTabs: sources.openTabs, history: sources.history, bookmarks: sources.bookmarks,
-                    searchEngine: sources.searchEngine, topHits: sources.topHits
+                    openTabs: sources.openTabs,
+                    spaces: true,
+                    commands: true,
+                    history: sources.history,
+                    bookmarks: sources.bookmarks,
+                    searchEngine: sources.searchEngine,
+                    topHits: sources.topHits
                 )
             )
         }
@@ -466,10 +490,17 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
                 }), let tab = space.tabs.first(where: { $0.id == id }) else { return }
                 self.session.selectSpace(space)
                 self.session.selectTab(tab)
+            case .switchToSpace(let id):
+                guard let space = self.session.spaces.first(where: { $0.id == id }) else { return }
+                self.session.selectSpace(space)
+            case .runCommand(let commandId):
+                self.executeCommand(commandId)
             case .openURL(let url):
                 // The same chord that peeks at a link peeks at a result.
                 if GlanceInvocation.isGlanceChord(NSEvent.modifierFlags) {
                     self.content.openGlance(url)
+                } else if self.commandBar.isNewTabMode {
+                    self.session.newTab(url: url)
                 } else if let tab = self.session.activeTab {
                     tab.load(url)
                 } else {
@@ -556,6 +587,20 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
 
     @objc func openCommandBar(_ sender: Any?) {
         commandBar.toggle()
+        updateCompactSidebarForCommandBar()
+    }
+
+    @objc func openLocation(_ sender: Any?) {
+        if commandBar.isOpen {
+            commandBar.toggle()
+        } else {
+            let initialText = session.activeTab.map { AddressFormatter.display($0.url) } ?? ""
+            commandBar.open(text: initialText, openInNewTab: false)
+        }
+        updateCompactSidebarForCommandBar()
+    }
+
+    private func updateCompactSidebarForCommandBar() {
         // The command bar is a reveal trigger; a missed close leaves the
         // floating sidebar pinned open.
         let reason = CompactRevealReason.commandBar
@@ -743,12 +788,79 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     }
 
     @objc func newTab(_ sender: Any?) {
-        session.newTab()
-        commandBar.open()
+        if Settings.shared.openCommandBarOnNewTab {
+            commandBar.open(openInNewTab: true)
+            updateCompactSidebarForCommandBar()
+        } else {
+            session.newTab()
+            commandBar.open(openInNewTab: false)
+            updateCompactSidebarForCommandBar()
+        }
     }
     @objc func closeTab(_ sender: Any?) {
         guard let tab = session.activeTab, TabClosing.confirm(closing: tab) else { return }
         session.closeTab(tab)
+    }
+
+    private func executeCommand(_ id: String) {
+        switch id {
+        case "new-tab":
+            _ = session.newTab()
+        case "reopen-closed-tab":
+            _ = session.reopenClosedTab()
+        case "next-tab":
+            selectNextTab(nil)
+        case "previous-tab":
+            selectPreviousTab(nil)
+        case "next-space":
+            selectNextSpace(nil)
+        case "previous-space":
+            selectPreviousSpace(nil)
+        case "new-space":
+            _ = session.addSpace(named: "New Space")
+        case "split-side-by-side":
+            splitSideBySide(nil)
+        case "split-stacked":
+            splitStacked(nil)
+        case "split-grid":
+            splitGrid(nil)
+        case "unsplit":
+            unsplit(nil)
+        case "reload-page":
+            reloadPage(nil)
+        case "stop-loading":
+            stopLoading(nil)
+        case "go-back":
+            goBack(nil)
+        case "go-forward":
+            goForward(nil)
+        case "find-in-page":
+            performFind(nil)
+        case "reader-mode":
+            togglePageReaderMode()
+        case "zoom-in":
+            stepZoom(by: 1)
+        case "zoom-out":
+            stepZoom(by: -1)
+        case "zoom-reset":
+            resetZoom()
+        case "toggle-sidebar":
+            toggleKylmoraSidebar(nil)
+        case "toggle-compact":
+            toggleCompactMode(nil)
+        case "toggle-archive":
+            toggleArchive(nil)
+        case "full-screen":
+            window?.toggleFullScreen(nil)
+        case "downloads":
+            DownloadManager.shared.showList()
+        case "settings":
+            (NSApp.delegate as? AppDelegate)?.showSettings(nil)
+        case "clear-history":
+            session.clearHistory()
+        default:
+            break
+        }
     }
 
     /// Option-Command-1 to 9: the space's pinned sites, in tile order. The

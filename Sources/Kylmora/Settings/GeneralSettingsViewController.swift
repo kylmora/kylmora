@@ -22,6 +22,7 @@ final class GeneralSettingsViewController: NSViewController {
     private let spacePopUp = NSPopUpButton()
     private let externalPopUp = NSPopUpButton()
     private let quitWarning = NSButton(checkboxWithTitle: "Show warning before quitting", target: nil, action: nil)
+    private let commandBarOnNewTab = NSButton(checkboxWithTitle: "Open Command Palette on New Tab (⌘T)", target: nil, action: nil)
     private let session: BrowserSession?
 
     /// The page in front, for "Set to Current Page". Nil when there is none.
@@ -61,6 +62,11 @@ final class GeneralSettingsViewController: NSViewController {
         newTabsPopUp.target = self
         newTabsPopUp.action = #selector(newTabsChanged)
         form.addRow("New tabs open with", SettingsForm.fill(newTabsPopUp))
+
+        commandBarOnNewTab.target = self
+        commandBarOnNewTab.action = #selector(commandBarOnNewTabChanged)
+        form.addContinuation(commandBarOnNewTab)
+        form.addNote("Keeps the current page in view until you enter an address or choose a destination.")
 
         homepageField.placeholderString = "https://"
         homepageField.target = self
@@ -175,6 +181,7 @@ final class GeneralSettingsViewController: NSViewController {
         }
         opensWithPopUp.selectItem(at: settings.restoresSession ? 0 : 1)
         newTabsPopUp.selectItem(withTitle: settings.newTabTarget.title)
+        commandBarOnNewTab.state = settings.openCommandBarOnNewTab ? .on : .off
         homepageField.stringValue = settings.homepageURL?.absoluteString ?? ""
         appearancePopUp.selectItem(withTitle: settings.appearance.title)
         suspensionPopUp.selectItem(withTitle: Self.suspensionTitle(settings.tabSuspensionMinutes))
@@ -249,6 +256,10 @@ final class GeneralSettingsViewController: NSViewController {
         let index = newTabsPopUp.indexOfSelectedItem
         guard NewTabTarget.allCases.indices.contains(index) else { return }
         settings.newTabTarget = NewTabTarget.allCases[index]
+    }
+
+    @objc private func commandBarOnNewTabChanged() {
+        settings.openCommandBarOnNewTab = commandBarOnNewTab.state == .on
     }
 
     @objc private func homepageCommitted() {

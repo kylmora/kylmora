@@ -9,10 +9,12 @@ enum CommandAction: Equatable, Sendable {
     /// The identifier is `Tab.ID`, spelled as `UUID` so this layer never names
     /// a model type.
     case switchToTab(UUID)
+    case switchToSpace(UUID)
+    case runCommand(String)
     case openURL(URL)
 }
 
-/// An open tab, reduced to the four things ranking cares about.
+/// An open tab, reduced to the things ranking cares about.
 struct TabCandidate: Equatable, Sendable {
     let id: UUID
     let title: String
@@ -23,6 +25,26 @@ struct TabCandidate: Equatable, Sendable {
     /// The tab already on screen. Offering "switch to the tab you are looking
     /// at" is a row that can only waste a keystroke, so it is dropped.
     let isActive: Bool
+    /// Optional space name to display when the tab resides in a space.
+    var spaceName: String? = nil
+}
+
+/// A space, reduced for ranking and switching.
+struct SpaceCandidate: Equatable, Sendable {
+    let id: UUID
+    let name: String
+    let isActive: Bool
+    var tabCount: Int = 0
+}
+
+/// A command or action that can be executed from the palette.
+struct CommandCandidate: Equatable, Sendable {
+    let id: String
+    let title: String
+    var subtitle: String? = nil
+    let symbolName: String
+    var shortcut: String? = nil
+    var keywords: [String] = []
 }
 
 /// A history row, reduced the same way. Mirrors `HistoryEntry` without
@@ -55,6 +77,8 @@ struct SearchCandidate: Equatable, Sendable {
 /// otherwise.
 struct CommandSources: Equatable, Sendable {
     var openTabs = true
+    var spaces = true
+    var commands = true
     var history = true
     var bookmarks = true
     var searchEngine = true
@@ -67,6 +91,8 @@ struct CommandSources: Equatable, Sendable {
 struct CommandResult: Equatable, Sendable, Identifiable {
     enum Kind: Equatable, Sendable {
         case openTab
+        case space
+        case command
         case history
         case bookmark
         case search
@@ -83,10 +109,11 @@ struct CommandResult: Equatable, Sendable, Identifiable {
     /// Exposed because the ordering is the interesting part of this type and a
     /// test that could not see the score could only assert on the order.
     let score: Int
+    var shortcut: String? = nil
 }
 
-/// Turns a query plus the two things Kylmora can already answer it with -- open
-/// tabs and history -- into an ordered list of rows.
+/// Turns a query plus open tabs, spaces, commands, history and bookmarks
+/// into an ordered list of rows.
 ///
 /// Pure and free of AppKit, in the same spirit as `URLResolver` and
 /// `TabSuspension`: the ranking is the part with judgement in it, so it is the
@@ -118,6 +145,10 @@ enum CommandRanker {
     /// nearly always, the one that was meant.
     static let openTabBonus = 15
 
+    /// Spaces and commands carry a strong intentionality bonus.
+    static let spaceBonus = 20
+    static let commandBonus = 18
+
     /// How much a frequently visited page may climb. Capped so that one much
     /// visited site cannot outrank a better match, which is the failure mode of
     /// every frequency-weighted omnibox.
@@ -129,6 +160,8 @@ enum CommandRanker {
     static func rank(
         query: String,
         tabs: [TabCandidate],
+        spaces: [SpaceCandidate] = [],
+        commands: [CommandCandidate] = [],
         history: [HistoryCandidate],
         bookmarks: [BookmarkCandidate] = [],
         search: SearchCandidate? = nil,
@@ -141,22 +174,71 @@ enum CommandRanker {
         var results: [CommandResult] = []
         var claimed: Set<String> = []
 
+        // 1. Open tabs
         for tab in tabs where !tab.isActive && sources.openTabs {
             guard let score = score(query: normalisedQuery, title: tab.title, address: tab.address) else {
                 continue
             }
             claimed.insert(destinationKey(tab.url))
+            let subtitle: String
+            if let space = tab.spaceName, !space.isEmpty {
+                subtitle = "\(space) • \(tab.address)"
+            } else {
+                subtitle = tab.address
+            }
             results.append(CommandResult(
                 id: "tab:\(tab.id.uuidString)",
                 kind: .openTab,
                 title: tab.title,
-                subtitle: tab.address,
+                subtitle: subtitle,
                 symbolName: "macwindow",
                 action: .switchToTab(tab.id),
-                score: score + openTabBonus
+                score: score + openTabBonus,
+                shortcut: "Jump"
             ))
         }
 
+        // 2. Spaces
+        for space in spaces where !space.isActive && sources.spaces {
+            guard let score = scoreText(query: normalisedQuery, in: space.name) else { continue }
+            let countStr = space.tabCount == 1 ? "1 tab" : "\(space.tabCount) tabs"
+            results.append(CommandResult(
+                id: "space:\(space.id.uuidString)",
+                kind: .space,
+                title: space.name,
+                subtitle: "Space • \(countStr)",
+                symbolName: "square.stack.3d.up",
+                action: .switchToSpace(space.id),
+                score: score + spaceBonus,
+                shortcut: "Space"
+            ))
+        }
+
+        // 3. Commands & Actions
+        for cmd in commands where sources.commands {
+            var bestScore: Int? = scoreText(query: normalisedQuery, in: cmd.title)
+            if let sub = cmd.subtitle, let subScore = scoreText(query: normalisedQuery, in: sub) {
+                bestScore = max(bestScore ?? 0, subScore - 10)
+            }
+            for kw in cmd.keywords {
+                if let kwScore = scoreText(query: normalisedQuery, in: kw) {
+                    bestScore = max(bestScore ?? 0, kwScore)
+                }
+            }
+            guard let finalScore = bestScore else { continue }
+            results.append(CommandResult(
+                id: "cmd:\(cmd.id)",
+                kind: .command,
+                title: cmd.title,
+                subtitle: cmd.subtitle ?? "Action",
+                symbolName: cmd.symbolName,
+                action: .runCommand(cmd.id),
+                score: finalScore + commandBonus,
+                shortcut: cmd.shortcut
+            ))
+        }
+
+        // 4. History
         for entry in history where sources.history {
             // A history row for a page that is already open is the same
             // destination said twice; the tab is the better half of the pair.
@@ -177,6 +259,7 @@ enum CommandRanker {
             ))
         }
 
+        // 5. Bookmarks
         for bookmark in bookmarks where sources.bookmarks {
             let key = destinationKey(bookmark.url)
             guard !claimed.contains(key) else { continue }
@@ -211,7 +294,8 @@ enum CommandRanker {
                 let row = top.element
                 results[top.offset] = CommandResult(
                     id: row.id, kind: row.kind, title: row.title, subtitle: row.subtitle,
-                    symbolName: row.symbolName, action: row.action, score: row.score + topHitBonus
+                    symbolName: row.symbolName, action: row.action, score: row.score + topHitBonus,
+                    shortcut: row.shortcut
                 )
             }
         }
@@ -241,10 +325,23 @@ enum CommandRanker {
     /// canonical destination, and it is the one a bare hostname query means.
     private static func isOrderedBefore(_ lhs: CommandResult, _ rhs: CommandResult) -> Bool {
         if lhs.score != rhs.score { return lhs.score > rhs.score }
-        if lhs.kind != rhs.kind { return lhs.kind == .openTab }
+        if lhs.kind != rhs.kind {
+            return kindPriority(lhs.kind) < kindPriority(rhs.kind)
+        }
         if lhs.subtitle.count != rhs.subtitle.count { return lhs.subtitle.count < rhs.subtitle.count }
         if lhs.subtitle != rhs.subtitle { return lhs.subtitle < rhs.subtitle }
         return lhs.id < rhs.id
+    }
+
+    private static func kindPriority(_ kind: CommandResult.Kind) -> Int {
+        switch kind {
+        case .openTab: return 0
+        case .space: return 1
+        case .command: return 2
+        case .bookmark: return 3
+        case .history: return 4
+        case .search: return 5
+        }
     }
 
     /// The tier a query earns against one candidate, or nil for no match.
@@ -264,7 +361,37 @@ enum CommandRanker {
         if title.hasPrefix(query) { return Tier.titlePrefix }
         if startsAWord(query, in: title) || startsAWord(query, in: address) { return Tier.wordPrefix }
         if address.contains(query) || title.contains(query) { return Tier.substring }
+        if matchesFuzzy(query, in: title) || matchesFuzzy(query, in: address) { return 15 }
         return nil
+    }
+
+    /// Scores a query against arbitrary text (such as space names or command titles).
+    static func scoreText(query: String, in text: String) -> Int? {
+        let query = normalise(query)
+        guard !query.isEmpty else { return nil }
+        let text = normalise(text)
+        guard !text.isEmpty else { return nil }
+
+        if text == query { return Tier.exactHost }
+        if text.hasPrefix(query) { return Tier.titlePrefix }
+        if startsAWord(query, in: text) { return Tier.wordPrefix }
+        if text.contains(query) { return Tier.substring }
+        if matchesFuzzy(query, in: text) { return 15 }
+        return nil
+    }
+
+    /// Subsequence / fuzzy matching for quick typing: characters in `query` appear
+    /// in order within `text`.
+    static func matchesFuzzy(_ query: String, in text: String) -> Bool {
+        guard !query.isEmpty else { return false }
+        var queryIdx = query.startIndex
+        for ch in text {
+            if ch == query[queryIdx] {
+                queryIdx = query.index(after: queryIdx)
+                if queryIdx == query.endIndex { return true }
+            }
+        }
+        return false
     }
 
     // MARK: - Normalisation

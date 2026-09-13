@@ -156,7 +156,8 @@ enum MainMenu {
         var items: [NSMenuItem] = [
             appearanceMenuItem(),
             .separator(),
-            item("Open Command Bar", #selector(BrowserWindowController.openCommandBar(_:)), "l"),
+            item("Command Palette\u{2026}", #selector(BrowserWindowController.openCommandBar(_:)), "k"),
+            item("Open Location\u{2026}", #selector(BrowserWindowController.openLocation(_:)), "l"),
             item("Reload Page", #selector(BrowserWindowController.reloadPage(_:)), "r"),
             item("Stop Loading", #selector(BrowserWindowController.stopLoading(_:)), "."),
             .separator(),

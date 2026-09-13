@@ -69,6 +69,7 @@ final class Settings {
         static let passwordOfferSave = "passwordOfferSave"
         static let passwordSubmitAutomatically = "passwordSubmitAutomatically"
         static let passwordUsesTouchID = "passwordUsesTouchID"
+        static let openCommandBarOnNewTab = "openCommandBarOnNewTab"
     }
 
     private let defaults: UserDefaults
@@ -354,6 +355,13 @@ final class Settings {
     var newTabTarget: NewTabTarget {
         get { NewTabTarget(rawValue: defaults.string(forKey: Key.newTabTarget) ?? "") ?? .startPage }
         set { defaults.set(newValue.rawValue, forKey: Key.newTabTarget) }
+    }
+
+    /// Whether Cmd-T opens the floating command palette over the current page
+    /// without replacing or creating a blank page first.
+    var openCommandBarOnNewTab: Bool {
+        get { defaults.object(forKey: Key.openCommandBarOnNewTab) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.openCommandBarOnNewTab) }
     }
 
     /// The content-blocking switches and per-list choices. On by default:
