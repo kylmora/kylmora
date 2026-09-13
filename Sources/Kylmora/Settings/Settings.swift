@@ -14,6 +14,8 @@ final class Settings {
         static let searchEngine = "searchEngineIdentifier"
         static let restoresSession = "restoresSessionOnLaunch"
         static let suspensionMinutes = "tabSuspensionMinutes"
+        static let archiveHours = "tabArchiveHours"
+        static let idleBadge = "tabIdleBadgeMode"
         static let compactMode = "compactModeEnabled"
         static let compactHidesToolbar = "compactModeHidesToolbar"
         static let compactRevealsOnHover = "compactModeRevealsOnHover"
@@ -77,6 +79,11 @@ final class Settings {
             Key.searchEngine: SearchEngine.duckDuckGo.id,
             Key.restoresSession: true,
             Key.suspensionMinutes: 10,
+            // Off. Archiving removes rows the user did not ask to remove, so it
+            // is the one tab-lifecycle setting that has to be switched on
+            // deliberately rather than discovered after the fact.
+            Key.archiveHours: 0,
+            Key.idleBadge: TabIdleBadgeMode.asleep.rawValue,
             Key.compactMode: false,
             Key.compactHidesToolbar: false,
             Key.compactRevealsOnHover: true,
@@ -466,6 +473,28 @@ final class Settings {
     var tabSuspensionDelay: TimeInterval? {
         let minutes = tabSuspensionMinutes
         return minutes > 0 ? TimeInterval(minutes) * 60 : nil
+    }
+
+    /// Measured in hours, not minutes: the second stage is about days away from
+    /// a tab, and offering "archive after 5 minutes" would invite people to
+    /// configure their tabs into disappearing.
+    static let archiveChoices: [Int] = [0, 12, 24, 72, 168, 720]
+
+    var tabArchiveHours: Int {
+        get { defaults.integer(forKey: Key.archiveHours) }
+        set { defaults.set(newValue, forKey: Key.archiveHours) }
+    }
+
+    /// How long a *sleeping* tab may sit before it leaves the sidebar, or nil
+    /// when archiving is off.
+    var tabArchiveDelay: TimeInterval? {
+        let hours = tabArchiveHours
+        return hours > 0 ? TimeInterval(hours) * 3_600 : nil
+    }
+
+    var tabIdleBadgeMode: TabIdleBadgeMode {
+        get { TabIdleBadgeMode(rawValue: defaults.string(forKey: Key.idleBadge) ?? "") ?? .asleep }
+        set { defaults.set(newValue.rawValue, forKey: Key.idleBadge) }
     }
 
     /// Whether the window comes back in compact mode. A window that forgets

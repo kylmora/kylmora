@@ -9,6 +9,11 @@ build/
 _local/
 CLAUDE.md
 
+# Research notes: read locally, never published. The feature comparison and the
+# threads it was read from are working material, not part of the browser.
+BROWSER_FEATURES.md
+docs/research/
+
 .env
 
 # Code-signing material — never commit.

@@ -542,6 +542,18 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         item.animator().isCollapsed.toggle()
     }
 
+    /// Shows the archive, or puts it away. It is a mode of the sidebar rather
+    /// than a window of its own, so opening it from the menu has to bring the
+    /// sidebar back rather than toggle something nobody can see.
+    @objc func toggleArchive(_ sender: Any?) {
+        if sidebar.isShowingArchive {
+            sidebar.setArchiveVisible(false)
+            return
+        }
+        splitViewController.splitViewItems.first?.animator().isCollapsed = false
+        sidebar.setArchiveVisible(true)
+    }
+
     @objc func openCommandBar(_ sender: Any?) {
         commandBar.toggle()
         // The command bar is a reveal trigger; a missed close leaves the

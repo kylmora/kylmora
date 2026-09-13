@@ -22,6 +22,17 @@ struct SessionSnapshot: Codable, Equatable {
         /// contents and the back-forward list. Absent when the tab was never
         /// shown, in which case the URL alone is enough.
         var interactionState: Data?
+        /// When the tab was last on screen. Absent in sessions written before
+        /// the idle clock was persisted, which restore as "just now".
+        ///
+        /// Persisted because archiving measures in days: without it, quitting
+        /// on Friday would hand every tab a fresh clock on Monday and nothing
+        /// would ever age out of a sidebar that is closed every evening.
+        var lastActiveAt: Date?
+        /// Absent for tabs the user never locked, and for sessions written
+        /// before the locks existed.
+        var keepsAwake: Bool?
+        var keepsInSidebar: Bool?
     }
 
     struct Space: Codable, Equatable {
@@ -52,6 +63,19 @@ struct SessionSnapshot: Codable, Equatable {
         /// Absent in sessions written before groups and pins existed.
         var groups: [Group]?
         var pinnedSites: [Pinned]?
+        /// Tabs auto-archived out of this space's sidebar. Held on the space
+        /// rather than at the top level because a snapshot identifies spaces by
+        /// position, so anything filed by space id would not survive a reorder.
+        /// Absent in sessions written before archiving existed.
+        var archivedTabs: [Archived]?
+    }
+
+    /// A tab that left the sidebar on its own. Kept whole, so restoring it
+    /// brings back the scroll position and back-forward list too, not just an
+    /// address.
+    struct Archived: Codable, Equatable {
+        var tab: Tab
+        var archivedAt: Date
     }
 
     struct Group: Codable, Equatable {

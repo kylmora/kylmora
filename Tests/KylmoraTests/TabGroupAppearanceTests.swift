@@ -103,6 +103,18 @@ struct FolderPlateGeometryTests {
         #expect(placed.first?.plateHeight == 32)
     }
 
+    @Test("A taller last row lengthens the plate rather than the rows above it")
+    func tallerLastRowExtendsThePlate() {
+        // The row that ends a plate carries the padding under its last pill, so
+        // the card's bottom edge clears it: the plate is still the header's
+        // content plus its children, with the extra height all at the end.
+        let placed = FolderPlateGeometry.slices(rowHeights: [38, 32, 38], gap: 6)
+        #expect(placed.allSatisfy { $0.plateHeight == 102 })
+        // The rows above are unmoved; the last row starts where it always did.
+        #expect(placed[1].plateTop == -32)
+        #expect(placed[2].plateTop == -64)
+    }
+
     @Test("No rows means no slices")
     func empty() {
         #expect(FolderPlateGeometry.slices(rowHeights: [], gap: 6).isEmpty)

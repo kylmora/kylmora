@@ -64,8 +64,20 @@ final class Tab: Identifiable {
     /// after which the pin no longer recognises its own tab and opens another.
     private(set) var pinnedSiteID: UUID?
 
-    /// When this tab was last on screen. Drives suspension.
+    /// When this tab was last on screen. Drives suspension and archiving.
     private(set) var lastActiveAt: Date = .now
+
+    /// Never suspend this tab, however long it sits. The user's own override of
+    /// the idle policy, for the tab holding a half-written message or a page
+    /// that loses its state on reload.
+    ///
+    /// Because archiving only ever takes already-suspended tabs, a tab kept
+    /// awake is also never archived: one switch, both promises.
+    private(set) var keepsAwake = false
+
+    /// Never archive this tab. It may still suspend -- giving its memory back
+    /// costs the user nothing -- but it does not leave the sidebar.
+    private(set) var keepsInSidebar = false
 
     /// Set when the current navigation failed, cleared when a new one starts.
     private(set) var failure: NavigationFailure?
@@ -141,7 +153,20 @@ final class Tab: Identifiable {
     var currentWebView: WKWebView? { loadedWebView }
 
     /// Was loaded, has been released, and can be brought back exactly.
+    ///
+    /// Narrower than `isAsleep`: this is specifically the tab that has a saved
+    /// scroll position and back-forward list waiting for it.
     var isSuspended: Bool { loadedWebView == nil && savedInteractionState != nil }
+
+    /// No web view, so no memory, so nothing on screen to lose.
+    ///
+    /// Two tabs reach this from opposite directions -- one was loaded and gave
+    /// its page back, the other was restored or opened in the background and
+    /// has never had a page at all -- and the difference between them is not
+    /// one the sidebar should ask anyone to care about. Both are costing
+    /// nothing and neither is open. This is what "sleeping" means to a user,
+    /// and so it is what the moon, the dimming and the idle badge key off.
+    var isAsleep: Bool { loadedWebView == nil }
 
     /// Set by `BrowserSession` when a pinned shortcut opens this tab.
     func setPinnedSiteID(_ id: UUID?) {
@@ -160,6 +185,38 @@ final class Tab: Identifiable {
     /// Called when the tab becomes the visible one.
     func markActive() {
         lastActiveAt = .now
+    }
+
+    /// How long this tab has been out of sight. Zero while it is the visible
+    /// one, because `markActive` keeps stamping it.
+    func idleDuration(now: Date = .now) -> TimeInterval {
+        max(0, now.timeIntervalSince(lastActiveAt))
+    }
+
+    /// Winds the idle clock back, for tests.
+    ///
+    /// Archiving is measured in days. The alternative to this one line is
+    /// either a test that takes three days or an archiving policy that is only
+    /// ever exercised with the thresholds turned down to something no user
+    /// would set, and neither tells us the shipped behaviour is right.
+    func backdateLastActive(by seconds: TimeInterval) {
+        lastActiveAt = lastActiveAt.addingTimeInterval(-seconds)
+    }
+
+    /// Set from the sidebar's menu. Waking a tab that is already asleep is left
+    /// to the caller: the flag says what happens from now on, and reloading a
+    /// page the user cannot see is not what they asked for.
+    func setKeepsAwake(_ keeps: Bool) {
+        guard keeps != keepsAwake else { return }
+        keepsAwake = keeps
+        didChange.send()
+    }
+
+    /// Set from the sidebar's menu.
+    func setKeepsInSidebar(_ keeps: Bool) {
+        guard keeps != keepsInSidebar else { return }
+        keepsInSidebar = keeps
+        didChange.send()
     }
 
     var canGoBack: Bool { loadedWebView?.canGoBack ?? false }
@@ -213,6 +270,12 @@ final class Tab: Identifiable {
         self.groupID = snapshot.groupID
         self.pinnedSiteID = snapshot.pinnedSiteID
         self.savedInteractionState = snapshot.interactionState
+        // A session written before the clock was persisted restores as "just
+        // now", which is the safe direction to be wrong in: a tab is never
+        // archived for idleness it accrued while nobody was measuring.
+        self.lastActiveAt = snapshot.lastActiveAt ?? .now
+        self.keepsAwake = snapshot.keepsAwake ?? false
+        self.keepsInSidebar = snapshot.keepsInSidebar ?? false
         TabNameStore.shared.restore(snapshot.customName, for: id)
     }
 
@@ -224,7 +287,12 @@ final class Tab: Identifiable {
             groupID: groupID,
             customName: TabNameStore.shared.name(for: id),
             pinnedSiteID: pinnedSiteID,
-            interactionState: loadedWebView?.interactionState as? Data ?? savedInteractionState as? Data
+            interactionState: loadedWebView?.interactionState as? Data ?? savedInteractionState as? Data,
+            lastActiveAt: lastActiveAt,
+            // Written only when set, so a session file does not grow a pair of
+            // `false`s on every tab the user never touched.
+            keepsAwake: keepsAwake ? true : nil,
+            keepsInSidebar: keepsInSidebar ? true : nil
         )
     }
 

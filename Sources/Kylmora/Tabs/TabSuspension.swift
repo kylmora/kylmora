@@ -18,23 +18,33 @@ enum TabSuspension {
 
     /// Everything the policy decides from, for one tab.
     ///
-    /// The policy reads three facts and no more, so it is stated over those
-    /// three facts. That is what lets the rules be tested with plain values
-    /// instead of a window, a web view and a ten-minute wait.
+    /// The policy reads four facts and no more, so it is stated over those four
+    /// facts. That is what lets the rules be tested with plain values instead of
+    /// a window, a web view and a ten-minute wait.
     struct TabState: Equatable, Sendable {
         let id: Tab.ID
         let isLoaded: Bool
         let lastActiveAt: Date
+        /// The user's "Keep Awake" lock. Honoured for idle sweeps and for
+        /// ordinary memory warnings; see `candidateIDs` for the one case that
+        /// overrules it.
+        let keepsAwake: Bool
 
-        init(id: Tab.ID, isLoaded: Bool, lastActiveAt: Date) {
+        init(id: Tab.ID, isLoaded: Bool, lastActiveAt: Date, keepsAwake: Bool = false) {
             self.id = id
             self.isLoaded = isLoaded
             self.lastActiveAt = lastActiveAt
+            self.keepsAwake = keepsAwake
         }
 
         @MainActor
         init(_ tab: Tab) {
-            self.init(id: tab.id, isLoaded: tab.isLoaded, lastActiveAt: tab.lastActiveAt)
+            self.init(
+                id: tab.id,
+                isLoaded: tab.isLoaded,
+                lastActiveAt: tab.lastActiveAt,
+                keepsAwake: tab.keepsAwake
+            )
         }
     }
 
@@ -99,12 +109,23 @@ enum TabSuspension {
             minimumIdle = nil
         }
 
-        // A rendered tab protects everything it is split with. The caller should
-        // already be reporting every pane, but a cohort whose panes disagree
-        // about being visible is a bug that would blank a page, so the closure
-        // is taken here rather than trusted upstream.
+        // "Keep Awake" reads as protection, which is also what makes a locked
+        // pane protect the split it sits in. The lock yields only when the
+        // system is critically short of memory: the alternative there is the
+        // kernel picking a process to kill, and it does not know which tab the
+        // user locked. The settings note says so, so the one case where the
+        // promise bends is not a surprise.
         var protected = protectedIDs
-        for cohort in cohorts where !cohort.isDisjoint(with: protectedIDs) {
+        if trigger != .memoryCritical {
+            protected.formUnion(tabs.lazy.filter(\.keepsAwake).map(\.id))
+        }
+
+        // A rendered or locked tab protects everything it is split with. The
+        // caller should already be reporting every pane, but a cohort whose
+        // panes disagree about being visible is a bug that would blank a page,
+        // so the closure is taken here rather than trusted upstream.
+        let seeds = protected
+        for cohort in cohorts where !cohort.isDisjoint(with: seeds) {
             protected.formUnion(cohort)
         }
 

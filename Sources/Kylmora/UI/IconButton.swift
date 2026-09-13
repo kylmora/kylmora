@@ -11,6 +11,13 @@ import AppKit
 /// can stay free of the session model.
 @MainActor
 final class IconButton: NSButton {
+    /// Drawn as on. For a button that toggles what the window is showing -- the
+    /// sidebar's Archive -- so the state is legible from the button rather than
+    /// only from the list it changed.
+    var isActive = false {
+        didSet { if isActive != oldValue { needsDisplay = true } }
+    }
+
     private var onClick: (() -> Void)?
     private var trackingArea: NSTrackingArea?
     private var isHovered = false {
@@ -78,8 +85,18 @@ final class IconButton: NSButton {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        if isHovered && isEnabled && isPointerInside {
-            Style.Colors.rowHoverFill.setFill()
+        // The active fill keeps its shape when the pointer leaves: a button that
+        // is on is on, not hovering.
+        let fill: NSColor?
+        if isActive {
+            fill = Style.Colors.rowSelectedFill
+        } else if isHovered && isEnabled && isPointerInside {
+            fill = Style.Colors.rowHoverFill
+        } else {
+            fill = nil
+        }
+        if let fill {
+            fill.setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
         }
         super.draw(dirtyRect)

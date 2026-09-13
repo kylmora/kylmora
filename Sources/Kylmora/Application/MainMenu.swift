@@ -201,6 +201,8 @@ enum MainMenu {
             .separator(),
             item("Downloads", #selector(AppDelegate.showDownloads(_:)), "l",
                  modifiers: [.command, .option]),
+            item("Archive", #selector(BrowserWindowController.toggleArchive(_:)), "a",
+                 modifiers: [.command, .option, .shift]),
             item("Hide Sidebar", #selector(BrowserWindowController.toggleKylmoraSidebar(_:)), "s",
                  modifiers: [.command, .control]),
             item("Compact Mode", #selector(BrowserWindowController.toggleCompactMode(_:)), "c",

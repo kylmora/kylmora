@@ -12,6 +12,13 @@ final class SidebarViewController: NSViewController {
     private let diaHeader = SidebarHeaderView()
     private let pinnedTiles = PinnedTilesView()
     private let diaFooter = SidebarFooterView()
+    /// The archive, shown in place of the pins and the tab list. Held rather
+    /// than built on demand so its scroll position survives being left.
+    private let archiveList = ArchiveListView()
+    /// The footer's Archive button, so it can be shown as on while the archive
+    /// is what the sidebar is displaying. Weak: the footer owns it, and rebuilds
+    /// it whenever its actions are set.
+    private weak var archiveButton: IconButton?
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
     /// Never shown. It exists only to build the space menu, which
@@ -64,6 +71,15 @@ final class SidebarViewController: NSViewController {
     /// Held while the group appearance editor is open, so it lives as long as
     /// the popover it drives.
     private var appearancePopover: NSPopover?
+    private let settings = Settings.shared
+    /// Advances the idle badges. Only the badges, and only the rows on screen;
+    /// see `tickIdleBadges`.
+    private var idleTimer: Timer?
+    /// Once a second, so a badge counting seconds counts them. Above a minute
+    /// the string stops changing on its own and the tick becomes a comparison
+    /// that finds nothing, which is cheap enough to leave running rather than
+    /// build a scheduler that would have to be re-armed on every scroll.
+    private static let idleTickInterval: TimeInterval = 1
 
     /// One entry in the flattened sidebar list.
     ///
@@ -97,7 +113,21 @@ final class SidebarViewController: NSViewController {
         subscribeToSession()
         reloadSpaces()
         reloadTabs()
+        reloadArchive()
         syncActiveTab()
+        startIdleTicking()
+    }
+
+    private func startIdleTicking() {
+        guard idleTimer == nil else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.idleTickInterval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tickIdleBadges() }
+        }
+        // A badge one second stale is not worth waking a sleeping Mac for, so
+        // the tick is entirely tolerant and coalesces with whatever else the
+        // run loop was going to do anyway.
+        timer.tolerance = Self.idleTickInterval
+        idleTimer = timer
     }
 
     // MARK: - Layout
@@ -163,22 +193,52 @@ final class SidebarViewController: NSViewController {
         }
         // One way to reach each thing. The dots switch spaces; everything
         // else about a space -- making, renaming, recolouring, deleting --
-        // is the header menu's and Settings' job. The one standing button is
-        // Downloads, at the leading corner: the list is browser-wide (it
-        // outlives any tab or space), and a foot-of-the-sidebar affordance is
-        // where the eye looks for it.
+        // is the header menu's and Settings' job. The two standing buttons are
+        // the browser-wide lists that outlive any tab or space, one in each
+        // corner: Downloads for what came out of the web, Archive for what
+        // left the sidebar. A foot-of-the-sidebar affordance is where the eye
+        // looks for both.
+        //
+        // The Archive button is always there, including when the archive is
+        // empty and when archiving is switched off. A control that appears only
+        // once the feature has taken something away is a control nobody finds
+        // until they are already looking for a tab they have lost. It toggles
+        // the sidebar into the archive and lights up while the archive is what
+        // the sidebar is showing; the archive's own empty state explains
+        // itself, and says where the setting is.
         diaFooter.setLeadingActions([
             TopBarAction(symbolName: "arrow.down.circle", label: "Downloads") {
                 DownloadManager.shared.showList()
             }
         ])
-        diaFooter.setTrailingActions([])
+        diaFooter.setTrailingActions([
+            TopBarAction(symbolName: "archivebox", label: "Archive") { [weak self] in
+                self?.toggleArchive()
+            }
+        ])
+        archiveButton = diaFooter.actionButton(labelled: "Archive") as? IconButton
+
+        // The downloads list hangs off that button rather than opening a window
+        // of its own, so the manager is told where to find it. A closure, not
+        // the view: the footer rebuilds its buttons whenever its actions are
+        // set, and the manager must not be left holding one that is gone.
+        DownloadManager.shared.listAnchor = { [weak self] in
+            self?.diaFooter.actionButton(labelled: "Downloads")
+        }
+
+        // The archive takes the pins' and the tab list's place in this stack
+        // rather than sitting over it: the sidebar is one surface, and what it
+        // is showing is what it draws.
+        archiveList.isHidden = true
+        archiveList.onRestore = { [weak self] record in self?.restoreFromArchive(record) }
+        archiveList.onForget = { [weak self] record in self?.confirmForgetFromArchive(record) }
+        archiveList.onClear = { [weak self] in self?.confirmClearArchive() }
 
         // Everything above the footer lives in one stack of its own, because a
-        // space switch moves it as a unit. Transforming three sibling views in
-        // step is three chances for them to drift apart, and AppKit will happily
+        // space switch moves it as a unit. Transforming four sibling views in
+        // step is four chances for them to drift apart, and AppKit will happily
         // recompute one of their opacities halfway through the animation.
-        let contentStack = NSStackView(views: [diaHeader, pinnedTiles, scrollView])
+        let contentStack = NSStackView(views: [diaHeader, pinnedTiles, scrollView, archiveList])
         contentStack.orientation = .vertical
         contentStack.spacing = 6
         contentStack.alignment = .leading
@@ -212,6 +272,7 @@ final class SidebarViewController: NSViewController {
             diaHeader.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             diaFooter.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            archiveList.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             pinnedTiles.leadingAnchor.constraint(
                 equalTo: contentStack.leadingAnchor,
                 constant: Style.Metrics.sidebarInset
@@ -280,6 +341,7 @@ final class SidebarViewController: NSViewController {
                 case .spaces:
                     self.reloadSpaces()
                     self.reloadTabs()
+                    self.reloadArchive()
                 case .tabs:
                     self.reloadTabs()
                 case .activeTab:
@@ -290,6 +352,10 @@ final class SidebarViewController: NSViewController {
                     if tab.id == self.shownSpace.activeTab?.id { self.refreshWash() }
                 case .structure:
                     self.reloadTabs()
+                    // Archiving, putting back, forgetting and a space's own
+                    // groups all arrive as structure; only the archive cares
+                    // which of them it was.
+                    self.reloadArchive()
                 case .bookmarks:
                     break
                 }
@@ -896,6 +962,43 @@ final class SidebarViewController: NSViewController {
         configure(cell, with: tab, depth: depth(ofRow: index))
     }
 
+    /// How long a tab has been idle, as the badge shows it, or `nil` when there
+    /// is nothing worth showing.
+    ///
+    /// A tab that is on screen never carries one, whatever the setting says.
+    /// `lastActiveAt` is stamped when a tab becomes visible and not again while
+    /// it stays there, so the tab being read right now would otherwise wear a
+    /// timer counting how long it has been read -- true of the clock, and a lie
+    /// about what the badge means.
+    private func idleText(for tab: Tab) -> String? {
+        guard settings.tabIdleBadgeMode.showsBadge(isAsleep: tab.isAsleep),
+              !session.visibleTabIDs.contains(tab.id)
+        else { return nil }
+        return TabIdleLabel.text(for: tab.idleDuration())
+    }
+
+    private func idleSpoken(for tab: Tab) -> String? {
+        guard idleText(for: tab) != nil else { return nil }
+        return TabIdleLabel.spoken(for: tab.idleDuration())
+    }
+
+    /// Re-reads the timer on every row on screen.
+    ///
+    /// Only the badge, and only where the string actually changed: the rows
+    /// themselves are untouched, so this cannot disturb a favicon, a selection
+    /// or a row the user is dragging.
+    private func tickIdleBadges() {
+        guard settings.tabIdleBadgeMode != .never else { return }
+        let visible = tableView.rows(in: tableView.visibleRect)
+        guard visible.length > 0 else { return }
+        for index in visible.lowerBound..<visible.upperBound {
+            guard rows.indices.contains(index), case .tab(let tab, _, _) = rows[index],
+                  let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? TabRowView
+            else { continue }
+            cell.updateIdle(text: idleText(for: tab), spoken: idleSpoken(for: tab))
+        }
+    }
+
     /// The nesting level a row is drawn at, or 0 for anything that is not a tab.
     private func depth(ofRow index: Int) -> Int {
         guard rows.indices.contains(index), case .tab(_, let depth, _) = rows[index] else { return 0 }
@@ -912,8 +1015,12 @@ final class SidebarViewController: NSViewController {
             title: tab.displayTitle,
             address: tab.url.absoluteString,
             isLoading: tab.isLoading,
-            isSuspended: tab.isSuspended,
-            isFailed: tab.failure != nil
+            isAsleep: tab.isAsleep,
+            isFailed: tab.failure != nil,
+            idleText: idleText(for: tab),
+            idleSpoken: idleSpoken(for: tab),
+            keepsAwake: tab.keepsAwake,
+            keepsInSidebar: tab.keepsInSidebar
         ))
         // `tab.url` deliberately, not `displayURL`: the latter follows a typed
         // address before it commits, which would swap one site's icon for
@@ -922,6 +1029,104 @@ final class SidebarViewController: NSViewController {
         cell.onClose = { [weak self] in
             guard let self, TabClosing.confirm(closing: tab) else { return }
             session.closeTab(tab)
+        }
+    }
+
+    // MARK: - Archive
+
+    /// Whether the sidebar is showing the archive instead of a space's tabs.
+    private(set) var isShowingArchive = false
+
+    /// Shows or hides the archive in place of the pins and the tab list.
+    ///
+    /// A mode rather than a window. The archive holds the rows that left the
+    /// sidebar, so the place they left from is the place to look for them. The
+    /// space's own list is kept up to date while the archive is in front of it,
+    /// which is what makes leaving the mode instant, and what makes a tab put
+    /// back land somewhere the user can see.
+    func setArchiveVisible(_ visible: Bool) {
+        guard visible != isShowingArchive else { return }
+        isShowingArchive = visible
+        pinnedTiles.isHidden = visible
+        scrollView.isHidden = visible
+        archiveList.isHidden = !visible
+        archiveButton?.isActive = visible
+        if visible { reloadArchive() }
+    }
+
+    func toggleArchive() { setArchiveVisible(!isShowingArchive) }
+
+    @objc private func toggleArchiveFromMenu() { toggleArchive() }
+
+    /// Newest first, which is the order someone hunting for "the thing that
+    /// just vanished" reads in. The space's name is resolved here, because the
+    /// list itself has no reason to know about spaces.
+    private func reloadArchive() {
+        archiveList.show(
+            session.archivedTabs
+                .sorted { $0.archivedAt > $1.archivedAt }
+                .map { record in
+                    ArchiveListView.Entry(
+                        record: record,
+                        spaceName: session.spaces.first { $0.id == record.spaceID }?.name
+                    )
+                },
+            isArchivingEnabled: settings.tabArchiveDelay != nil
+        )
+    }
+
+    /// Puts one back and goes to it: restoring a tab is an act of wanting to
+    /// read the page. The list stays in the archive, so several can be put back
+    /// without leaving the mode and coming back to it.
+    private func restoreFromArchive(_ record: BrowserSession.ArchivedTab) {
+        session.restoreArchived(record)
+        reloadArchive()
+    }
+
+    /// Asks first. The archive is itself the undo for everything else, so
+    /// forgetting is the one thing here that cannot be taken back.
+    private func confirmForgetFromArchive(_ record: BrowserSession.ArchivedTab) {
+        confirm(
+            message: "Remove \u{201c}\(record.title)\u{201d} from the archive?",
+            detail: "It will not come back. Put it back in the sidebar instead if you still want it.",
+            action: "Remove"
+        ) { [weak self] in
+            self?.session.forgetArchived(record)
+        }
+    }
+
+    private func confirmClearArchive() {
+        let count = session.archivedTabs.count
+        guard count > 0 else { return }
+        confirm(
+            message: "Remove \(count) archived tab\(count == 1 ? "" : "s")?",
+            detail: "This clears the whole archive. They will not come back.",
+            action: "Remove"
+        ) { [weak self] in
+            self?.session.clearArchive()
+        }
+    }
+
+    /// A confirmation, as a sheet when there is a window to hang it on and as a
+    /// plain alert when there is not -- the same reading the group and space
+    /// questions use.
+    private func confirm(
+        message: String,
+        detail: String,
+        action: String,
+        then commit: @escaping () -> Void
+    ) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.informativeText = detail
+        alert.addButton(withTitle: action)
+        alert.addButton(withTitle: "Cancel")
+        if let window = view.window {
+            alert.beginSheetModal(for: window) { response in
+                if response == .alertFirstButtonReturn { commit() }
+            }
+        } else if alert.runModal() == .alertFirstButtonReturn {
+            commit()
         }
     }
 
@@ -1031,6 +1236,20 @@ final class SidebarViewController: NSViewController {
         menu.addItem(newSpace)
 
         menu.addItem(.separator())
+        // Named with its count. An archive is easy to forget you have, and
+        // "Archive (12)" is the only thing in this menu that answers a question
+        // the user has not thought to ask yet.
+        let archived = session.archivedTabs.count
+        let archive = NSMenuItem(
+            title: archived == 0 ? "Archive\u{2026}" : "Archive (\(archived))\u{2026}",
+            action: #selector(toggleArchiveFromMenu),
+            keyEquivalent: ""
+        )
+        archive.target = self
+        archive.image = NSImage(systemSymbolName: "archivebox", accessibilityDescription: nil)
+        menu.addItem(archive)
+
+        menu.addItem(.separator())
         let bookmarkAll = NSMenuItem(title: "Bookmark All Tabs", action: #selector(bookmarkAllTabsFromMenu), keyEquivalent: "")
         bookmarkAll.target = self
         bookmarkAll.image = NSImage(systemSymbolName: "bookmark", accessibilityDescription: nil)
@@ -1074,6 +1293,27 @@ final class SidebarViewController: NSViewController {
         menu.autoenablesItems = false
 
         add("Pin", #selector(pinTabFromMenu(_:)), symbol: "pin", enabled: !session.isPinned(tab))
+        menu.addItem(.separator())
+
+        // The two locks and the two manual actions, in one block: they are the
+        // whole of what a user can say about this tab's lifecycle, and finding
+        // half of them here and half in Settings is how a feature becomes
+        // folklore. Each lock reads as what it will do next, not as its state.
+        add(tab.keepsAwake ? "Allow Sleeping" : "Keep Awake",
+            #selector(toggleKeepAwakeFromMenu(_:)),
+            symbol: tab.keepsAwake ? "moon" : "sun.max")
+        add(tab.keepsInSidebar ? "Allow Archiving" : "Keep in Sidebar",
+            #selector(toggleKeepInSidebarFromMenu(_:)),
+            symbol: tab.keepsInSidebar ? "lock.open" : "lock",
+            // Archiving off means there is nothing to be kept from, and an
+            // enabled switch that guards against nothing is a puzzle.
+            enabled: settings.tabArchiveDelay != nil)
+        // Sleeping the tab you are looking at would blank it, so the one tab
+        // that cannot be put to sleep is the visible one.
+        add("Sleep Now", #selector(sleepTabFromMenu(_:)), symbol: "moon.zzz",
+            enabled: tab.isLoaded && !session.visibleTabIDs.contains(tab.id))
+        add("Archive Now", #selector(archiveTabFromMenu(_:)), symbol: "archivebox",
+            enabled: !session.isPinned(tab) && !shownSpace.isPrivate)
         menu.addItem(.separator())
         add("Open as Split", #selector(splitTabFromMenu(_:)), symbol: "rectangle.split.2x1",
             enabled: space.tabs.count > 1)
@@ -1245,6 +1485,37 @@ final class SidebarViewController: NSViewController {
         session.pin(tab)
     }
 
+    /// Keeping a tab awake does not wake it. The switch says what happens from
+    /// here, and reloading a page the user cannot see -- to honour a preference
+    /// they set for later -- would spend memory to obey the letter of a setting
+    /// against its point.
+    @objc private func toggleKeepAwakeFromMenu(_ sender: Any?) {
+        guard let tab = tab(from: sender) else { return }
+        tab.setKeepsAwake(!tab.keepsAwake)
+    }
+
+    @objc private func toggleKeepInSidebarFromMenu(_ sender: Any?) {
+        guard let tab = tab(from: sender) else { return }
+        tab.setKeepsInSidebar(!tab.keepsInSidebar)
+    }
+
+    /// Sleeps one tab by hand. Clearing "Keep Awake" first, because asking for
+    /// this while the lock is on is the clearest possible statement that the
+    /// lock is no longer wanted -- and silently doing nothing would look broken.
+    @objc private func sleepTabFromMenu(_ sender: Any?) {
+        guard let tab = tab(from: sender) else { return }
+        tab.setKeepsAwake(false)
+        session.suspend([tab])
+    }
+
+    /// Archives one tab by hand, with no threshold and no waiting. Same reading
+    /// of an explicit request as above: the locks that exist to stop this
+    /// happening *automatically* do not stop the user doing it deliberately.
+    @objc private func archiveTabFromMenu(_ sender: Any?) {
+        guard let tab = tab(from: sender) else { return }
+        session.archive([tab])
+    }
+
     /// The clicked tab beside the visible one; or, when it is the visible
     /// one, beside its neighbour, which is what the Split menu items do.
     @objc private func splitTabFromMenu(_ sender: Any?) {
@@ -1393,10 +1664,23 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
         rows.count
     }
 
-    /// A folder's header row is taller by the gap its plate leaves above it.
+    /// A folder's header row is taller by the gap its plate leaves above it,
+    /// and the row that ends a plate by the space the plate leaves below its
+    /// last pill, so the card has clearance at both ends.
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        guard rows.indices.contains(row), case .group = rows[row] else { return Style.Metrics.rowHeight }
-        return Style.Metrics.groupHeaderHeight + Style.Metrics.folderPlateGap
+        guard rows.indices.contains(row) else { return Style.Metrics.rowHeight }
+        if case .group = rows[row] {
+            return Style.Metrics.groupHeaderHeight + Style.Metrics.folderPlateGap
+        }
+        // The row that owns a plate's rounded bottom corners owns the padding
+        // under them too. `plates` is rebuilt with `rows`, so it is already in
+        // step by the time the table asks for a height -- including the asks
+        // that come from `buildSlices`, which is why this reads `plates`
+        // rather than the slices it is in the middle of computing.
+        guard plates.indices.contains(row), plates[row].contains(where: { $0.segment == .bottom }) else {
+            return Style.Metrics.rowHeight
+        }
+        return Style.Metrics.rowHeight + Style.Metrics.folderPlateBottomPadding
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
@@ -1508,7 +1792,10 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
                 constant: Style.Metrics.sidebarInset
             ),
             view.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
-            view.centerYAnchor.constraint(equalTo: container.centerYAnchor)
+            // At the top, not centred: a status row that ends a plate is taller
+            // than its text, and the extra height belongs under the text, with
+            // the plate's bottom edge, rather than under the row's top edge.
+            view.topAnchor.constraint(equalTo: container.topAnchor)
         ])
         return container
     }

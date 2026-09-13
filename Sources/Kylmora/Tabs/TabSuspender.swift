@@ -90,7 +90,33 @@ final class TabSuspender {
                 """)
         }
 
-        guard !candidates.isEmpty else { return }
-        session.suspend(candidates)
+        if !candidates.isEmpty { session.suspend(candidates) }
+
+        archiveIfDue(trigger)
+    }
+
+    /// The second stage, run off the same sweep.
+    ///
+    /// Only on `.idle`. Memory pressure is a reason to release a page, never a
+    /// reason to take a row out of the sidebar: the user would lose tabs
+    /// because something else on their Mac asked for memory, which is not a
+    /// sentence that should ever be true.
+    ///
+    /// Run after suspension, not before, so a tab that crosses both thresholds
+    /// in one sweep is suspended first and considered for archiving on the
+    /// *next* one -- a full check interval of being genuinely unloaded before
+    /// anything is removed.
+    private func archiveIfDue(_ trigger: TabSuspension.Trigger) {
+        guard trigger == .idle, let threshold = settings.tabArchiveDelay else { return }
+        let stale = TabArchiving.candidates(
+            among: session.allTabs,
+            protecting: session.visibleTabIDs,
+            threshold: threshold,
+            isPinned: { [session] in session.isPinned($0) },
+            isProviderManaged: { [session] in session.isInLiveFolder($0) },
+            cohorts: session.splitCohorts
+        )
+        guard !stale.isEmpty else { return }
+        session.archive(stale)
     }
 }

@@ -107,6 +107,13 @@ enum Style {
         /// so two folders in a row, or a folder after loose tabs, are separated
         /// by more than the pill margin alone.
         static let folderPlateGap: CGFloat = 6
+        /// Clear space inside a folder's plate, under its last row. It is added
+        /// to that row's height, so the card's bottom edge clears the last pill
+        /// by a visible margin -- a pill whose bottom runs along the plate's
+        /// bottom edge reads as the plate's own outline rather than as a row
+        /// inside it. Deliberately the same measure as `folderPlateGap`, so a
+        /// card is the same weight at both ends.
+        static let folderPlateBottomPadding: CGFloat = 6
         /// Disclosure chevron and the small glyphs in the sidebar footer.
         static let smallGlyphSide: CGFloat = 11
 
@@ -165,6 +172,10 @@ enum Style {
         /// Emoji ignore weight, and at 13pt they sit a shade small next to
         /// 13pt text, so group emoji get their own size.
         static var groupEmoji: NSFont { .systemFont(ofSize: 14) }
+        /// The idle badge on a tab row. Smaller than the title and no lighter:
+        /// a badge that is both smaller and greyer reads as damage rather than
+        /// as a second line of information, and it is already grey.
+        static var badge: NSFont { .systemFont(ofSize: 10, weight: .medium) }
     }
 
     // MARK: - Colours

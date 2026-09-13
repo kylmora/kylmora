@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 @testable import Kylmora
@@ -228,6 +229,71 @@ struct DownloadManagerTests {
         defer { try? FileManager.default.removeItem(at: file) }
         // The seeded destination is a path that does not exist.
         #expect(manager.downloads[0].fileExists == false)
+    }
+}
+
+@Suite("The downloads popover")
+@MainActor
+struct DownloadsPopoverTests {
+    /// A manager with rows already in it, backed by a throwaway file.
+    private func manager(seededWith states: [DownloadState]) throws -> (DownloadManager, URL) {
+        let file = FileManager.default.temporaryDirectory.appending(path: "kylmora-downloads-\(UUID().uuidString).json")
+        let store = DownloadStore(fileURL: file)
+        try store.save(states.enumerated().map { index, state in
+            DownloadRecord(
+                id: UUID(),
+                sourceURL: URL(string: "https://example.com/file\(index).bin")!,
+                destination: URL(filePath: "/Users/someone/Downloads/file\(index).bin"),
+                state: state,
+                startedAt: .now,
+                finishedAt: nil,
+                byteCount: nil
+            )
+        })
+        return (DownloadManager(store: store), file)
+    }
+
+    @Test("An empty list says so, and stays the size of a panel")
+    func emptyState() throws {
+        let (manager, file) = try manager(seededWith: [])
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let popover = DownloadsPopover(manager: manager)
+        popover.loadView()
+        popover.reload()
+
+        #expect(popover.isShowingEmptyState)
+        // A popover is a panel, not the empty half of a window.
+        #expect(popover.preferredContentSize.height <= DownloadCellView.rowHeight * 3)
+        #expect(popover.preferredContentSize.width == DownloadsPopover.width)
+    }
+
+    @Test("Rows take the empty state away, and the list is as tall as they are")
+    func rowsReplaceTheEmptyState() throws {
+        let (manager, file) = try manager(seededWith: [.finished, .cancelled])
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        let popover = DownloadsPopover(manager: manager)
+        popover.loadView()
+        popover.reload()
+
+        #expect(!popover.isShowingEmptyState)
+        #expect(popover.preferredContentSize.height > DownloadsPopover.emptyListHeight)
+    }
+
+    @Test("A downloads row is a row of this app: the chrome's button and its own pill")
+    func rowMatchesTheChrome() {
+        let cell = DownloadCellView()
+        cell.frame = NSRect(x: 0, y: 0, width: 320, height: DownloadCellView.rowHeight)
+
+        // The action is a chrome button, with the hover highlight every other
+        // button in the app has, rather than a bare table-view control.
+        #expect(UITestSupport.descendants(of: cell).contains { $0 is IconButton })
+        // And the row draws its own inset, rounded pill rather than leaving the
+        // highlight to the table.
+        #expect(cell.pillRect.minX == Style.Metrics.sidebarInset)
+        #expect(cell.pillRect.maxX == cell.bounds.maxX - Style.Metrics.sidebarInset)
+        #expect(cell.pillRect.height < cell.bounds.height)
     }
 }
 

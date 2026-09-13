@@ -54,6 +54,18 @@ final class SidebarFooterView: NSView {
     func setLeadingActions(_ actions: [TopBarAction]) { fill(leadingSlot, with: actions) }
     func setTrailingActions(_ actions: [TopBarAction]) { fill(trailingSlot, with: actions) }
 
+    /// The button for one of the actions, to hang a popover on. Nil until the
+    /// actions have been set, which is why a caller anchors through a closure
+    /// rather than holding the view.
+    func actionButton(labelled label: String) -> NSView? {
+        for slot in [leadingSlot, trailingSlot] {
+            if let button = slot.arrangedSubviews.first(where: { $0.accessibilityLabel() == label }) {
+                return button
+            }
+        }
+        return nil
+    }
+
     /// A single space needs no indicator, so `count <= 1` hides the dots
     /// entirely rather than showing one lonely dot.
     func showPages(count: Int, selected: Int) {

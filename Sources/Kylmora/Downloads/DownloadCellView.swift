@@ -3,12 +3,29 @@ import UniformTypeIdentifiers
 
 /// One row in the downloads list: file icon, name, a progress bar while the
 /// transfer runs, and the one action that row currently affords.
+///
+/// Styled as a row of this app rather than as a table row: the same pill on
+/// hover and selection the sidebar's rows draw, the same type, and the same
+/// hover button for the action.
+@MainActor
 final class DownloadCellView: NSTableCellView {
     static let reuseIdentifier = NSUserInterfaceItemIdentifier("DownloadCell")
     static let rowHeight: CGFloat = 54
 
     /// Fired by the trailing button, whose meaning changes with the state.
     var onAction: (() -> Void)?
+
+    /// Drawn by the row itself, because the pill is rounded and inset and the
+    /// table's own highlight cannot be. The table runs with
+    /// `selectionHighlightStyle = .none` and tells rows when they are selected.
+    var isSelected = false {
+        didSet { if isSelected != oldValue { needsDisplay = true } }
+    }
+
+    private var isHovered = false {
+        didSet { if isHovered != oldValue { needsDisplay = true } }
+    }
+    private var trackingArea: NSTrackingArea?
 
     private let icon: NSImageView = {
         let view = NSImageView()
@@ -19,7 +36,8 @@ final class DownloadCellView: NSTableCellView {
 
     private let nameLabel: NSTextField = {
         let label = NSTextField(labelWithString: "")
-        label.font = .systemFont(ofSize: 13, weight: .medium)
+        label.font = Style.Fonts.body
+        label.textColor = Style.Colors.primaryText
         label.lineBreakMode = .byTruncatingMiddle
         label.translatesAutoresizingMaskIntoConstraints = false
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -28,8 +46,10 @@ final class DownloadCellView: NSTableCellView {
 
     private let statusLabel: NSTextField = {
         let label = NSTextField(labelWithString: "")
-        label.font = .systemFont(ofSize: 11)
-        label.textColor = .secondaryLabelColor
+        // The sidebar's badge font: this line is the same kind of thing as an
+        // idle badge, a small grey rider on the row's real content.
+        label.font = Style.Fonts.badge
+        label.textColor = Style.Colors.secondaryText
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -50,14 +70,13 @@ final class DownloadCellView: NSTableCellView {
         return bar
     }()
 
-    private lazy var actionButton: NSButton = {
-        let button = NSButton(image: NSImage(), target: self, action: #selector(performAction))
-        button.isBordered = false
-        button.bezelStyle = .accessoryBarAction
-        button.imageScaling = .scaleProportionallyDown
-        button.translatesAutoresizingMaskIntoConstraints = false
-        return button
-    }()
+    /// The app's own icon button, so the row's one action has the same hover
+    /// highlight as every other button in the chrome.
+    private lazy var actionButton = IconButton(
+        symbolName: "stop.circle",
+        label: "Stop",
+        side: 22
+    ) { [weak self] in self?.onAction?() }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -67,13 +86,13 @@ final class DownloadCellView: NSTableCellView {
         imageView = icon
 
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 32),
             icon.heightAnchor.constraint(equalToConstant: 32),
 
             nameLabel.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
-            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             nameLabel.trailingAnchor.constraint(equalTo: actionButton.leadingAnchor, constant: -8),
 
             progressBar.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
@@ -81,13 +100,11 @@ final class DownloadCellView: NSTableCellView {
             progressBar.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 4),
 
             statusLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            statusLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
-            statusLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -7),
+            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: nameLabel.trailingAnchor),
+            statusLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
 
             actionButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            actionButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            actionButton.widthAnchor.constraint(equalToConstant: 22),
-            actionButton.heightAnchor.constraint(equalToConstant: 22)
+            actionButton.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
     }
 
@@ -106,21 +123,67 @@ final class DownloadCellView: NSTableCellView {
         if running { progressBar.startAnimation(nil) } else { progressBar.stopAnimation(nil) }
 
         statusLabel.stringValue = Self.status(for: download)
-        statusLabel.textColor = Self.isFailure(download.state) ? .systemRed : .secondaryLabelColor
+        statusLabel.textColor = Self.isFailure(download.state) ? .systemRed : Style.Colors.secondaryText
         toolTip = download.sourceURL.absoluteString
 
         let action = Self.action(for: download)
-        actionButton.image = NSImage(systemSymbolName: action.symbol, accessibilityDescription: action.title)
-        actionButton.setAccessibilityLabel(action.title)
-        actionButton.toolTip = action.title
+        actionButton.setSymbol(action.symbol, label: action.title)
 
         // VoiceOver reads the row, so the state shown by the bar and the colour
         // of the status line has to be spoken as well.
         setAccessibilityLabel("\(download.filename), \(Self.status(for: download))")
     }
 
-    @objc private func performAction() {
-        onAction?()
+    // MARK: - Drawing
+
+    /// The pill behind a hovered or selected row, inset from the row on all
+    /// four sides -- the shape the sidebar's rows and the New Tab row use.
+    var pillRect: NSRect {
+        bounds.insetBy(dx: Style.Metrics.sidebarInset, dy: 3)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let fill: NSColor?
+        if isSelected {
+            fill = Style.Colors.rowSelectedFill
+        } else if isHovered {
+            fill = Style.Colors.rowHoverFill
+        } else {
+            fill = nil
+        }
+        guard let fill else { return }
+        fill.setFill()
+        NSBezierPath(
+            roundedRect: pillRect,
+            xRadius: Style.Metrics.rowCornerRadius,
+            yRadius: Style.Metrics.rowCornerRadius
+        ).fill()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
+
+    /// A recycled row must not inherit the previous download's hover, or the
+    /// handler that would have acted on it.
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        onAction = nil
+        isHovered = false
+        isSelected = false
+        toolTip = nil
     }
 
     // MARK: - Presentation

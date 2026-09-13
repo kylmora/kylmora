@@ -34,9 +34,18 @@ final class DownloadManager {
     /// True while anything is transferring. The list view polls only then.
     var hasActiveDownloads: Bool { downloads.contains { $0.state == .running } }
 
+    /// Where the list hangs from: the sidebar's Downloads button. Set by the
+    /// sidebar, because the manager must not have to know about the chrome,
+    /// and a closure rather than a view because the footer rebuilds its
+    /// buttons whenever its actions are set.
+    var listAnchor: (() -> NSView?)?
+
     private let store: DownloadStore
     private var delegate: DownloadDelegate?
-    private var listWindow: DownloadsWindowController?
+    /// Held between openings, so the list keeps its scroll position and the
+    /// manager has one thing to talk to rather than a window and a view.
+    private var listPopover: NSPopover?
+    private var listContent: DownloadsPopover?
     private var saveTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
 
@@ -146,21 +155,60 @@ final class DownloadManager {
         scheduleSave()
     }
 
-    /// Opens the downloads list, creating the window the first time.
+    /// Opens the downloads list beside the sidebar's Downloads button, building
+    /// the popover the first time.
     ///
-    /// The manager owns the window rather than the other way round so that the
-    /// menu command and the automatic reveal below are the same call, and so
-    /// the integration surface is one line rather than a stored property and an
-    /// action.
+    /// The manager owns the popover rather than the other way round so that the
+    /// menu command, the button and the automatic reveal below are one call,
+    /// and so the integration surface is a closure rather than a stored
+    /// property and an action.
     func showList(activating: Bool = true) {
-        let controller = listWindow ?? DownloadsWindowController(manager: self)
-        listWindow = controller
-        controller.showWindow(nil)
-        if activating {
-            controller.window?.makeKeyAndOrderFront(nil)
-        } else {
-            controller.window?.orderFront(nil)
+        guard let target = listTarget() else { return }
+        let content = listContent ?? DownloadsPopover(manager: self)
+        listContent = content
+        // A row can have finished while the list was closed, so it reloads on
+        // the way in rather than trusting what it was showing last time -- and
+        // its view is loaded first, so the reload lands on a built table rather
+        // than racing the one `viewDidLoad` runs.
+        content.loadViewIfNeeded()
+        content.reload()
+
+        let popover = listPopover ?? NSPopover()
+        popover.contentViewController = content
+        // Semitransient, not transient: Show in Finder and Open hand the user
+        // to another app, and having the list vanish behind them would lose
+        // the place they were reading. A click back into the page closes it.
+        popover.behavior = .semitransient
+        popover.delegate = content
+        listPopover = popover
+        popover.show(relativeTo: target.rect, of: target.view, preferredEdge: .maxX)
+
+        // A download that appeared on its own must not take the keyboard off
+        // the page it was started from; a button the user pressed by hand may.
+        if activating { popover.contentViewController?.view.window?.makeKey() }
+    }
+
+    /// The button the list hangs from, or the edge it lives on when the sidebar
+    /// is out of the way. A fallback rather than a second window: the list is
+    /// always attached to something the user can see, never floating free.
+    private func listTarget() -> (view: NSView, rect: NSRect)? {
+        // In the window, not merely in the view tree: compact mode parks the
+        // sidebar outside the window's bounds, and a popover hung off a button
+        // that is out there would land wherever AppKit clamps it -- which is the
+        // floating list this exists to avoid.
+        if let button = listAnchor?(), let window = button.window,
+           let host = window.contentView,
+           !button.isHiddenOrHasHiddenAncestor,
+           host.bounds.intersects(button.convert(button.bounds, to: host)) {
+            return (button, button.bounds)
         }
+        guard let window = NSApp?.keyWindow ?? NSApp?.mainWindow,
+              let content = window.contentView
+        else { return nil }
+        // Where the footer would be, in the strip the button lives in.
+        let footer = Style.Metrics.footerHeight
+        let y = content.isFlipped ? content.bounds.height - footer : 0
+        return (content, NSRect(x: 0, y: y, width: 1, height: footer))
     }
 
     func revealInFinder(_ download: Download) {

@@ -11,6 +11,8 @@ final class GeneralSettingsViewController: NSViewController {
     private let homepageField = NSTextField()
     private let appearancePopUp = NSPopUpButton()
     private let suspensionPopUp = NSPopUpButton()
+    private let archivePopUp = NSPopUpButton()
+    private let idleBadgePopUp = NSPopUpButton()
     private let defaultBrowserLabel = NSTextField(labelWithString: "")
     private let setDefaultButton = NSButton(title: "Set Default\u{2026}", target: nil, action: nil)
     private let locationPopUp = NSPopUpButton()
@@ -97,8 +99,32 @@ final class GeneralSettingsViewController: NSViewController {
         suspensionPopUp.addItems(withTitles: Settings.suspensionChoices.map(Self.suspensionTitle))
         suspensionPopUp.target = self
         suspensionPopUp.action = #selector(suspensionChanged)
-        form.addRow("Suspend inactive tabs after", SettingsForm.fill(suspensionPopUp))
-        form.addNote("A suspended tab gives its memory back and reopens where you left it.")
+        form.addRow("Put inactive tabs to sleep after", SettingsForm.fill(suspensionPopUp))
+        form.addNote("""
+            A sleeping tab gives its memory back and reopens where you left it. \
+            It stays in the sidebar, dimmed, with a moon beside it. Tabs you have \
+            set to Keep Awake are left alone, unless macOS itself runs critically \
+            short of memory.
+            """)
+
+        archivePopUp.addItems(withTitles: Settings.archiveChoices.map(Self.archiveTitle))
+        archivePopUp.target = self
+        archivePopUp.action = #selector(archiveChanged)
+        form.addRow("Then archive them after", SettingsForm.fill(archivePopUp))
+        form.addNote("""
+            Off unless you turn it on. A sleeping tab that stays untouched for this \
+            long \u{2014} including one you opened in the background and never read \u{2014} \
+            leaves the sidebar for the Archive, where you can read it or put it \
+            back. Pinned tabs, Essentials, split panes, Live Folder tabs and tabs you \
+            have set to Keep in Sidebar are never archived, and nothing is archived \
+            from a private space.
+            """)
+
+        idleBadgePopUp.addItems(withTitles: TabIdleBadgeMode.allCases.map(\.title))
+        idleBadgePopUp.target = self
+        idleBadgePopUp.action = #selector(idleBadgeChanged)
+        form.addRow("Show time since last use", SettingsForm.fill(idleBadgePopUp))
+        form.addNote("A small timer on the tab row, such as 10m or 2h. The tab you are reading never shows one.")
 
         form.addSeparator()
 
@@ -152,6 +178,8 @@ final class GeneralSettingsViewController: NSViewController {
         homepageField.stringValue = settings.homepageURL?.absoluteString ?? ""
         appearancePopUp.selectItem(withTitle: settings.appearance.title)
         suspensionPopUp.selectItem(withTitle: Self.suspensionTitle(settings.tabSuspensionMinutes))
+        archivePopUp.selectItem(withTitle: Self.archiveTitle(settings.tabArchiveHours))
+        idleBadgePopUp.selectItem(withTitle: settings.tabIdleBadgeMode.title)
         reloadDefaultBrowser()
     }
 
@@ -165,6 +193,19 @@ final class GeneralSettingsViewController: NSViewController {
 
     private static func suspensionTitle(_ minutes: Int) -> String {
         minutes == 0 ? "Never" : "\(minutes) minutes"
+    }
+
+    /// Hours, said the way people say them: nobody reads "168 hours" as a week.
+    private static func archiveTitle(_ hours: Int) -> String {
+        switch hours {
+        case 0: "Never"
+        case ..<24: "\(hours) hours"
+        case 24: "1 day"
+        case ..<168: "\(hours / 24) days"
+        case 168: "1 week"
+        case ..<720: "\(hours / 168) weeks"
+        default: "30 days"
+        }
     }
 
     @objc private func locationChanged() {
@@ -233,6 +274,18 @@ final class GeneralSettingsViewController: NSViewController {
         let index = suspensionPopUp.indexOfSelectedItem
         guard Settings.suspensionChoices.indices.contains(index) else { return }
         settings.tabSuspensionMinutes = Settings.suspensionChoices[index]
+    }
+
+    @objc private func archiveChanged() {
+        let index = archivePopUp.indexOfSelectedItem
+        guard Settings.archiveChoices.indices.contains(index) else { return }
+        settings.tabArchiveHours = Settings.archiveChoices[index]
+    }
+
+    @objc private func idleBadgeChanged() {
+        let index = idleBadgePopUp.indexOfSelectedItem
+        guard TabIdleBadgeMode.allCases.indices.contains(index) else { return }
+        settings.tabIdleBadgeMode = TabIdleBadgeMode.allCases[index]
     }
 
     @objc private func setDefaultBrowser() {

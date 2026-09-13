@@ -71,6 +71,15 @@ final class BrowserSession {
             self.spaces = spaces
             let index = min(max(restored.activeSpaceIndex, 0), spaces.count - 1)
             self.activeSpaceID = spaces[index].id
+            // The archive is filed by space, and a snapshot names spaces by
+            // position -- `spaces(from:)` maps one to one, so zipping is the
+            // pairing, and a space that somehow did not come back takes its
+            // archive with it rather than orphaning the records onto another.
+            self.archivedTabs = zip(spaces, restored.spaces).flatMap { space, stored in
+                (stored.archivedTabs ?? []).map {
+                    ArchivedTab(snapshot: $0.tab, spaceID: space.id, archivedAt: $0.archivedAt)
+                }
+            }
             for space in spaces {
                 for tab in space.tabs { adopt(tab) }
                 // A private space is saved without its tabs, so it comes back
@@ -492,6 +501,136 @@ final class BrowserSession {
         return tab
     }
 
+    // MARK: - Archived tabs
+
+    /// A tab that left the sidebar on its own, and the space it left from.
+    ///
+    /// Saved, unlike `closedTabs`. Closing is something the user did and can
+    /// remember doing; archiving happens while they are not looking, so a list
+    /// that emptied at quit would mean tabs disappearing with nothing to point
+    /// at afterwards. The identifier is the record's own: the `Tab` is gone,
+    /// and what is left is a photograph of it.
+    struct ArchivedTab: Identifiable {
+        let id: UUID
+        var snapshot: SessionSnapshot.Tab
+        var spaceID: Space.ID
+        var archivedAt: Date
+
+        init(id: UUID = UUID(), snapshot: SessionSnapshot.Tab, spaceID: Space.ID, archivedAt: Date) {
+            self.id = id
+            self.snapshot = snapshot
+            self.spaceID = spaceID
+            self.archivedAt = archivedAt
+        }
+
+        /// What to call it in the archive list, preferring the name the user
+        /// gave it over the one the page did.
+        var title: String {
+            if let custom = snapshot.customName, !custom.isEmpty { return custom }
+            if let page = snapshot.title, !page.isEmpty { return page }
+            return snapshot.url.host() ?? snapshot.url.absoluteString
+        }
+    }
+
+    /// Oldest first. Bounded, because an archive that grows without limit is a
+    /// session file that grows without limit; the cap is generous enough that
+    /// reaching it means the setting is doing its job.
+    private(set) var archivedTabs: [ArchivedTab] = []
+    private static let archiveLimit = 500
+
+    /// One space's archive, most recently archived first -- the order someone
+    /// looking for "the thing that just vanished" reads in.
+    func archivedTabs(in space: Space) -> [ArchivedTab] {
+        archivedTabs
+            .filter { $0.spaceID == space.id }
+            .sorted { $0.archivedAt > $1.archivedAt }
+    }
+
+    /// Takes tabs out of the sidebar and into the archive, whole: the saved
+    /// interaction state goes with them, so restoring one brings back its
+    /// scroll position and its back-forward list rather than just an address.
+    func archive(_ tabs: [Tab]) {
+        var archived = 0
+        for tab in tabs {
+            guard let space = spaces.first(where: { $0.index(of: tab) != nil }) else { continue }
+            // A private space keeps nothing that outlives it -- not even this.
+            // Archiving there would write to disk exactly what "private"
+            // promised would never be written, so a private tab is left alone.
+            guard !space.isPrivate else { continue }
+            archivedTabs.append(
+                ArchivedTab(snapshot: tab.snapshot(), spaceID: space.id, archivedAt: .now)
+            )
+            if let groupID = tab.groupID {
+                liveFolders.tabWasRemoved(tab.id, fromFolder: groupID)
+            }
+            detach(tab, from: space)
+            archived += 1
+        }
+        guard archived > 0 else { return }
+        if archivedTabs.count > Self.archiveLimit {
+            archivedTabs.removeFirst(archivedTabs.count - Self.archiveLimit)
+        }
+        Metrics.log("archive count=\(tabs.count) total=\(archivedTabs.count)")
+        changes.send(.structure)
+        scheduleSave()
+        showToast?(.archived(count: archived, undo: { [weak self] in self?.undoArchive(archived) }))
+    }
+
+    /// Puts back everything the last sweep took, for the toast's Undo.
+    ///
+    /// Archiving is the only thing in the browser that removes a row without
+    /// the user touching anything, so it is the one thing that has to offer the
+    /// undo up front rather than leave it to be found later in a window.
+    private func undoArchive(_ count: Int) {
+        // Copied out first: `restoreArchived` removes from the same array.
+        let restorable = Array(archivedTabs.suffix(count))
+        for record in restorable { restoreArchived(record) }
+    }
+
+    /// Brings one back, into the space it left from or the active space if that
+    /// space has gone. It returns awake and selected: restoring a tab is an act
+    /// of wanting to read it.
+    @discardableResult
+    func restoreArchived(_ archived: ArchivedTab) -> Tab? {
+        guard let index = archivedTabs.firstIndex(where: { $0.id == archived.id }) else { return nil }
+        let record = archivedTabs.remove(at: index)
+        let space = spaces.first { $0.id == record.spaceID } ?? activeSpace
+        var snapshot = record.snapshot
+        // Its folder may have been deleted while it sat in the archive; a tab
+        // pointing at a group that no longer exists would be invisible.
+        if let groupID = snapshot.groupID, space.group(withID: groupID) == nil {
+            snapshot.groupID = nil
+        }
+        snapshot.pinnedSiteID = nil
+        // A fresh clock. Restoring a tab and having the sweep archive it again
+        // on the next pass -- because its saved `lastActiveAt` is still days old
+        // -- would be the single most infuriating bug this feature could have.
+        snapshot.lastActiveAt = .now
+        let tab = Tab(restoring: snapshot, identity: space.identity)
+        if space.id != activeSpaceID { selectSpace(space) }
+        insert(tab, into: space, at: space.tabs.count, select: true)
+        scheduleSave()
+        return tab
+    }
+
+    /// Drops one from the archive without bringing it back.
+    func forgetArchived(_ archived: ArchivedTab) {
+        guard let index = archivedTabs.firstIndex(where: { $0.id == archived.id }) else { return }
+        archivedTabs.remove(at: index)
+        changes.send(.structure)
+        scheduleSave()
+    }
+
+    /// Empties the archive, every space's. One change rather than one per row:
+    /// the sidebar's Clear has no space filter to narrow it and no reason to
+    /// rebuild its list once per archived tab.
+    func clearArchive() {
+        guard !archivedTabs.isEmpty else { return }
+        archivedTabs.removeAll()
+        changes.send(.structure)
+        scheduleSave()
+    }
+
     func selectTab(_ tab: Tab) {
         let space = activeSpace
         guard space.index(of: tab) != nil, space.activeTabID != tab.id else { return }
@@ -627,6 +766,13 @@ final class BrowserSession {
     }
 
     /// Whether this tab, or its page, is already a tile.
+    /// Whether a provider maintains this tab's folder. Such a tab is never
+    /// archived: the folder would offer it again on its next poll.
+    func isInLiveFolder(_ tab: Tab) -> Bool {
+        guard let groupID = tab.groupID else { return false }
+        return spaces.contains { $0.group(withID: groupID)?.isLive == true }
+    }
+
     func isPinned(_ tab: Tab) -> Bool {
         tab.pinnedSiteID != nil || activeSpace.pinnedSites.contains { $0.matches(tab.url) }
     }
@@ -1070,7 +1216,13 @@ final class BrowserSession {
                     },
                     pinnedSites: space.pinnedSites.map {
                         SessionSnapshot.Pinned(id: $0.id, url: $0.url, title: $0.title)
-                    }
+                    },
+                    // Written in the order archived, so the list restores the
+                    // way it was built; the reading order is applied on the way
+                    // out, in `archivedTabs(in:)`.
+                    archivedTabs: space.isPrivate ? nil : archivedTabs
+                        .filter { $0.spaceID == space.id }
+                        .map { SessionSnapshot.Archived(tab: $0.snapshot, archivedAt: $0.archivedAt) }
                 )
             },
             activeSpaceIndex: spaces.firstIndex { $0.id == activeSpaceID } ?? 0

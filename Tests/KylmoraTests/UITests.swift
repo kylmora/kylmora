@@ -330,18 +330,58 @@ struct TabRowTests {
     @Test("A row carries no page thumbnail")
     func noThumbnail() {
         // Some browsers show a page preview on the selected row's trailing
-        // edge. That was built here and removed at the user's request, so
-        // the only image in a row is its favicon.
+        // edge. That was built here and removed at the user's request, so the
+        // only images in a row are its favicon and the badge icons -- and the
+        // badge icons are hidden unless the row has something to report.
         let row = TabRowView()
         row.configure(TabRowContent(title: "Start", address: "https://example.com/"))
         row.isSelected = true
-        let others = UITestSupport.imageViews(in: row).filter { !($0 is FaviconImageView) }
+        let others = UITestSupport.imageViews(in: row)
+            .filter { !($0 is FaviconImageView) && !$0.isHidden }
         #expect(others.isEmpty)
+    }
+
+    @Test("A sleeping row shows a moon, and an ordinary one shows nothing")
+    func sleepingRowShowsAMoon() {
+        // The dimmed title says "suspended" only to someone comparing it with
+        // the row above. The moon says it on its own.
+        let asleep = TabRowView()
+        asleep.configure(TabRowContent(title: "Start", isAsleep: true))
+        let moons = UITestSupport.imageViews(in: asleep)
+            .filter { !($0 is FaviconImageView) && !$0.isHidden }
+        #expect(moons.count == 1)
+
+        let awake = TabRowView()
+        awake.configure(TabRowContent(title: "Start"))
+        #expect(UITestSupport.imageViews(in: awake)
+            .filter { !($0 is FaviconImageView) && !$0.isHidden }
+            .isEmpty)
+    }
+
+    @Test("The locks are visible on the row, not only in the menu that set them")
+    func locksAreVisible() {
+        let row = TabRowView()
+        row.configure(TabRowContent(title: "Start", keepsAwake: true, keepsInSidebar: true))
+        let icons = UITestSupport.imageViews(in: row)
+            .filter { !($0 is FaviconImageView) && !$0.isHidden }
+        #expect(icons.count == 2)
+    }
+
+    @Test("The close button takes the trailing slot back from the badge")
+    func closeButtonWinsTheSlot() {
+        // Reaching for close should not mean aiming past a moon.
+        let row = TabRowView()
+        row.onClose = {}
+        row.configure(TabRowContent(title: "Start", isAsleep: true, idleText: "2h"))
+        row.isSelected = true
+        let visible = UITestSupport.imageViews(in: row)
+            .filter { !($0 is FaviconImageView) && !$0.isHidden }
+        #expect(visible.isEmpty)
     }
 
     @Test("Visual-only state is spoken as well as shown", arguments: [
         (true, false, false, "Start, failed to load"),
-        (false, true, false, "Start, suspended"),
+        (false, true, false, "Start, sleeping"),
         (false, false, true, "Start, loading"),
         (false, false, false, "Start")
     ])
@@ -350,7 +390,7 @@ struct TabRowTests {
         row.configure(TabRowContent(
             title: "Start",
             isLoading: loading,
-            isSuspended: suspended,
+            isAsleep: suspended,
             isFailed: failed
         ))
         #expect(row.accessibilityLabel() == expected)
@@ -416,6 +456,50 @@ struct TabRowTests {
         #expect(plated.midY == loose.midY)
     }
 
+    @Test("The row that ends a folder's plate keeps its pill off the plate's bottom edge")
+    func lastPlateRowPadsBelowThePill() {
+        let row = TabRowView()
+        let slack = (Style.Metrics.rowHeight - Style.Metrics.rowPillHeight) / 2
+        row.frame = NSRect(
+            x: 0, y: 0, width: 280,
+            height: Style.Metrics.rowHeight + Style.Metrics.folderPlateBottomPadding
+        )
+        row.isInGroupPlate = true
+        let pill = row.pillRect
+
+        // Distances from the row's own edges, whichever way its y axis runs.
+        let fromTop = row.isFlipped ? pill.minY - row.bounds.minY : row.bounds.maxY - pill.maxY
+        let fromBottom = row.isFlipped ? row.bounds.maxY - pill.maxY : pill.minY - row.bounds.minY
+
+        // The pill is the height it always is and keeps its usual margin at the
+        // row's top edge, so the rows above it keep their rhythm.
+        #expect(pill.height == Style.Metrics.rowPillHeight)
+        #expect(fromTop == slack)
+        // The extra height is under it, where the plate's bottom edge is, so
+        // the two no longer run along each other.
+        #expect(fromBottom == slack + Style.Metrics.folderPlateBottomPadding)
+    }
+
+    @Test("A plate's extra bottom height goes below a row's content, not into it")
+    func lastPlateRowKeepsContentAtTheTop() {
+        let row = TabRowView()
+        row.configure(TabRowContent(title: "Start"))
+        row.indentation = FolderTree.indentPerLevel
+        row.frame = NSRect(
+            x: 0, y: 0, width: 280,
+            height: Style.Metrics.rowHeight + Style.Metrics.folderPlateBottomPadding
+        )
+        row.layoutSubtreeIfNeeded()
+
+        // The favicon sits half a row-height below the row's top edge, exactly
+        // where it sits in an ordinary row: the padding is empty space under
+        // the content rather than a second centre for it to drift towards.
+        let fromTop = row.isFlipped
+            ? row.favicon.frame.midY - row.bounds.minY
+            : row.bounds.maxY - row.favicon.frame.midY
+        #expect(fromTop == Style.Metrics.rowHeight / 2)
+    }
+
     @Test("A row's icon keeps a margin inside its own pill")
     func contentSitsInsidePill() {
         let row = TabRowView()
@@ -439,7 +523,123 @@ struct TabRowTests {
     }
 }
 
-@Suite("Sidebar footer")
+@Suite("The archive list")
+@MainActor
+struct ArchiveListTests {
+    private func entry(_ title: String, space: String? = "Work") -> ArchiveListView.Entry {
+        ArchiveListView.Entry(
+            record: BrowserSession.ArchivedTab(
+                snapshot: SessionSnapshot.Tab(url: URL(string: "https://example.com/\(title)")!, title: title),
+                spaceID: UUID(),
+                archivedAt: .now
+            ),
+            spaceName: space
+        )
+    }
+
+    private func text(in list: ArchiveListView) -> String {
+        UITestSupport.textFields(in: list).map(\.stringValue).joined(separator: " ")
+    }
+
+    private func clearButton(in list: ArchiveListView) -> NSButton? {
+        UITestSupport.buttons(in: list).first { $0.title == "Clear" }
+    }
+
+    @Test("With archiving off, an empty list says where to turn it on")
+    func emptyStatePointsAtTheSetting() {
+        let list = ArchiveListView()
+        list.show([], isArchivingEnabled: false)
+
+        #expect(list.isEmpty)
+        #expect(list.count == 0)
+        #expect(text(in: list).contains("Nothing is archived"))
+        #expect(text(in: list).contains("Settings"))
+        // Nothing to clear, so the button that would is inert.
+        #expect(clearButton(in: list)?.isEnabled == false)
+    }
+
+    @Test("With archiving on, the empty state promises sleeping tabs instead")
+    func emptyStateWithArchivingOn() {
+        let list = ArchiveListView()
+        list.show([], isArchivingEnabled: true)
+        #expect(text(in: list).contains("Nothing is archived yet"))
+        #expect(!text(in: list).contains("Settings"))
+    }
+
+    @Test("Rows are listed, and the empty state gives way to them")
+    func rowsReplaceTheEmptyState() {
+        let list = ArchiveListView()
+        list.show([entry("one"), entry("two")], isArchivingEnabled: true)
+
+        #expect(!list.isEmpty)
+        #expect(list.count == 2)
+        let table = UITestSupport.descendants(of: list).compactMap { $0 as? NSTableView }.first
+        #expect(table?.numberOfRows == 2)
+        #expect(clearButton(in: list)?.isEnabled == true)
+    }
+
+    @Test("The list is not a selection: a click puts the tab back")
+    func rowsArePressedNotSelected() {
+        let list = ArchiveListView()
+        let table = UITestSupport.descendants(of: list).compactMap { $0 as? NSTableView }.first
+        guard let table else {
+            Issue.record("the list has no table")
+            return
+        }
+        // A selection would be a second state to read on top of the click that
+        // already acted.
+        #expect(list.tableView(table, shouldSelectRow: 0) == false)
+        #expect(table.selectionHighlightStyle == .none)
+    }
+}
+
+@Suite("The archived row")
+@MainActor
+struct ArchivedRowTests {
+    /// A real event object: the hover handlers take one, and an empty one is
+    /// enough for a view that only looks at the pointer's presence.
+    private func event() -> NSEvent {
+        NSEvent.mouseEvent(
+            with: .mouseMoved, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0
+        )!
+    }
+
+    @Test("The remove button arrives with the pointer, not before")
+    func removeButtonIsHoverOnly() {
+        let row = ArchivedRowView()
+        row.onRemove = {}
+        let remove = UITestSupport.buttons(in: row).first
+        #expect(remove?.isHidden == true)
+
+        row.mouseEntered(with: event())
+        #expect(remove?.isHidden == false)
+        row.mouseExited(with: event())
+        #expect(remove?.isHidden == true)
+    }
+
+    @Test("Pressing the row puts the tab back, so the whole row is the target")
+    func pressingPicks() {
+        let row = ArchivedRowView()
+        var picked = 0
+        row.onPick = { picked += 1 }
+        #expect(row.accessibilityPerformPress())
+        #expect(picked == 1)
+    }
+
+    @Test("The pill is taller than a tab row's, because the row has two lines")
+    func pillFitsTwoLines() {
+        let row = ArchivedRowView()
+        row.frame = NSRect(x: 0, y: 0, width: 280, height: ArchivedRowView.rowHeight)
+        // Inset from the row on every side, and starting where a tab row's pill
+        // starts so the two lists line up.
+        #expect(row.pillRect.minX == Style.Metrics.sidebarInset + 2)
+        #expect(row.pillRect.height > Style.Metrics.rowPillHeight)
+        #expect(row.pillRect.height < row.bounds.height)
+    }
+}
+
+@Suite("The sidebar footer")
 @MainActor
 struct SidebarFooterTests {
     @Test("One space needs no indicator")
@@ -755,6 +955,7 @@ struct SidebarContextMenuTests {
             "New Tab", "Reopen Closed Tab", "-",
             "New Group", "New Live Group", "-",
             "New Space\u{2026}", "-",
+            "Archive\u{2026}", "-",
             "Bookmark All Tabs", "-",
             "Hide Sidebar", "Compact Mode"
         ])
@@ -776,6 +977,7 @@ struct SidebarContextMenuTests {
         let titles = sidebar.makeTabMenu(for: tab).items.map { $0.isSeparatorItem ? "-" : $0.title }
         #expect(titles == [
             "Pin", "-",
+            "Keep Awake", "Keep in Sidebar", "Sleep Now", "Archive Now", "-",
             "Open as Split", "Duplicate", "-",
             "New Group with Tab", "Move to Space", "-",
             "Rename\u{2026}", "-",
@@ -794,3 +996,43 @@ struct SidebarContextMenuTests {
         #expect(newGroup?.target === sidebar)
     }
 }
+
+@Suite("The sidebar's archive")
+@MainActor
+struct SidebarArchiveTests {
+    /// The sidebar's own tab table, which is the one it is the data source of.
+    private func tabList(in sidebar: SidebarViewController) -> NSTableView? {
+        UITestSupport.descendants(of: sidebar.view)
+            .compactMap { $0 as? NSTableView }
+            .first { ($0.dataSource as AnyObject?) === sidebar }
+    }
+
+    private func archive(in sidebar: SidebarViewController) -> ArchiveListView? {
+        UITestSupport.descendants(of: sidebar.view).compactMap { $0 as? ArchiveListView }.first
+    }
+
+    @Test("The archive takes the pins' and the tab list's place, and gives them back")
+    func archiveReplacesTheTabs() {
+        let sidebar = SidebarViewController(session: TestSession.make().0)
+        sidebar.loadViewIfNeeded()
+
+        let list = tabList(in: sidebar)
+        let archiveList = archive(in: sidebar)
+        // The space's own list is what the sidebar shows until it is asked for
+        // the archive.
+        #expect(!sidebar.isShowingArchive)
+        #expect(archiveList?.isHidden == true)
+        #expect(list?.isHiddenOrHasHiddenAncestor == false)
+
+        sidebar.toggleArchive()
+        #expect(sidebar.isShowingArchive)
+        #expect(archiveList?.isHidden == false)
+        #expect(list?.isHiddenOrHasHiddenAncestor == true)
+
+        sidebar.toggleArchive()
+        #expect(!sidebar.isShowingArchive)
+        #expect(archiveList?.isHidden == true)
+        #expect(list?.isHiddenOrHasHiddenAncestor == false)
+    }
+}
+
