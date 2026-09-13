@@ -1023,6 +1023,16 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             DownloadManager.shared.showList()
         case "settings":
             (NSApp.delegate as? AppDelegate)?.showSettings(nil)
+        case "sync-settings":
+            (NSApp.delegate as? AppDelegate)?.showSyncSettings(nil)
+        case "sync-now":
+            (NSApp.delegate as? AppDelegate)?.syncNow(nil)
+        case "export-backup":
+            (NSApp.delegate as? AppDelegate)?.exportBackup(nil)
+        case "import-backup":
+            (NSApp.delegate as? AppDelegate)?.importBackup(nil)
+        case "import-arc":
+            (NSApp.delegate as? AppDelegate)?.importArcSidebar(nil)
         case "clear-history":
             session.clearHistory()
         case "block-element":

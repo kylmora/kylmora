@@ -1367,6 +1367,91 @@ final class BrowserSession {
         return spaces.isEmpty ? nil : spaces
     }
 
+    /// Merges spaces, folders, pinned sites, and tabs from a snapshot into the current session.
+    func mergeSnapshot(_ snapshot: SessionSnapshot, mergeTabs: Bool = true) {
+        guard let incomingSpaces = Self.spaces(from: snapshot), !incomingSpaces.isEmpty else { return }
+
+        for incomingSpace in incomingSpaces {
+            if let existing = spaces.first(where: {
+                $0.name.localizedCaseInsensitiveCompare(incomingSpace.name) == .orderedSame
+            }) {
+                // Merge groups
+                let existingGroupIDs = Set(existing.groups.map(\.id))
+                for group in incomingSpace.groups where !existingGroupIDs.contains(group.id) {
+                    existing.addGroup(group)
+                }
+
+                // Merge pinned sites
+                let existingPinnedURLs = Set(existing.pinnedSites.map(\.url.absoluteString))
+                for pin in incomingSpace.pinnedSites where !existingPinnedURLs.contains(pin.url.absoluteString) {
+                    existing.addPinnedSite(pin)
+                }
+
+                // Merge tabs if enabled
+                if mergeTabs {
+                    let existingURLs = Set(existing.tabs.map(\.url.absoluteString))
+                    for tab in incomingSpace.tabs where !existingURLs.contains(tab.url.absoluteString) {
+                        adopt(tab)
+                        existing.insert(tab, at: existing.tabs.count)
+                    }
+                }
+            } else {
+                for tab in incomingSpace.tabs { adopt(tab) }
+                if incomingSpace.tabs.isEmpty {
+                    let tab = Tab(url: settings.newTabURL(isPrivate: incomingSpace.isPrivate), identity: incomingSpace.identity)
+                    adopt(tab)
+                    incomingSpace.insert(tab, at: 0)
+                }
+                spaces.append(incomingSpace)
+            }
+        }
+
+        changes.send(.spaces)
+        changes.send(.tabs)
+        changes.send(.structure)
+        scheduleSave()
+    }
+
+    /// Replaces the session completely with the snapshot.
+    func replaceWithSnapshot(_ snapshot: SessionSnapshot) {
+        guard let newSpaces = Self.spaces(from: snapshot), !newSpaces.isEmpty else { return }
+
+        tabSubscriptions.removeAll()
+        self.spaces = newSpaces
+        let index = min(max(snapshot.activeSpaceIndex, 0), newSpaces.count - 1)
+        self.activeSpaceID = newSpaces[index].id
+
+        for space in newSpaces {
+            for tab in space.tabs { adopt(tab) }
+            if space.tabs.isEmpty {
+                let tab = Tab(url: settings.newTabURL(isPrivate: space.isPrivate), identity: space.identity)
+                adopt(tab)
+                space.insert(tab, at: 0)
+            }
+        }
+
+        changes.send(.spaces)
+        changes.send(.tabs)
+        changes.send(.activeTab)
+        changes.send(.structure)
+        scheduleSave()
+    }
+
+    /// Fetches all bookmarks asynchronously.
+    func allBookmarks() async -> [Bookmark] {
+        guard let database else { return bookmarks }
+        return (try? await database.bookmarks()) ?? bookmarks
+    }
+
+    /// Imports sync bookmarks into the database and reloads bookmarks.
+    func importSyncBookmarks(_ items: [SyncBookmark]) async {
+        guard let database, !items.isEmpty else { return }
+        let tuples = items.map { ($0.url, $0.title, $0.folder, $0.created) }
+        try? await database.importBookmarks(tuples)
+        loadBookmarks()
+    }
+
+
     // MARK: - Bookkeeping
 
     private func insert(_ tab: Tab, into space: Space, at index: Int, select: Bool) {

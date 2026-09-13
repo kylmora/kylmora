@@ -1,10 +1,12 @@
 import AppKit
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// The browser deliberately owns a single main window. Spaces and tabs are
     /// switched inside it rather than by spawning new windows.
     private var session: BrowserSession?
+    private var syncCoordinator: SyncCoordinator?
     private var mainWindowController: BrowserWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var bookmarksMenu: StoredItemsMenu?
@@ -28,6 +30,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         let session = BrowserSession(database: database)
         self.session = session
+
+        let syncCoordinator = SyncCoordinator(session: session, database: database)
+        self.syncCoordinator = syncCoordinator
+        syncCoordinator.start()
 
         let bookmarksMenu = StoredItemsMenu(kind: .bookmarks, session: session)
         let historyMenu = StoredItemsMenu(kind: .history, session: session)
@@ -141,6 +147,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         showSettings(sender, on: .importData)
     }
 
+    /// Opens Settings directly to the Sync preference pane.
+    @objc func showSyncSettings(_ sender: Any?) {
+        showSettings(sender, on: .sync)
+    }
+
     /// Opens Settings on the Spaces pane, with the space the window is showing
     /// already loaded in the editor. Reached from the space menu in the
     /// sidebar.
@@ -164,10 +175,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private func settingsWindow() -> SettingsWindowController? {
         if let settingsWindowController { return settingsWindowController }
         guard let session else { return nil }
-        let controller = SettingsWindowController(session: session)
+        let controller = SettingsWindowController(session: session, syncCoordinator: syncCoordinator)
         controller.currentPageURL = { [weak session] in session?.activeTab?.url }
         settingsWindowController = controller
         return controller
+    }
+
+    // MARK: - Sync & Backup Actions
+
+    @objc func syncNow(_ sender: Any?) {
+        guard let syncCoordinator else { return }
+        Task {
+            try? await syncCoordinator.syncNow()
+        }
+    }
+
+    @objc func exportBackup(_ sender: Any?) {
+        guard let window = mainWindowController?.window else { return }
+        let panel = NSSavePanel()
+        panel.title = "Export Kylmora Backup"
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+        panel.nameFieldStringValue = "Kylmora-Backup-\(formatter.string(from: .now)).json"
+        panel.allowedContentTypes = [.json]
+
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let syncCoordinator = self?.syncCoordinator else { return }
+            Task { @MainActor in
+                try? await syncCoordinator.exportBackup(to: url)
+            }
+        }
+    }
+
+    @objc func importBackup(_ sender: Any?) {
+        guard let window = mainWindowController?.window else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Import Kylmora Backup"
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let syncCoordinator = self?.syncCoordinator else { return }
+            let alert = NSAlert()
+            alert.messageText = "Import Backup"
+            alert.informativeText = "Do you want to merge this backup with your existing spaces and tabs, or replace everything?"
+            alert.addButton(withTitle: "Merge")
+            alert.addButton(withTitle: "Replace")
+            alert.addButton(withTitle: "Cancel")
+
+            alert.beginSheetModal(for: window) { button in
+                let mode: SyncMergePolicy.MergeMode
+                switch button {
+                case .alertFirstButtonReturn: mode = .merge
+                case .alertSecondButtonReturn: mode = .replace
+                default: return
+                }
+                Task { @MainActor in
+                    try? await syncCoordinator.importBackup(from: url, mode: mode)
+                }
+            }
+        }
+    }
+
+    @objc func importArcSidebar(_ sender: Any?) {
+        guard let window = mainWindowController?.window else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Import Arc Sidebar (StorableSidebar.json)"
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+
+        let defaultArcDir = FileManager.default.homeDirectoryForCurrentUser
+            .appending(path: "Library/Application Support/Arc", directoryHint: .isDirectory)
+        if FileManager.default.fileExists(atPath: defaultArcDir.path(percentEncoded: false)) {
+            panel.directoryURL = defaultArcDir
+        }
+
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let url = panel.url, let syncCoordinator = self?.syncCoordinator else { return }
+            Task { @MainActor in
+                try? await syncCoordinator.importArcSidebar(from: url)
+            }
+        }
     }
 
     /// Links opened from other applications, and from `open -a Kylmora <url>`.

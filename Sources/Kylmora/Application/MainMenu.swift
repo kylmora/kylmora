@@ -90,6 +90,12 @@ enum MainMenu {
             item("Close All Tabs in Current Space", #selector(BrowserWindowController.closeAllTabsInCurrentSpace(_:)), "w",
                  modifiers: [.command, .shift, .option]),
             .separator(),
+            .separator(),
+            item("Sync Now", #selector(AppDelegate.syncNow(_:)), "s", modifiers: [.command, .option]),
+            item("Sync Settings\u{2026}", #selector(AppDelegate.showSyncSettings(_:))),
+            item("Export Sidebar & Data\u{2026}", #selector(AppDelegate.exportBackup(_:))),
+            item("Import Sidebar & Data\u{2026}", #selector(AppDelegate.importBackup(_:))),
+            item("Import From Arc Sidebar\u{2026}", #selector(AppDelegate.importArcSidebar(_:))),
             item("Import From Browser\u{2026}", #selector(AppDelegate.importFromBrowser(_:))),
             .separator(),
             item("Close Window", #selector(NSWindow.performClose(_:)), "w", modifiers: [.command, .shift])

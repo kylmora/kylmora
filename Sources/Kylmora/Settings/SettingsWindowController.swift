@@ -20,6 +20,7 @@ final class SettingsWindowController: NSWindowController {
         case spaces
         case extensions
         case websites
+        case sync
         case advanced
         case about
 
@@ -34,6 +35,7 @@ final class SettingsWindowController: NSWindowController {
             case .spaces: return "Spaces"
             case .extensions: return "Extensions"
             case .websites: return "Websites"
+            case .sync: return "Sync"
             case .advanced: return "Advanced"
             case .about: return "About"
             }
@@ -50,6 +52,7 @@ final class SettingsWindowController: NSWindowController {
             case .spaces: return "square.stack"
             case .extensions: return "puzzlepiece.extension"
             case .websites: return "globe"
+            case .sync: return "arrow.triangle.2.circlepath"
             case .advanced: return "slider.horizontal.3"
             case .about: return "info.circle"
             }
@@ -70,14 +73,16 @@ final class SettingsWindowController: NSWindowController {
     private var keyboardParking: [Pane: NSView] = [:]
 
     private let session: BrowserSession
+    private let syncCoordinator: SyncCoordinator?
     private let settings: Settings
     private var panes: [Pane: NSViewController] = [:]
     private var shown: Pane?
     /// Where "Set to Current Page" reads from.
     var currentPageURL: (() -> URL?)?
 
-    init(session: BrowserSession, settings: Settings = .shared) {
+    init(session: BrowserSession, syncCoordinator: SyncCoordinator? = nil, settings: Settings = .shared) {
         self.session = session
+        self.syncCoordinator = syncCoordinator
         self.settings = settings
 
         let window = NSWindow(
@@ -217,6 +222,7 @@ final class SettingsWindowController: NSWindowController {
             let websites = WebsitesSettingsViewController()
             websites.currentPageURL = { [weak self] in self?.currentPageURL?() }
             return websites
+        case .sync: return SyncSettingsViewController(coordinator: syncCoordinator, settings: settings)
         case .advanced: return AdvancedSettingsViewController(settings: settings)
         case .about: return AboutSettingsViewController()
         }

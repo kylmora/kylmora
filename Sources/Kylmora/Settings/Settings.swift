@@ -69,6 +69,17 @@ final class Settings {
         static let passwordOfferSave = "passwordOfferSave"
         static let passwordSubmitAutomatically = "passwordSubmitAutomatically"
         static let passwordUsesTouchID = "passwordUsesTouchID"
+        static let syncEnabled = "syncEnabled"
+        static let syncOpenTabs = "syncOpenTabs"
+        static let syncBookmarks = "syncBookmarks"
+        static let syncSiteSettings = "syncSiteSettings"
+        static let syncCustomDirectory = "syncCustomDirectory"
+        static let syncLastTimestamp = "syncLastTimestamp"
+        static let syncService = "syncService"
+        static let syncPassphrase = "syncPassphrase"
+        static let syncWebDAVURL = "syncWebDAVURL"
+        static let syncWebDAVUsername = "syncWebDAVUsername"
+        static let syncWebDAVPassword = "syncWebDAVPassword"
         static let openCommandBarOnNewTab = "openCommandBarOnNewTab"
         static let userRulesText = "contentBlockingUserRulesText"
         static let customFilterLists = "contentBlockingCustomFilterLists"
@@ -134,7 +145,20 @@ final class Settings {
             Key.passwordOfferAutofill: true,
             Key.passwordOfferSave: true,
             Key.passwordSubmitAutomatically: false,
-            Key.passwordUsesTouchID: true
+            Key.passwordUsesTouchID: true,
+            Key.syncEnabled: false,
+            Key.syncOpenTabs: true,
+            Key.syncBookmarks: true,
+            Key.syncSiteSettings: true,
+            Key.syncCustomDirectory: "",
+            Key.syncLastTimestamp: 0.0,
+            Key.syncService: SyncService.iCloud.rawValue,
+            Key.syncPassphrase: "",
+            Key.syncWebDAVURL: "",
+            Key.syncWebDAVUsername: "",
+            Key.syncWebDAVPassword: "",
+            Key.userRulesText: "",
+            Key.autoRejectCookieBanners: true
         ])
     }
 
@@ -591,7 +615,81 @@ final class Settings {
         if newTabTarget == .homepage, let homepage = homepageURL { return homepage }
         return searchEngine(isPrivate: isPrivate).homeURL
     }
+
+    // MARK: - Sync
+
+    var syncEnabled: Bool {
+        get { defaults.bool(forKey: Key.syncEnabled) }
+        set { defaults.set(newValue, forKey: Key.syncEnabled) }
+    }
+
+    var syncOpenTabs: Bool {
+        get { defaults.bool(forKey: Key.syncOpenTabs) }
+        set { defaults.set(newValue, forKey: Key.syncOpenTabs) }
+    }
+
+    var syncBookmarks: Bool {
+        get { defaults.bool(forKey: Key.syncBookmarks) }
+        set { defaults.set(newValue, forKey: Key.syncBookmarks) }
+    }
+
+    var syncSiteSettings: Bool {
+        get { defaults.bool(forKey: Key.syncSiteSettings) }
+        set { defaults.set(newValue, forKey: Key.syncSiteSettings) }
+    }
+
+    var syncCustomDirectory: String {
+        get { defaults.string(forKey: Key.syncCustomDirectory) ?? "" }
+        set { defaults.set(newValue, forKey: Key.syncCustomDirectory) }
+    }
+
+    var syncLastTimestamp: Double {
+        get { defaults.double(forKey: Key.syncLastTimestamp) }
+        set { defaults.set(newValue, forKey: Key.syncLastTimestamp) }
+    }
+
+    var syncService: SyncService {
+        get {
+            guard let raw = defaults.string(forKey: Key.syncService),
+                  let service = SyncService(rawValue: raw) else {
+                return .iCloud
+            }
+            return service
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: Key.syncService)
+        }
+    }
+
+    var syncPassphrase: String {
+        get { defaults.string(forKey: Key.syncPassphrase) ?? "" }
+        set {
+            defaults.set(newValue, forKey: Key.syncPassphrase)
+        }
+    }
+
+    var syncWebDAVURL: String {
+        get { defaults.string(forKey: Key.syncWebDAVURL) ?? "" }
+        set {
+            defaults.set(newValue, forKey: Key.syncWebDAVURL)
+        }
+    }
+
+    var syncWebDAVUsername: String {
+        get { defaults.string(forKey: Key.syncWebDAVUsername) ?? "" }
+        set {
+            defaults.set(newValue, forKey: Key.syncWebDAVUsername)
+        }
+    }
+
+    var syncWebDAVPassword: String {
+        get { defaults.string(forKey: Key.syncWebDAVPassword) ?? "" }
+        set {
+            defaults.set(newValue, forKey: Key.syncWebDAVPassword)
+        }
+    }
 }
+
 /// A user-subscribed external Adblock Plus / uBlock Origin filter list.
 public struct CustomFilterList: Codable, Identifiable, Equatable, Sendable {
     public var id: UUID
