@@ -43,18 +43,18 @@ jobs:
           hdiutil create -volname "Kylmora" \
             -srcfolder "build/Kylmora.app" \
             -ov -format UDZO \
-            "build/Kylmora-${GITHUB_REF_NAME}.dmg"
+            "build/Kylmora.dmg"
 
       - name: Publish the GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          files: build/Kylmora-*.dmg
+          files: build/Kylmora.dmg
           generate_release_notes: true
           fail_on_unmatched_files: true
           body: |
             ### Install
 
-            Download `Kylmora-${{ github.ref_name }}.dmg` below, open it, and drag
+            Download `Kylmora.dmg` below, open it, and drag
             **Kylmora** to Applications.
 
             This build is **unsigned**, so on first launch macOS may block it. To
