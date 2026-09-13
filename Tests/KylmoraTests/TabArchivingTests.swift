@@ -409,4 +409,43 @@ struct TabIdleLabelTests {
         // as `Int`, which compiles against a `TimeInterval?` and is never equal.
         #expect(settings.tabArchiveDelay == 259_200.0)
     }
+
+    @Test("SiteSettings allowlist prevents tabs on that domain from suspending or archiving")
+    func siteAllowlistNeverSuspends() {
+        let siteURL = URL(string: "https://critical-dashboard.example.com/app")!
+        let host = "critical-dashboard.example.com"
+        
+        #expect(SiteSettings.shared.allowsSuspension(for: siteURL) == true)
+        
+        // Add to never suspend allowlist
+        SiteSettings.shared.update {
+            $0.set("never", for: host, in: .tabSuspension)
+        }
+        
+        #expect(SiteSettings.shared.allowsSuspension(for: siteURL) == false)
+        
+        let tab = Tab(url: siteURL, identity: .standard)
+        #expect(tab.keepsAwake == true)
+        #expect(tab.keepsInSidebar == true)
+        
+        // Reset site choice
+        SiteSettings.shared.update {
+            $0.remove(host, from: .tabSuspension)
+        }
+        #expect(SiteSettings.shared.allowsSuspension(for: siteURL) == true)
+    }
+
+    @Test("Space archiveHours override is respected and round-trips")
+    func spaceArchiveHoursOverride() {
+        let space = Space(name: "Temporary Space", identity: .standard, archiveHours: 12)
+        #expect(space.archiveHours == 12)
+
+        let session = TestSession.make().0
+        session.spaces[0].archiveHours = 6
+        let snapshot = session.snapshot()
+        #expect(snapshot.spaces[0].archiveHours == 6)
+
+        let restoredSpaces = BrowserSession.spaces(from: snapshot)
+        #expect(restoredSpaces?[0].archiveHours == 6)
+    }
 }

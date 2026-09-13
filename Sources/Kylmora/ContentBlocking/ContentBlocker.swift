@@ -22,6 +22,7 @@ final class ContentBlocker {
     }
 
     private(set) var statuses: [String: ListStatus] = [:]
+    private(set) var customStatuses: [UUID: ListStatus] = [:]
     /// Fires on the main actor whenever a status or the active set changes.
     var onChange: (() -> Void)?
 
@@ -29,6 +30,13 @@ final class ContentBlocker {
     private let store: FilterListStore
     private let ruleStore: WKContentRuleListStore
     private var compiled: [String: WKContentRuleList] = [:]
+    private var customCompiled: [UUID: WKContentRuleList] = [:]
+    private var customIdentifiers: [UUID: String] = [:]
+    private var customCompiling: Set<UUID> = []
+    /// The user's custom ABP cosmetic and network rules.
+    private var userRules: WKContentRuleList?
+    private var userRulesIdentifier: String?
+    private(set) var userRulesCount: Int = 0
     /// The per-site cookie and font choices, as one small compiled list.
     private var siteRules: WKContentRuleList?
     private var siteRulesIdentifier: String?
@@ -57,6 +65,8 @@ final class ContentBlocker {
     /// Loads, fetching and compiling whatever is active and not yet ready.
     func start() {
         for list in activeLists { ensureCompiled(list) }
+        compileCustomLists()
+        compileUserRules()
         siteSettingsChanged()
     }
 
@@ -96,6 +106,8 @@ final class ContentBlocker {
     /// The preferences changed: bring the set of applied lists in line.
     func preferencesChanged() {
         for list in activeLists { ensureCompiled(list) }
+        compileCustomLists()
+        compileUserRules()
         applyToAll()
         onChange?()
     }
@@ -103,6 +115,9 @@ final class ContentBlocker {
     /// Every active list fetched again, now.
     func refreshAll() {
         for list in activeLists { refresh(list) }
+        for customList in settings.customFilterLists where customList.isEnabled {
+            refreshCustomList(customList)
+        }
     }
 
     /// When the oldest of the applied lists was fetched, or nil while none is.
@@ -123,6 +138,13 @@ final class ContentBlocker {
                 rules += max(count, 0)
             }
         }
+        for customList in settings.customFilterLists where customList.isEnabled {
+            if case .ready(let count, _) = customStatuses[customList.id] {
+                lists += 1
+                rules += max(count, 0)
+            }
+        }
+        rules += userRulesCount
         return (rules, lists)
     }
 
@@ -240,9 +262,164 @@ final class ContentBlocker {
             for list in activeLists {
                 if let ruleList = compiled[list.id] { controller.add(ruleList) }
             }
+            for customList in settings.customFilterLists where customList.isEnabled {
+                if let ruleList = customCompiled[customList.id] { controller.add(ruleList) }
+            }
+            if let userRules { controller.add(userRules) }
         }
         // The user's own per-site rules apply whatever the filter lists do.
         if let siteRules { controller.add(siteRules) }
+    }
+
+    // MARK: - User Rules
+
+    /// Recompiles the user's custom ABP rules from Settings.shared.userRulesText.
+    func compileUserRules() {
+        let text = settings.userRulesText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            if let previous = userRulesIdentifier {
+                ruleStore.removeContentRuleList(forIdentifier: previous) { _ in }
+            }
+            userRules = nil
+            userRulesIdentifier = nil
+            userRulesCount = 0
+            applyToAll()
+            onChange?()
+            return
+        }
+
+        let output = AdblockRuleConverter().convert(text)
+        guard !output.rules.isEmpty else {
+            userRules = nil
+            userRulesCount = 0
+            applyToAll()
+            onChange?()
+            return
+        }
+
+        userRulesCount = output.rules.count
+        let identifier = "kylmora.user-rules.v\(AdblockRuleConverter.version).\(Self.fingerprint(text))"
+        guard identifier != userRulesIdentifier else { return }
+
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let json = try output.encoded()
+                let ruleList = try await self.compileList(identifier: identifier, json: json)
+                if let previous = self.userRulesIdentifier, previous != identifier {
+                    self.ruleStore.removeContentRuleList(forIdentifier: previous) { _ in }
+                }
+                self.userRules = ruleList
+                self.userRulesIdentifier = identifier
+                self.applyToAll()
+                self.onChange?()
+            } catch {
+                NSLog("Kylmora: failed to compile user rules: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Adds a single custom rule (e.g. from the element picker) and immediately reapplies.
+    func addUserRule(_ rule: String) {
+        let trimmed = rule.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var current = settings.userRulesText
+        if !current.isEmpty && !current.hasSuffix("\n") {
+            current += "\n"
+        }
+        current += trimmed + "\n"
+        settings.userRulesText = current
+        compileUserRules()
+    }
+
+    // MARK: - Custom Filter Lists
+
+    func compileCustomLists() {
+        let lists = settings.customFilterLists
+        let enabledIDs = Set(lists.filter(\.isEnabled).map(\.id))
+        for (id, prevIdentifier) in customIdentifiers where !enabledIDs.contains(id) {
+            ruleStore.removeContentRuleList(forIdentifier: prevIdentifier) { _ in }
+            customCompiled[id] = nil
+            customIdentifiers[id] = nil
+            customStatuses[id] = nil
+        }
+        for list in lists where list.isEnabled {
+            ensureCompiledCustom(list)
+        }
+    }
+
+    func refreshCustomList(_ list: CustomFilterList) {
+        guard !customCompiling.contains(list.id) else { return }
+        customCompiling.insert(list.id)
+        customStatuses[list.id] = .fetching
+        onChange?()
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let cached = try await self.store.downloadCustom(id: list.id.uuidString, url: list.url)
+                await self.compileCustom(list, text: cached)
+            } catch {
+                self.customStatuses[list.id] = .failed(Self.describe(error))
+                self.customCompiling.remove(list.id)
+                self.onChange?()
+            }
+        }
+    }
+
+    private func ensureCompiledCustom(_ list: CustomFilterList) {
+        guard customCompiled[list.id] == nil, !customCompiling.contains(list.id) else { return }
+        customCompiling.insert(list.id)
+        customStatuses[list.id] = .fetching
+        onChange?()
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let cached = try await self.store.textForCustom(id: list.id.uuidString, url: list.url, refreshingStale: self.settings.autoUpdatesFilterLists)
+                await self.compileCustom(list, text: cached)
+            } catch {
+                self.customStatuses[list.id] = .failed(Self.describe(error))
+                self.customCompiling.remove(list.id)
+                self.onChange?()
+            }
+        }
+    }
+
+    private func compileCustom(_ list: CustomFilterList, text cached: FilterListStore.Cached) async {
+        defer { customCompiling.remove(list.id) }
+        let identifier = "kylmora.custom.\(list.id.uuidString).v\(AdblockRuleConverter.version).\(Self.fingerprint(cached.text))"
+        if let existing = await lookUp(identifier) {
+            var rules = await store.customRuleCount(id: list.id.uuidString, identifier: identifier)
+            if rules == nil {
+                let text = cached.text
+                let counted = await Task.detached(priority: .utility) { AdblockRuleConverter().convert(text).rules.count }.value
+                await store.recordCustomRuleCount(counted, id: list.id.uuidString, identifier: identifier)
+                rules = counted
+            }
+            adoptCustom(existing, for: list, identifier: identifier, rules: rules, fetched: cached.fetched)
+            return
+        }
+        let text = cached.text
+        let output = await Task.detached(priority: .utility) { AdblockRuleConverter().convert(text) }.value
+        do {
+            let json = try output.encoded()
+            let ruleList = try await compileList(identifier: identifier, json: json)
+            await store.recordCustomRuleCount(output.rules.count, id: list.id.uuidString, identifier: identifier)
+            adoptCustom(ruleList, for: list, identifier: identifier, rules: output.rules.count, fetched: cached.fetched)
+        } catch {
+            customStatuses[list.id] = .failed(Self.describe(error))
+            onChange?()
+        }
+    }
+
+    private func adoptCustom(_ ruleList: WKContentRuleList, for list: CustomFilterList, identifier: String, rules: Int?, fetched: Date) {
+        if let previous = customIdentifiers[list.id], previous != identifier {
+            ruleStore.removeContentRuleList(forIdentifier: previous) { _ in }
+        }
+        customIdentifiers[list.id] = identifier
+        customCompiled[list.id] = ruleList
+        customStatuses[list.id] = .ready(rules: rules ?? -1, fetched: fetched)
+        applyToAll()
+        onChange?()
     }
 
     // MARK: - Helpers

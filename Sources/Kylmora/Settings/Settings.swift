@@ -70,6 +70,9 @@ final class Settings {
         static let passwordSubmitAutomatically = "passwordSubmitAutomatically"
         static let passwordUsesTouchID = "passwordUsesTouchID"
         static let openCommandBarOnNewTab = "openCommandBarOnNewTab"
+        static let userRulesText = "contentBlockingUserRulesText"
+        static let customFilterLists = "contentBlockingCustomFilterLists"
+        static let autoRejectCookieBanners = "contentBlockingAutoRejectCookieBanners"
     }
 
     private let defaults: UserDefaults
@@ -113,7 +116,6 @@ final class Settings {
             Key.showsUnicodeDomains: false,
             Key.bookmarksInNewTabs: true,
             Key.favouriteShortcuts: true,
-            Key.externalLinksInGlance: false,
             Key.compactShowsButtons: true,
             Key.confirmsClosingPiP: true,
             Key.minimumFontSizeEnabled: false,
@@ -384,6 +386,33 @@ final class Settings {
         }
     }
 
+    /// The user's custom Adblock Plus rules (cosmetic hiding, network blocks, exceptions).
+    var userRulesText: String {
+        get { defaults.string(forKey: Key.userRulesText) ?? "" }
+        set { defaults.set(newValue, forKey: Key.userRulesText) }
+    }
+
+    /// Whether common CMP cookie consent banners should be automatically declined/rejected.
+    var autoRejectCookieBanners: Bool {
+        get { defaults.object(forKey: Key.autoRejectCookieBanners) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.autoRejectCookieBanners) }
+    }
+
+    /// Third-party filter lists subscribed to by URL.
+    var customFilterLists: [CustomFilterList] {
+        get {
+            guard let data = defaults.data(forKey: Key.customFilterLists),
+                  let lists = try? JSONDecoder().decode([CustomFilterList].self, from: data) else {
+                return []
+            }
+            return lists
+        }
+        set {
+            let data = try? JSONEncoder().encode(newValue)
+            defaults.set(data, forKey: Key.customFilterLists)
+        }
+    }
+
     var searchEngine: SearchEngine {
         get { engine(named: defaults.string(forKey: Key.searchEngine)) }
         set { defaults.set(newValue.id, forKey: Key.searchEngine) }
@@ -563,3 +592,18 @@ final class Settings {
         return searchEngine(isPrivate: isPrivate).homeURL
     }
 }
+/// A user-subscribed external Adblock Plus / uBlock Origin filter list.
+public struct CustomFilterList: Codable, Identifiable, Equatable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var url: URL
+    public var isEnabled: Bool
+
+    public init(id: UUID = UUID(), name: String, url: URL, isEnabled: Bool = true) {
+        self.id = id
+        self.name = name
+        self.url = url
+        self.isEnabled = isEnabled
+    }
+}
+

@@ -19,6 +19,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     private let commandBar = CommandBar()
     /// Held while shown so it is not deallocated mid-display.
     private var siteSettingsPopover: NSPopover?
+    private var shieldPopover: NSPopover?
     /// Compact mode. Implicitly unwrapped because it needs `self` as its
     /// sidebar slot, which is not available until after `super.init`.
     private var compact: CompactChrome!
@@ -212,6 +213,9 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         bar.zoomControl.zoomIn.setClickHandler { [weak self] in self?.stepZoom(by: 1) }
         bar.zoomControl.onReset = { [weak self] in self?.resetZoom() }
         var actions = [
+            TopBarAction(symbolName: "checkmark.shield.fill", label: "Shield") { [weak self] in
+                self?.showShieldPopover()
+            },
             TopBarAction(symbolName: "gearshape.fill", label: "Site Settings") { [weak self] in
                 self?.showSiteSettings()
             },
@@ -324,6 +328,65 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         popover.behavior = .transient
         siteSettingsPopover = popover
         popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+    }
+
+    // MARK: - Content Blocking & Element Picker
+
+    @objc func showShieldPopover() {
+        guard let tab = session.activeTab, let anchor = content.topBar.actionButton(labelled: "Shield") else { return }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        let shieldVC = ShieldPopoverViewController(
+            url: tab.displayURL,
+            webView: tab.currentWebView,
+            onReload: { [weak tab] in tab?.reload() },
+            onBlockElement: { [weak self, weak tab] in
+                guard let self, let webView = tab?.currentWebView else { return }
+                self.startElementPicker(in: webView)
+            },
+            onOpenSettings: { [weak self] in
+                self?.showAdvancedBlockingSettings()
+            }
+        )
+        popover.contentViewController = shieldVC
+        shieldPopover = popover
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+    }
+
+    @objc func startElementPickerFromMenu(_ sender: Any?) {
+        startElementPicker()
+    }
+
+    func startElementPicker() {
+        guard let tab = session.activeTab, let webView = tab.currentWebView else { return }
+        startElementPicker(in: webView)
+    }
+
+    func startElementPicker(in webView: WKWebView) {
+        ElementPickerCoordinator.shared.startPicking(in: webView)
+    }
+
+    @objc func toggleContentBlockingFromMenu(_ sender: Any?) {
+        toggleCurrentSiteContentBlocking()
+    }
+
+    func toggleCurrentSiteContentBlocking() {
+        guard let tab = session.activeTab, let host = tab.displayURL.host() else { return }
+        let url = tab.displayURL
+        let current = SiteSettings.shared.blocksContent(for: url)
+        let normalizedHost = SiteSettings.normalise(host)
+        SiteSettings.shared.update {
+            $0.set(current ? "off" : "on", for: normalizedHost, in: .contentBlockers)
+        }
+        if let controller = tab.currentWebView?.configuration.userContentController {
+            ContentBlocker.shared.applySiteChoice(for: url, to: controller)
+        }
+        content.updateTopBar()
+    }
+
+    func showAdvancedBlockingSettings() {
+        let blockerVC = AdvancedBlockingViewController()
+        content.presentAsSheet(blockerVC)
     }
 
     @objc func copyCurrentURL(_ sender: Any?) {
@@ -917,6 +980,12 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             (NSApp.delegate as? AppDelegate)?.showSettings(nil)
         case "clear-history":
             session.clearHistory()
+        case "block-element":
+            startElementPicker()
+        case "toggle-content-blocking":
+            toggleCurrentSiteContentBlocking()
+        case "blocking-settings":
+            showAdvancedBlockingSettings()
         default:
             break
         }

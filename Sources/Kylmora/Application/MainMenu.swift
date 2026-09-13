@@ -221,7 +221,13 @@ enum MainMenu {
                  #selector(BrowserWindowController.toggleCompactSidebarPin(_:)), "s",
                  modifiers: [.command, .control, .option]),
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f",
-                 modifiers: [.command, .control])
+                 modifiers: [.command, .control]),
+            .separator(),
+            item("Block Element on Page\u{2026}",
+                 #selector(BrowserWindowController.startElementPickerFromMenu(_:)), "b",
+                 modifiers: [.command, .option]),
+            item("Toggle Content Blocking on This Site",
+                 #selector(BrowserWindowController.toggleContentBlockingFromMenu(_:)), ""),
         ]
 
         return submenu("View", items)

@@ -1299,7 +1299,7 @@ final class BrowserSession {
     /// that shared it starts signed out with a store of its own. A space whose
     /// profile was private or is missing takes the default store if no space
     /// has it yet, which is where that space's pages were loading from before.
-    private static func spaces(from snapshot: SessionSnapshot) -> [Space]? {
+    static func spaces(from snapshot: SessionSnapshot) -> [Space]? {
         let legacyProfiles = snapshot.profiles ?? []
         var claimed: Set<Space.Identity> = []
 
