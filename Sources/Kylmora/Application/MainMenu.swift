@@ -80,6 +80,8 @@ enum MainMenu {
     private static func fileMenuItem() -> NSMenuItem {
         submenu("File", [
             item("New Tab", #selector(BrowserWindowController.newTab(_:)), "t"),
+            item("New Little Arc Window\u{2026}", #selector(BrowserWindowController.openLittleArcWindow(_:)), "n",
+                 modifiers: [.command, .option]),
             item("Pin / Unpin Tab", #selector(BrowserWindowController.togglePinActiveTab(_:)), "p",
                  modifiers: [.command, .shift]),
             item("Duplicate Tab", #selector(BrowserWindowController.duplicateActiveTab(_:)), "d",

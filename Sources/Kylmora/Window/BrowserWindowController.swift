@@ -20,6 +20,9 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     /// Held while shown so it is not deallocated mid-display.
     private var siteSettingsPopover: NSPopover?
     private var shieldPopover: NSPopover?
+    /// The small windows links from other apps open in. Owned here because this
+    /// is the browser window they belong to, and it outlives every one of them.
+    private lazy var littleArcs = LittleArcCoordinator(session: session)
     /// Compact mode. Implicitly unwrapped because it needs `self` as its
     /// sidebar slot, which is not available until after `super.init`.
     private var compact: CompactChrome!
@@ -116,6 +119,10 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         applyLook(of: session.activeSpace)
 
         content.onOpenBookmark = { [weak self] url in self?.open(stored: url) }
+        GlanceLinkMonitor.shared.onOpenLittleArc = { [weak self] url in
+            guard let self else { return }
+            self.littleArcs.open(url: url, in: self.externalLinkSpace)
+        }
         content.topBar.onHoverChanged = { [weak self] isHovered in
             self?.isTopBarHovered = isHovered
             self?.updateTrafficLights()
@@ -1098,6 +1105,8 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             openBoostEditor()
         case "toggle-dark-mode":
             toggleDarkModeForCurrentSite()
+        case "open-little-arc":
+            openLittleArc()
         case "install-site-as-app":
             installCurrentSiteAsWebApp(nil)
         case "open-standalone-app":
@@ -1138,17 +1147,57 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     @objc func selectNextSpace(_ sender: Any?) { switchSpace(by: 1, wraps: Settings.shared.spaceSwitchWraps) }
     @objc func selectPreviousSpace(_ sender: Any?) { switchSpace(by: -1, wraps: Settings.shared.spaceSwitchWraps) }
 
-    /// A link handed over by another app: a glance if the Browsing pane says
-    /// so and Shift is not held, else a tab.
+    /// How many Little Arc windows are open. The quit warning counts them: a
+    /// little window holds a page the user has not kept, and quitting discards
+    /// it.
+    var openLittleArcCount: Int { littleArcs.openCount }
+
+    @objc func openLittleArcWindow(_ sender: Any?) {
+        openLittleArc()
+    }
+
+    func openLittleArc(url: URL? = nil) {
+        let destination = url
+            ?? session.activeTab?.displayURL
+            ?? Settings.shared.newTabURL(isPrivate: externalLinkSpace.isPrivate)
+        littleArcs.open(url: destination, in: externalLinkSpace)
+    }
+
+    /// A link handed over by another app: a Little Arc window, a glance or a
+    /// tab, as the Browsing pane says, and a tab in every case if Shift is held
+    /// as the link arrives.
     func openExternal(_ url: URL) {
-        if Settings.shared.externalLinkTarget == .defaultSpace, session.defaultSpace.id != session.activeSpaceID {
-            session.selectSpace(session.defaultSpace)
-        }
-        if Settings.shared.opensExternalLinksInGlance, !NSEvent.modifierFlags.contains(.shift) {
+        switch LittleArcRouting.destination(
+            for: Settings.shared.externalLinkPresentation,
+            shiftHeld: NSEvent.modifierFlags.contains(.shift)
+        ) {
+        case .littleArc:
+            // Deliberately without raising this window: staying where the link
+            // was clicked is the entire point of a Little Arc.
+            littleArcs.open(url: url, in: externalLinkSpace)
+        case .glance:
+            showBrowserWindow()
             content.openGlance(url)
-        } else {
+        case .tab:
+            showBrowserWindow()
             session.newTab(url: url, origin: .external)
         }
+    }
+
+    /// The space links from other apps belong to: the one in front, unless the
+    /// General pane names a default space.
+    private var externalLinkSpace: Space {
+        Settings.shared.externalLinkTarget == .defaultSpace ? session.defaultSpace : session.activeSpace
+    }
+
+    /// Brings the browser forward for a link that is about to become a tab or a
+    /// glance inside it -- the one path where leaving the window where it is
+    /// would hide the thing the user just asked for.
+    private func showBrowserWindow() {
+        let space = externalLinkSpace
+        if space.id != session.activeSpaceID { session.selectSpace(space) }
+        showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     /// The one path a space switch takes, so the swipe, the menu and the

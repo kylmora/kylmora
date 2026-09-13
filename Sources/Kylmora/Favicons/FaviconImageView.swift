@@ -71,6 +71,9 @@ final class FaviconImageView: NSImageView {
         }
     }
 
+    /// Back to the placeholder, for a page with no address to look one up for.
+    func clear() { reset(to: nil) }
+
     private func reset(to image: NSImage?) {
         load?.cancel()
         load = nil

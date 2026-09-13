@@ -185,10 +185,10 @@ struct AddressDisplayTests {
         #expect(settings.minimumFontSize == 72)
         #expect(settings.effectiveMinimumFontSize == 72)
         settings.tabFocusesLinks = true
-        settings.opensExternalLinksInGlance = true
+        settings.externalLinkPresentation = .littleArc
         settings.compactModeShowsWindowButtons = false
         let again = Settings(defaults: defaults)
-        #expect(again.tabFocusesLinks && again.opensExternalLinksInGlance && !again.compactModeShowsWindowButtons)
+        #expect(again.tabFocusesLinks && again.externalLinkPresentation == .littleArc && !again.compactModeShowsWindowButtons)
         #expect(again.minimumFontSize == 72)
     }
 

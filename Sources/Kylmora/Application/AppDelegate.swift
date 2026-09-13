@@ -103,14 +103,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     /// "Show warning before quitting": a quit with pages open asks first.
-    /// One tab on a start page is nothing to lose, so it does not.
+    ///
+    /// One tab on a start page is nothing to lose, so it does not. A Little Arc
+    /// window does not come back, so it is named too -- the warning would be a
+    /// lie if it counted only tabs while quietly dropping a page the user had
+    /// open.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard Settings.shared.warnsBeforeQuitting, let session else { return .terminateNow }
-        let open = session.allTabs.count
-        guard open > 1 else { return .terminateNow }
+        guard Settings.shared.warnsBeforeQuitting,
+              let session,
+              let message = QuitWarning.message(
+                  tabs: session.allTabs.count,
+                  littleArcs: mainWindowController?.openLittleArcCount ?? 0
+              ) else { return .terminateNow }
+
         let alert = NSAlert()
         alert.messageText = "Quit Kylmora?"
-        alert.informativeText = "\(open) tabs are open. They come back next time if restoring is on."
+        alert.informativeText = message
         alert.addButton(withTitle: "Quit")
         alert.addButton(withTitle: "Cancel")
         return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
@@ -269,6 +277,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     /// Links opened from other applications, and from `open -a Kylmora <url>`.
+    ///
+    /// Where each lands is the window controller's decision: a tab or a glance
+    /// in the browser window, or a Little Arc window -- so whether the browser
+    /// window comes forward is decided there too, since a Little Arc appears
+    /// where the user already is and must not raise the browser behind it.
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let session else { return }
         for url in urls {

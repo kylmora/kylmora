@@ -27,7 +27,7 @@ final class GlanceController {
     private var identity: (() -> Space.Identity)?
 
     private var webView: WKWebView?
-    private var coordinator: GlanceWebCoordinator?
+    private var coordinator: PageWebCoordinator?
     private var focusRelay: GlanceFocusRelay?
     private var cancellables: Set<AnyCancellable> = []
 
@@ -149,7 +149,11 @@ final class GlanceController {
         focusRelay = relay
 
         let webView = WebEnvironment.shared.makeWebView(configuration: configuration)
-        let coordinator = GlanceWebCoordinator(controller: self)
+        // The same delegate a Little Arc window's page runs on: a glance and a
+        // little window answer a download and a `window.open` the same way.
+        let coordinator = PageWebCoordinator { [weak self] configuration in
+            self?.makeChildWebView(with: configuration)
+        }
         webView.navigationDelegate = coordinator
         webView.uiDelegate = coordinator
         self.coordinator = coordinator
@@ -366,56 +370,5 @@ private final class GlanceFocusRelay: NSObject, WKScriptMessageHandler {
         guard message.name == GlanceScripts.focusHandlerName,
               let hasFocus = message.body as? Bool else { return }
         controller?.setContentHasFocus(hasFocus)
-    }
-}
-
-/// The glanced page's delegates.
-///
-/// Downloads go through the same `DownloadManager` decision a tab uses, so a
-/// link that would download in a tab downloads in a glance; there is no second
-/// policy to keep in sync.
-private final class GlanceWebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
-    private weak var controller: GlanceController?
-
-    init(controller: GlanceController) {
-        self.controller = controller
-    }
-
-    @MainActor
-    func webView(
-        _ webView: WKWebView,
-        createWebViewWith configuration: WKWebViewConfiguration,
-        for navigationAction: WKNavigationAction,
-        windowFeatures: WKWindowFeatures
-    ) -> WKWebView? {
-        controller?.makeChildWebView(with: configuration)
-    }
-
-    @MainActor
-    func webView(
-        _ webView: WKWebView,
-        decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping @MainActor (WKNavigationActionPolicy) -> Void
-    ) {
-        decisionHandler(DownloadManager.shared.policy(for: navigationAction))
-    }
-
-    @MainActor
-    func webView(
-        _ webView: WKWebView,
-        decidePolicyFor navigationResponse: WKNavigationResponse,
-        decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void
-    ) {
-        decisionHandler(DownloadManager.shared.policy(for: navigationResponse))
-    }
-
-    @MainActor
-    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
-        DownloadManager.shared.adopt(download)
-    }
-
-    @MainActor
-    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
-        DownloadManager.shared.adopt(download)
     }
 }

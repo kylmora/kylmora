@@ -330,6 +330,33 @@ final class BrowserSession {
         return tab
     }
 
+    /// Adopts the page a Little Arc window was showing, as a tab of the space
+    /// the user kept it in.
+    ///
+    /// The live web view is adopted only when the destination is the space it
+    /// was loaded in. Anywhere else the page opens fresh, because a web view is
+    /// bound to a data store when it is created: carrying one across spaces
+    /// would put one space's cookies on another space's tab, which is exactly
+    /// what spaces exist to prevent. So a page kept in a different space loads
+    /// again there, signed in as that space -- which is what "move this to
+    /// Personal" has to mean.
+    @discardableResult
+    func adoptLittleArcPage(
+        _ webView: WKWebView,
+        loadedAs identity: Space.Identity,
+        url: URL,
+        into space: Space
+    ) -> Tab {
+        let tab = space.identity == identity
+            ? Tab(adopting: webView, identity: identity)
+            : Tab(url: url, identity: space.identity)
+        insert(tab, into: space, at: space.tabs.count, select: true)
+        // Kept means the page is in the sidebar now, so the user is shown it:
+        // the little window is gone and this is where the page went.
+        if space.id != activeSpaceID { selectSpace(space) }
+        return tab
+    }
+
     /// Whether an address is one of the active space's pinned sites. Glance's
     /// off-site rule asks this; it ships switched off.
     func isPinnedSite(_ url: URL) -> Bool {

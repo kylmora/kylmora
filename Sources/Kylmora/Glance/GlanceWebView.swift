@@ -33,6 +33,10 @@ final class GlanceWebView: WKWebView {
         // Directly under WebKit's own "Open Link in New Window", which is where
         // the eye looks for a third way to open the same link.
         menu.insertItem(item, at: min(2, menu.numberOfItems))
+
+        let littleArcItem = NSMenuItem(title: "Open Link in Little Arc", action: #selector(openLinkInLittleArc), keyEquivalent: "")
+        littleArcItem.target = self
+        menu.insertItem(littleArcItem, at: min(3, menu.numberOfItems))
     }
 
     @objc private func openLinkInGlance() {
@@ -40,5 +44,10 @@ final class GlanceWebView: WKWebView {
         let origin = GlanceLinkMonitor.shared.currentLink(in: self)
             .flatMap { GlanceLinkMonitor.shared.windowOrigin(of: $0, in: self) }
         GlanceLinkMonitor.shared.onOpenGlance?(url, origin.map { .element($0) } ?? .centre, .contextMenu)
+    }
+
+    @objc private func openLinkInLittleArc() {
+        guard let url = pendingLink else { return }
+        GlanceLinkMonitor.shared.onOpenLittleArc?(url)
     }
 }

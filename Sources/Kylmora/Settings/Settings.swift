@@ -48,7 +48,13 @@ final class Settings {
         static let showsUnicodeDomains = "showsUnicodeDomains"
         static let bookmarksInNewTabs = "opensBookmarksInNewTabs"
         static let favouriteShortcuts = "favouriteShortcutsEnabled"
+        /// Superseded by `externalLinkPresentation`, and read only to carry a
+        /// checkbox's answer over to it.
         static let externalLinksInGlance = "opensExternalLinksInGlance"
+        static let externalLinkPresentation = "externalLinkPresentation"
+        /// Set once the carry-over above has run. Deliberately absent from the
+        /// registered defaults: see the migration in `init`.
+        static let externalLinkMigrated = "externalLinkPresentationMigrated"
         static let compactShowsButtons = "compactModeShowsWindowButtons"
         static let confirmsClosingPiP = "confirmsClosingPictureInPicture"
         static let minimumFontSizeEnabled = "minimumFontSizeEnabled"
@@ -90,6 +96,24 @@ final class Settings {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        // One-time: this replaced the "open links from other apps in a Glance"
+        // checkbox, so a build that had it ticked keeps opening them in a
+        // glance.
+        //
+        // Once, on the first launch of a build that has this key. Keyed on its
+        // own marker rather than on "the new key has no value":
+        // `register(defaults:)` fills a registration domain that every
+        // `UserDefaults` in the process reads, so as soon as one `Settings`
+        // exists the new key always has a value -- and its absence can never
+        // mean "the user has not chosen". A choice made in Settings afterwards
+        // is therefore never revisited.
+        if defaults.object(forKey: Key.externalLinkMigrated) == nil {
+            if defaults.bool(forKey: Key.externalLinksInGlance) {
+                defaults.set(ExternalLinkPresentation.glance.rawValue, forKey: Key.externalLinkPresentation)
+            }
+            defaults.set(true, forKey: Key.externalLinkMigrated)
+        }
+
         defaults.register(defaults: [
             Key.searchEngine: SearchEngine.duckDuckGo.id,
             Key.restoresSession: true,
@@ -127,6 +151,7 @@ final class Settings {
             Key.showsUnicodeDomains: false,
             Key.bookmarksInNewTabs: true,
             Key.favouriteShortcuts: true,
+            Key.externalLinkPresentation: ExternalLinkPresentation.tab.rawValue,
             Key.compactShowsButtons: true,
             Key.confirmsClosingPiP: true,
             Key.minimumFontSizeEnabled: false,
@@ -272,10 +297,15 @@ final class Settings {
         set { defaults.set(newValue, forKey: Key.favouriteShortcuts) }
     }
 
-    /// A link from another app opens in a glance; Shift held opens a tab.
-    var opensExternalLinksInGlance: Bool {
-        get { defaults.bool(forKey: Key.externalLinksInGlance) }
-        set { defaults.set(newValue, forKey: Key.externalLinksInGlance) }
+    /// How a link from another app is shown: a tab, a Little Arc window, or a
+    /// glance. Shift held is always a tab, wherever this points
+    /// (`LittleArcRouting`).
+    var externalLinkPresentation: ExternalLinkPresentation {
+        get {
+            ExternalLinkPresentation(rawValue: defaults.string(forKey: Key.externalLinkPresentation) ?? "")
+                ?? .tab
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.externalLinkPresentation) }
     }
 
     var compactModeShowsWindowButtons: Bool {
