@@ -39,8 +39,12 @@ dependencies — the release build is around 1.2 MB.
 
 ## Install
 
-Kylmora is currently distributed as source — there are no pre-built releases yet.
-Build it yourself with the steps in [Building from source](#building-from-source);
+Download the latest build from the releases page:
+**https://github.com/kylmora/kylmora/releases/latest** — open the `.dmg` and drag
+Kylmora to Applications. The build is unsigned, so on first launch open it via
+**System Settings → Privacy & Security → Open Anyway**.
+
+Prefer to build it yourself? See [Building from source](#building-from-source) —
 you'll need macOS 14+ and a Swift 6 toolchain (no Xcode required).
 
 ## Features
