@@ -90,6 +90,8 @@ enum MainMenu {
             item("Close All Tabs in Current Space", #selector(BrowserWindowController.closeAllTabsInCurrentSpace(_:)), "w",
                  modifiers: [.command, .shift, .option]),
             .separator(),
+            item("Install Site as Web App\u{2026}", #selector(BrowserWindowController.installCurrentSiteAsWebApp(_:))),
+            item("Open in Standalone Window", #selector(BrowserWindowController.openCurrentSiteAsStandaloneWebApp(_:))),
             .separator(),
             item("Sync Now", #selector(AppDelegate.syncNow(_:)), "s", modifiers: [.command, .option]),
             item("Sync Settings\u{2026}", #selector(AppDelegate.showSyncSettings(_:))),

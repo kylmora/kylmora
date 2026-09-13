@@ -86,6 +86,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             ExtensionManager.shared.start(session: session, window: controller)
         }
 
+        // Web Applications (SSBs)
+        WebAppManager.shared.session = session
+        WebAppManager.shared.onOpenInBrowser = { [weak self] url in
+            self?.mainWindowController?.showWindow(nil)
+            self?.session?.newTab(url: url)
+        }
+        _ = WebAppManager.shared.handleCommandLineArguments(CommandLine.arguments)
+
         NSApp.activate(ignoringOtherApps: true)
         Metrics.reportLaunchIfRequested(stage: "window-shown")
     }
@@ -261,15 +269,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
 
     /// Links opened from other applications, and from `open -a Kylmora <url>`.
-    /// Each lands in a new tab in the current space rather than a new window.
     func application(_ application: NSApplication, open urls: [URL]) {
         guard let session else { return }
-        mainWindowController?.showWindow(nil)
-        NSApp.activate(ignoringOtherApps: true)
         for url in urls {
+            if WebAppManager.shared.handleURLScheme(url) {
+                continue
+            }
             if let controller = mainWindowController {
                 controller.openExternal(url)
             } else {
+                NSApp.activate(ignoringOtherApps: true)
                 session.newTab(url: url, origin: .external)
             }
         }

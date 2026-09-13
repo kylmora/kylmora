@@ -312,6 +312,15 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         }
 
         menu.addItem(.separator())
+
+        let installAppItem = NSMenuItem(title: "Install Site as Web App\u{2026}", action: #selector(installCurrentSiteAsWebApp(_:)), keyEquivalent: "")
+        installAppItem.target = self
+        menu.addItem(installAppItem)
+
+        let openStandaloneItem = NSMenuItem(title: "Open in Standalone Window", action: #selector(openCurrentSiteAsStandaloneWebApp(_:)), keyEquivalent: "")
+        openStandaloneItem.target = self
+        menu.addItem(openStandaloneItem)
+
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.maxY + 4), in: anchor)
     }
 
@@ -432,6 +441,50 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         if let boost = BoostStore.shared.boost(for: host) {
             BoostCoordinator.shared.applyLive(boost: boost, to: webView)
         }
+    }
+
+    @objc func installCurrentSiteAsWebApp(_ sender: Any?) {
+        guard let tab = session.activeTab else { return }
+        let url = tab.displayURL
+        let host = url.host ?? "Web App"
+        let name = tab.displayTitle.isEmpty ? host : tab.displayTitle
+        let spaces = session.spaces.map { ($0.id, $0.name) }
+        let currentSpaceID = session.activeSpace.id
+
+        let installer = WebAppInstallViewController(
+            name: name,
+            url: url,
+            icon: nil,
+            spaces: spaces,
+            defaultSpaceID: currentSpaceID
+        )
+
+        installer.onInstall = { (finalName: String, targetURL: URL, spaceID: UUID?, icon: NSImage?) in
+            do {
+                let app = try WebAppManager.shared.install(
+                    name: finalName,
+                    url: targetURL,
+                    spaceID: spaceID,
+                    icon: icon
+                )
+                WebAppManager.shared.open(app: app)
+                if let bundlePath = app.appBundlePath {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: bundlePath)])
+                }
+            } catch {
+                NSLog("Kylmora: Failed to install web app: \(error.localizedDescription)")
+            }
+        }
+
+        content.presentAsSheet(installer)
+    }
+
+    @objc func openCurrentSiteAsStandaloneWebApp(_ sender: Any?) {
+        guard let tab = session.activeTab else { return }
+        let url = tab.displayURL
+        let title = tab.displayTitle
+        let spaceID = session.activeSpace.id
+        WebAppManager.shared.openStandalone(url: url, title: title, spaceID: spaceID)
     }
 
     @objc func copyCurrentURL(_ sender: Any?) {
@@ -1045,6 +1098,10 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             openBoostEditor()
         case "toggle-dark-mode":
             toggleDarkModeForCurrentSite()
+        case "install-site-as-app":
+            installCurrentSiteAsWebApp(nil)
+        case "open-standalone-app":
+            openCurrentSiteAsStandaloneWebApp(nil)
         default:
             break
         }
