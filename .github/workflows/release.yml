@@ -26,6 +26,15 @@ jobs:
       - name: Use the committed icon
         run: touch Resources/Kylmora.icns
 
+      # Single source of truth for the version: the git tag. `vX.Y.Z` becomes the
+      # app's version, so there is never a version number to bump by hand.
+      - name: Stamp the version from the tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" Resources/Info.plist
+          echo "Building Kylmora $VERSION (build $GITHUB_RUN_NUMBER)"
+
       - name: Build the app bundle
         run: make bundle
 
