@@ -358,6 +358,59 @@ final class BrowserSession {
         for other in space.tabs[(index + 1)...] { closeTab(other) }
     }
 
+    /// Closes a collection of tabs in batch.
+    func closeTabs(_ tabsToClose: [Tab]) {
+        for tab in tabsToClose {
+            closeTab(tab)
+        }
+    }
+
+    /// Closes all unpinned tabs in the given space.
+    func closeAllTabs(in space: Space) {
+        let tabs = space.tabs
+        for tab in tabs {
+            closeTab(tab)
+        }
+    }
+
+    /// Moves a collection of tabs to another space in batch.
+    func moveTabs(_ tabsToMove: [Tab], toSpace space: Space) {
+        for tab in tabsToMove {
+            move(tab, toSpace: space)
+        }
+    }
+
+    /// Reloads a collection of tabs in batch.
+    func reloadTabs(_ tabsToReload: [Tab]) {
+        for tab in tabsToReload {
+            tab.reload()
+        }
+    }
+
+    /// Duplicates a collection of tabs in batch.
+    @discardableResult
+    func duplicateTabs(_ tabsToDuplicate: [Tab]) -> [Tab] {
+        tabsToDuplicate.compactMap { duplicate($0) }
+    }
+
+    /// Pins a collection of tabs in batch.
+    func pinTabs(_ tabsToPin: [Tab]) {
+        for tab in tabsToPin {
+            if !isPinned(tab) {
+                pin(tab)
+            }
+        }
+    }
+
+    /// Unpins a collection of tabs in batch.
+    func unpinTabs(_ tabsToUnpin: [Tab]) {
+        for tab in tabsToUnpin {
+            if isPinned(tab) {
+                unpin(tab)
+            }
+        }
+    }
+
     /// Takes a tab out of its space and out of the window, tearing its page
     /// down. The half of closing that a move to another space shares.
     private func detach(_ tab: Tab, from space: Space) {
@@ -787,6 +840,13 @@ final class BrowserSession {
         tab.setPinnedSiteID(site.id)
         changes.send(.structure)
         scheduleSave()
+    }
+
+    /// Unpins a tab if it was pinned as a tile shortcut.
+    func unpin(_ tab: Tab) {
+        if let site = activeSpace.pinnedSites.first(where: { $0.id == tab.pinnedSiteID || $0.matches(tab.url) }) {
+            removePinnedSite(site)
+        }
     }
 
     func removePinnedSite(_ site: PinnedSite) {

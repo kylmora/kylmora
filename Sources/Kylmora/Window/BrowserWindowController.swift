@@ -326,6 +326,27 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
     }
 
+    @objc func copyCurrentURL(_ sender: Any?) {
+        guard let url = session.activeTab?.displayURL else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(url.absoluteString, forType: .string)
+    }
+
+    @objc func togglePinActiveTab(_ sender: Any?) {
+        guard let tab = session.activeTab else { return }
+        if let site = session.activeSpace.pinnedSites.first(where: { $0.id == tab.pinnedSiteID || $0.matches(tab.url) }) {
+            session.removePinnedSite(site)
+        } else {
+            session.pin(tab)
+        }
+    }
+
+    @objc func duplicateActiveTab(_ sender: Any?) {
+        guard let tab = session.activeTab else { return }
+        _ = session.duplicate(tab)
+    }
+
     /// The macOS share sheet for the current page, hung off the share button.
     private func shareCurrentPage() {
         guard let url = session.activeTab?.displayURL,
@@ -798,16 +819,54 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         }
     }
     @objc func closeTab(_ sender: Any?) {
+        let multiSelected = sidebar.selectedTabs
+        if multiSelected.count > 1 {
+            session.closeTabs(multiSelected)
+            return
+        }
         guard let tab = session.activeTab, TabClosing.confirm(closing: tab) else { return }
         session.closeTab(tab)
+    }
+
+    @objc func closeAllTabsInCurrentSpace(_ sender: Any?) {
+        session.closeAllTabs(in: session.activeSpace)
     }
 
     private func executeCommand(_ id: String) {
         switch id {
         case "new-tab":
             _ = session.newTab()
+        case "close-tab":
+            let multiSelected = sidebar.selectedTabs
+            if multiSelected.count > 1 {
+                session.closeTabs(multiSelected)
+            } else if let tab = session.activeTab, TabClosing.confirm(closing: tab) {
+                session.closeTab(tab)
+            }
+        case "close-all-tabs-in-space":
+            closeAllTabsInCurrentSpace(nil)
+        case "close-selected-tabs":
+            let multiSelected = sidebar.selectedTabs
+            if !multiSelected.isEmpty {
+                session.closeTabs(multiSelected)
+            } else if let tab = session.activeTab, TabClosing.confirm(closing: tab) {
+                session.closeTab(tab)
+            }
+        case "reload-selected-tabs":
+            let multiSelected = sidebar.selectedTabs
+            if !multiSelected.isEmpty {
+                session.reloadTabs(multiSelected)
+            } else if let tab = session.activeTab {
+                tab.reload()
+            }
         case "reopen-closed-tab":
             _ = session.reopenClosedTab()
+        case "duplicate-tab":
+            duplicateActiveTab(nil)
+        case "pin-tab":
+            togglePinActiveTab(nil)
+        case "copy-url":
+            copyCurrentURL(nil)
         case "next-tab":
             selectNextTab(nil)
         case "previous-tab":
