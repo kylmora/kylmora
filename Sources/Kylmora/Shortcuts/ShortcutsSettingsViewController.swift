@@ -260,8 +260,11 @@ final class ShortcutsSettingsViewController: NSViewController, NSTableViewDataSo
             }
 
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            // Require at least one modifier flag or function key
-            guard !flags.isEmpty, let chars = event.charactersIgnoringModifiers, !chars.isEmpty else {
+            // Require at least one modifier flag, unless the key itself is a
+            // function/special key (arrows, F-keys live in U+F700-U+F8FF and
+            // arrive with no device-independent flags set).
+            guard let chars = event.charactersIgnoringModifiers, !chars.isEmpty,
+                  (!flags.isEmpty || chars.unicodeScalars.contains(where: { (0xF700...0xF8FF).contains($0.value) })) else {
                 return nil
             }
 
@@ -277,7 +280,7 @@ final class ShortcutsSettingsViewController: NSViewController, NSTableViewDataSo
                 alert.addButton(withTitle: "Cancel")
 
                 if alert.runModal() == .alertFirstButtonReturn {
-                    self.manager.resetShortcut(id: conflict.id)
+                    self.manager.clearShortcut(id: conflict.id)
                     self.manager.setShortcut(id: targetID, key: key, modifiers: flags)
                 }
             } else {

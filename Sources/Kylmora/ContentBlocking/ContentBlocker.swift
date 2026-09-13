@@ -24,7 +24,41 @@ final class ContentBlocker {
     private(set) var statuses: [String: ListStatus] = [:]
     private(set) var customStatuses: [UUID: ListStatus] = [:]
     /// Fires on the main actor whenever a status or the active set changes.
-    var onChange: (() -> Void)?
+    /// Multicast: every subscriber is notified, so the Privacy footer and the
+    /// Advanced Blocking rows can both listen without clobbering each other.
+    var onChange: (() -> Void)? {
+        get { legacyChangeHandler }
+        set {
+            if let token = legacyChangeToken {
+                changeObservers.removeValue(forKey: token)
+                legacyChangeToken = nil
+            }
+            legacyChangeHandler = newValue
+            if let newValue {
+                legacyChangeToken = addChangeObserver(newValue)
+            }
+        }
+    }
+    private var legacyChangeHandler: (() -> Void)?
+    private var legacyChangeToken: UUID?
+    private var changeObservers: [UUID: () -> Void] = [:]
+
+    /// Adds a change observer, returning a token for `removeChangeObserver`.
+    func addChangeObserver(_ observer: @escaping () -> Void) -> UUID {
+        let token = UUID()
+        changeObservers[token] = observer
+        return token
+    }
+
+    func removeChangeObserver(_ token: UUID) {
+        changeObservers.removeValue(forKey: token)
+    }
+
+    private func notifyChange() {
+        for observer in changeObservers.values {
+            observer()
+        }
+    }
 
     private let settings: Settings
     private let store: FilterListStore
@@ -109,7 +143,7 @@ final class ContentBlocker {
         compileCustomLists()
         compileUserRules()
         applyToAll()
-        onChange?()
+        notifyChange()
     }
 
     /// Every active list fetched again, now.
@@ -153,7 +187,7 @@ final class ContentBlocker {
         guard !compiling.contains(list.id) else { return }
         compiling.insert(list.id)
         statuses[list.id] = .fetching
-        onChange?()
+        notifyChange()
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -162,7 +196,7 @@ final class ContentBlocker {
             } catch {
                 statuses[list.id] = .failed(Self.describe(error))
                 compiling.remove(list.id)
-                onChange?()
+                notifyChange()
             }
         }
     }
@@ -173,7 +207,7 @@ final class ContentBlocker {
         guard compiled[list.id] == nil, !compiling.contains(list.id) else { return }
         compiling.insert(list.id)
         statuses[list.id] = .fetching
-        onChange?()
+        notifyChange()
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -182,7 +216,7 @@ final class ContentBlocker {
             } catch {
                 statuses[list.id] = .failed(Self.describe(error))
                 compiling.remove(list.id)
-                onChange?()
+                notifyChange()
             }
         }
     }
@@ -215,7 +249,7 @@ final class ContentBlocker {
             adopt(ruleList, for: list, identifier: identifier, rules: output.rules.count, fetched: cached.fetched)
         } catch {
             statuses[list.id] = .failed(Self.describe(error))
-            onChange?()
+            notifyChange()
         }
     }
 
@@ -227,7 +261,7 @@ final class ContentBlocker {
         compiled[list.id] = ruleList
         statuses[list.id] = .ready(rules: rules ?? -1, fetched: fetched)
         applyToAll()
-        onChange?()
+        notifyChange()
     }
 
     private func lookUp(_ identifier: String) async -> WKContentRuleList? {
@@ -284,7 +318,7 @@ final class ContentBlocker {
             userRulesIdentifier = nil
             userRulesCount = 0
             applyToAll()
-            onChange?()
+            notifyChange()
             return
         }
 
@@ -293,7 +327,7 @@ final class ContentBlocker {
             userRules = nil
             userRulesCount = 0
             applyToAll()
-            onChange?()
+            notifyChange()
             return
         }
 
@@ -312,7 +346,7 @@ final class ContentBlocker {
                 self.userRules = ruleList
                 self.userRulesIdentifier = identifier
                 self.applyToAll()
-                self.onChange?()
+                notifyChange()
             } catch {
                 NSLog("Kylmora: failed to compile user rules: \(error.localizedDescription)")
             }
@@ -352,7 +386,7 @@ final class ContentBlocker {
         guard !customCompiling.contains(list.id) else { return }
         customCompiling.insert(list.id)
         customStatuses[list.id] = .fetching
-        onChange?()
+        notifyChange()
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -361,7 +395,7 @@ final class ContentBlocker {
             } catch {
                 self.customStatuses[list.id] = .failed(Self.describe(error))
                 self.customCompiling.remove(list.id)
-                self.onChange?()
+                notifyChange()
             }
         }
     }
@@ -370,7 +404,7 @@ final class ContentBlocker {
         guard customCompiled[list.id] == nil, !customCompiling.contains(list.id) else { return }
         customCompiling.insert(list.id)
         customStatuses[list.id] = .fetching
-        onChange?()
+        notifyChange()
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -379,7 +413,7 @@ final class ContentBlocker {
             } catch {
                 self.customStatuses[list.id] = .failed(Self.describe(error))
                 self.customCompiling.remove(list.id)
-                self.onChange?()
+                notifyChange()
             }
         }
     }
@@ -407,7 +441,7 @@ final class ContentBlocker {
             adoptCustom(ruleList, for: list, identifier: identifier, rules: output.rules.count, fetched: cached.fetched)
         } catch {
             customStatuses[list.id] = .failed(Self.describe(error))
-            onChange?()
+            notifyChange()
         }
     }
 
@@ -419,7 +453,7 @@ final class ContentBlocker {
         customCompiled[list.id] = ruleList
         customStatuses[list.id] = .ready(rules: rules ?? -1, fetched: fetched)
         applyToAll()
-        onChange?()
+        notifyChange()
     }
 
     // MARK: - Helpers

@@ -143,4 +143,74 @@ struct ShortcutTests {
         #expect(!item.keyEquivalentModifierMask.contains(.option))
         #expect(item.keyEquivalentModifierMask.contains(.command))
     }
+
+    @Test("Arrow-key defaults use function-key scalars AppKit can match")
+    func arrowDefaultsAreFunctionKeys() {
+        let tempDir = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = ShortcutManager(store: ShortcutStore(fileURL: tempDir.appending(path: "shortcuts.json")))
+
+        // AppKit only fires arrow equivalents holding U+F700-U+F703; the
+        // printable arrows (U+2190-U+2193) never match a real keypress.
+        let expected: [String: String] = [
+            "next-tab": "\u{F703}",
+            "previous-tab": "\u{F702}",
+            "next-space": "\u{F701}",
+            "previous-space": "\u{F700}",
+        ]
+        for (id, key) in expected {
+            let def = manager.definition(for: id)
+            #expect(def?.defaultKey == key)
+            #expect(def?.defaultKey.unicodeScalars.first.map { (0xF700...0xF703).contains($0.value) } ?? false)
+        }
+    }
+
+    @Test("ShortcutFormatter displays function-key arrows and F-keys")
+    func formatsFunctionKeys() {
+        #expect(ShortcutFormatter.format(key: "\u{F703}", modifiers: [.command, .option]) == "⌥⌘→")
+        #expect(ShortcutFormatter.format(key: "\u{F702}", modifiers: [.command, .option]) == "⌥⌘←")
+        #expect(ShortcutFormatter.format(key: "\u{F701}", modifiers: [.command, .option]) == "⌥⌘↓")
+        #expect(ShortcutFormatter.format(key: "\u{F700}", modifiers: [.command, .option]) == "⌥⌘↑")
+    }
+
+    @Test("Clearing a shortcut unbinds it instead of restoring the default")
+    func clearUnbinds() {
+        let tempDir = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = ShortcutManager(store: ShortcutStore(fileURL: tempDir.appending(path: "shortcuts.json")))
+
+        manager.clearShortcut(id: "new-tab")
+        #expect(manager.effectiveShortcut(for: "new-tab") == nil)
+        #expect(manager.displayString(for: "new-tab") == "")
+        #expect(manager.isCustomized(id: "new-tab"))
+
+        // A cleared action no longer conflicts with anything.
+        #expect(manager.findConflict(key: "t", modifiers: [.command], excluding: "new-tab") == nil)
+
+        let menu = NSMenu()
+        let item = NSMenuItem(title: "New Tab", action: #selector(BrowserWindowController.newTab(_:)), keyEquivalent: "t")
+        menu.addItem(item)
+        manager.apply(to: menu)
+        #expect(item.keyEquivalent == "")
+
+        // Reset restores the factory default.
+        manager.resetShortcut(id: "new-tab")
+        #expect(manager.effectiveShortcut(for: "new-tab")?.key == "t")
+    }
+
+    @Test("Reassigning a conflict frees the shortcut instead of duplicating it")
+    func reassignFreesConflict() {
+        let tempDir = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = ShortcutManager(store: ShortcutStore(fileURL: tempDir.appending(path: "shortcuts.json")))
+
+        // Pin Tab steals New Tab's Cmd-T; the loser must end up unbound.
+        #expect(manager.findConflict(key: "t", modifiers: [.command], excluding: "pin-tab")?.id == "new-tab")
+        manager.clearShortcut(id: "new-tab")
+        manager.setShortcut(id: "pin-tab", key: "t", modifiers: [.command])
+
+        #expect(manager.effectiveShortcut(for: "new-tab") == nil)
+        #expect(manager.effectiveShortcut(for: "pin-tab")?.key == "t")
+        #expect(manager.findConflict(key: "t", modifiers: [.command], excluding: "pin-tab") == nil)
+    }
 }

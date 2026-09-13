@@ -73,7 +73,7 @@ final class ShortcutManager {
             title: "Next Tab",
             category: .tabs,
             selector: #selector(BrowserWindowController.selectNextTab(_:)),
-            defaultKey: "\u{2192}",
+            defaultKey: "\u{F703}",
             defaultModifiers: [.command, .option]
         ),
         ShortcutDefinition(
@@ -81,7 +81,7 @@ final class ShortcutManager {
             title: "Previous Tab",
             category: .tabs,
             selector: #selector(BrowserWindowController.selectPreviousTab(_:)),
-            defaultKey: "\u{2190}",
+            defaultKey: "\u{F702}",
             defaultModifiers: [.command, .option]
         ),
         ShortcutDefinition(
@@ -173,7 +173,7 @@ final class ShortcutManager {
             title: "Next Space",
             category: .spaces,
             selector: #selector(BrowserWindowController.selectNextSpace(_:)),
-            defaultKey: "\u{2193}",
+            defaultKey: "\u{F701}",
             defaultModifiers: [.command, .option]
         ),
         ShortcutDefinition(
@@ -181,7 +181,7 @@ final class ShortcutManager {
             title: "Previous Space",
             category: .spaces,
             selector: #selector(BrowserWindowController.selectPreviousSpace(_:)),
-            defaultKey: "\u{2191}",
+            defaultKey: "\u{F700}",
             defaultModifiers: [.command, .option]
         ),
 
@@ -277,6 +277,7 @@ final class ShortcutManager {
     func effectiveShortcut(for id: String) -> (key: String, modifiers: NSEvent.ModifierFlags)? {
         guard let def = definition(for: id) else { return nil }
         if let custom = store.shortcut(for: id) {
+            guard !custom.isCleared else { return nil }
             return (custom.key, custom.modifiers)
         }
         return (def.defaultKey, def.defaultModifiers)
@@ -300,6 +301,14 @@ final class ShortcutManager {
 
     func resetShortcut(id: String) {
         store.remove(id: id)
+        apply(to: NSApp.mainMenu)
+        onChange?()
+    }
+
+    /// Unbinds an action entirely: no key combination triggers it until the
+    /// user records a new one or resets to the factory default.
+    func clearShortcut(id: String) {
+        store.set(CustomShortcut(key: "", modifiers: [], isCleared: true), for: id)
         apply(to: NSApp.mainMenu)
         onChange?()
     }
@@ -338,10 +347,13 @@ final class ShortcutManager {
             }
 
             guard let action = item.action else { continue }
-            if let def = definitions.first(where: { $0.selector == action }),
-               let current = effectiveShortcut(for: def.id) {
+            guard let def = definitions.first(where: { $0.selector == action }) else { continue }
+            if let current = effectiveShortcut(for: def.id) {
                 item.keyEquivalent = current.key
                 item.keyEquivalentModifierMask = current.modifiers
+            } else {
+                item.keyEquivalent = ""
+                item.keyEquivalentModifierMask = []
             }
         }
     }

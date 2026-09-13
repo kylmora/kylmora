@@ -8,6 +8,7 @@ final class AdvancedBlockingViewController: NSViewController {
 
     private let settings: Settings
     private let blocker: ContentBlocker
+    private var blockerObserver: UUID?
     private var checkboxes: [String: NSButton] = [:]
 
     private let segmentedControl = NSSegmentedControl(
@@ -34,6 +35,14 @@ final class AdvancedBlockingViewController: NSViewController {
         self.settings = settings
         self.blocker = blocker
         super.init(nibName: nil, bundle: nil)
+        // Live status updates: fetches and compiles finish asynchronously, so
+        // refresh the Custom Lists rows as transitions arrive. Gated on the
+        // visible segment; the observer is multicast-safe with the Privacy
+        // pane's own subscription.
+        blockerObserver = blocker.addChangeObserver { [weak self] in
+            guard let self, self.isViewLoaded, self.segmentedControl.selectedSegment == 1 else { return }
+            self.rebuildCustomListRows()
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -341,7 +350,7 @@ final class AdvancedBlockingViewController: NSViewController {
 
             let status = blocker.customStatuses[item.id] ?? .idle
             let statusText: String = switch status {
-            case .idle: "Ready"
+            case .idle: "Not loaded"
             case .fetching: "Updating\u{2026}"
             case .ready(let count, _): "\(count) rules"
             case .failed(let msg): "Failed: \(msg)"
@@ -419,6 +428,10 @@ final class AdvancedBlockingViewController: NSViewController {
             let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             let rawURL = urlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty, let url = URL(string: rawURL), url.scheme == "https" || url.scheme == "http" else {
+                let error = NSAlert()
+                error.messageText = "Could Not Add Filter List"
+                error.informativeText = "Give the list a name and a valid http(s) subscription URL."
+                error.beginSheetModal(for: window, completionHandler: { _ in })
                 return
             }
             let newList = CustomFilterList(name: name, url: url, isEnabled: true)

@@ -121,4 +121,42 @@ struct ElementPickerAndUserRulesTests {
         sites.update { $0.set("on", for: host, in: .contentBlockers) }
         #expect(sites.blocksContent(for: url) == true)
     }
+
+    @Test("ContentBlocker change notifications reach every subscriber")
+    @MainActor
+    func changeObserversAreMulticast() {
+        let defaults = UserDefaults(suiteName: "kylmora.tests.multicast.\(UUID().uuidString)")!
+        let settings = Settings(defaults: defaults)
+        let blocker = ContentBlocker(settings: settings)
+
+        var first = 0
+        var second = 0
+        var legacy = 0
+        let token1 = blocker.addChangeObserver { first += 1 }
+        let token2 = blocker.addChangeObserver { second += 1 }
+        blocker.onChange = { legacy += 1 }
+
+        // Every subscriber sees the same events (compiles announce fetching,
+        // readiness and the final refresh, so the count is not exactly one).
+        blocker.preferencesChanged()
+        #expect(first > 0)
+        #expect(first == second)
+        #expect(second == legacy)
+
+        // Removing one observer leaves the others firing.
+        blocker.removeChangeObserver(token1)
+        blocker.preferencesChanged()
+        let frozen = first
+        #expect(second > frozen)
+        #expect(second == legacy)
+        #expect(first == frozen)
+
+        // Replacing the legacy slot does not disturb added observers.
+        blocker.onChange = { legacy += 1000 }
+        blocker.preferencesChanged()
+        #expect(first == frozen)
+        #expect(second > frozen)
+        #expect(legacy >= 1000)
+        _ = token2
+    }
 }

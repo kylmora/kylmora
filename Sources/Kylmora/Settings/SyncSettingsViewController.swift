@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import UniformTypeIdentifiers
 
 /// The Sync pane in Settings: enables and configures cross-device sync via Apple iCloud,
@@ -7,6 +8,7 @@ import UniformTypeIdentifiers
 final class SyncSettingsViewController: NSViewController {
     private let coordinator: SyncCoordinator?
     private let settings: Settings
+    private var statusSubscription: AnyCancellable?
 
     // Status & controls
     private let statusLabel = NSTextField(labelWithString: "Ready")
@@ -39,24 +41,21 @@ final class SyncSettingsViewController: NSViewController {
     }
 
     override func loadView() {
-        // Enforce iCloud as the active sync service
-        if settings.syncService != .iCloud {
-            settings.syncService = .iCloud
-            coordinator?.reloadProviders()
-        }
-
         let form = SettingsForm()
         view = form
         buildLayout(in: form)
         reload()
+        // Live status: background syncs change the coordinator's status while
+        // the pane is open; reflect them without waiting for a revisit.
+        statusSubscription = coordinator?.$status
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] status in
+                self?.statusLabel.stringValue = status.title
+            }
     }
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        if settings.syncService != .iCloud {
-            settings.syncService = .iCloud
-            coordinator?.reloadProviders()
-        }
         reload()
     }
 

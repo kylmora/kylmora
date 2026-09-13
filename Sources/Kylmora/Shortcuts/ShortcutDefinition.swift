@@ -21,14 +21,21 @@ public enum ShortcutFormatter {
         if mods.contains(.command) { str += "⌘" }
 
         switch key {
-        case "\u{2190}": str += "←"
-        case "\u{2192}": str += "→"
-        case "\u{2191}": str += "↑"
-        case "\u{2193}": str += "↓"
+        case "\u{2190}", "\u{F702}": str += "←"
+        case "\u{2192}", "\u{F703}": str += "→"
+        case "\u{2191}", "\u{F700}": str += "↑"
+        case "\u{2193}", "\u{F701}": str += "↓"
         case "\r": str += "↩"
         case "\u{1b}": str += "⎋"
         case " ": str += "Space"
-        default: str += key.uppercased()
+        default:
+            if key.unicodeScalars.count == 1,
+               let scalar = key.unicodeScalars.first,
+               (0xF704...0xF713).contains(scalar.value) {
+                str += "F\(scalar.value - 0xF704 + 1)"
+            } else {
+                str += key.uppercased()
+            }
         }
         return str
     }
@@ -38,10 +45,21 @@ public enum ShortcutFormatter {
 public struct CustomShortcut: Codable, Equatable, Sendable {
     public var key: String
     public var modifierFlagsRaw: UInt
+    /// Explicitly unbound: the action has no shortcut (distinct from "no
+    /// override", which falls back to the factory default).
+    public var isCleared: Bool
 
-    public init(key: String, modifiers: NSEvent.ModifierFlags) {
+    public init(key: String, modifiers: NSEvent.ModifierFlags, isCleared: Bool = false) {
         self.key = key
         self.modifierFlagsRaw = modifiers.intersection(.deviceIndependentFlagsMask).rawValue
+        self.isCleared = isCleared
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.key = try container.decode(String.self, forKey: .key)
+        self.modifierFlagsRaw = try container.decode(UInt.self, forKey: .modifierFlagsRaw)
+        self.isCleared = try container.decodeIfPresent(Bool.self, forKey: .isCleared) ?? false
     }
 
     public var modifiers: NSEvent.ModifierFlags {

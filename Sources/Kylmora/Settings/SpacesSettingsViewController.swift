@@ -382,8 +382,10 @@ final class SpacesSettingsViewController: NSViewController {
             look.allowsWebsiteThemeColor = false
             session.setLook(look, for: editing)
             // Start on a colour to customise: restore a remembered custom one,
-            // else the default swatch. A space that already has a colour keeps it.
-            if !editing.theme.tintsChrome {
+            // else the default swatch. A space that already has a colour keeps
+            // it, and a space with a gradient keeps that too: re-selecting
+            // Customized must never wipe the gradient (setTheme clears it).
+            if editing.look.gradient == nil, !editing.theme.tintsChrome {
                 session.setTheme(editing.look.customColor != nil ? .custom : .default, for: editing)
             }
         case .website:

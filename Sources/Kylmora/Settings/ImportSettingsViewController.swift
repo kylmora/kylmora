@@ -218,7 +218,11 @@ final class ImportSettingsViewController: NSViewController {
 
     @objc private func chooseTabs() {
         let source = selectedSource
-        guard let url = pickFile(for: .tabs), let data = try? Data(contentsOf: url) else { return }
+        guard let url = pickFile(for: .tabs) else { return }
+        guard let data = try? Data(contentsOf: url) else {
+            tabsStatus.stringValue = "Kylmora could not read that file. If \(source.sentenceName) is open, quit it and try again."
+            return
+        }
         tabsStatus.stringValue = "Reading tabs\u{2026}"
         Task { [weak self] in
             let outcome: Result<[TabSessionImporter.Tab], TabSessionImporter.Failure> = await Task.detached {
