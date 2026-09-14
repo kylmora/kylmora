@@ -12,9 +12,12 @@ permissions:
 jobs:
   release:
     name: Build & attach .dmg
-    runs-on: macos-15
+    runs-on: macos-26
+    # Notarisation waits on Apple, which is usually minutes but has no
+    # guaranteed ceiling. Fail in an hour rather than burn the 6-hour default.
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
@@ -72,12 +75,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          ditto -c -k --keepParent build/Kylmora.app "$RUNNER_TEMP/Kylmora.zip"
-          xcrun notarytool submit "$RUNNER_TEMP/Kylmora.zip" \
-            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" --wait
-          xcrun stapler staple build/Kylmora.app
+        run: Tools/notarize.sh build/Kylmora.app
 
       # A styled installer image: a compact window, the app beside an
       # /Applications shortcut, and an arrow background. dmgbuild writes the
@@ -98,10 +96,8 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           codesign --force --sign "$DEV_ID" --timestamp build/Kylmora.dmg
-          xcrun notarytool submit build/Kylmora.dmg \
-            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" --wait
-          xcrun stapler staple build/Kylmora.dmg
+          Tools/notarize.sh build/Kylmora.dmg
+          # What Gatekeeper itself will say when a user opens the download.
           spctl --assess --type open --context context:primary-signature -vv build/Kylmora.dmg
 
       - name: Publish the GitHub Release
@@ -120,3 +116,11 @@ jobs:
             normally — no security warning to click through.
 
             Requires macOS 14 or later.
+
+      # The runner is torn down anyway, but the private key should not outlive
+      # the job even if a later step fails.
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/Kylmora.zip"

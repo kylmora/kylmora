@@ -41,8 +41,8 @@ dependencies — the release build is around 1.2 MB.
 
 Download the latest build from the releases page:
 **https://github.com/kylmora/kylmora/releases/latest** — open the `.dmg` and drag
-Kylmora to Applications. The build is unsigned, so on first launch open it via
-**System Settings → Privacy & Security → Open Anyway**.
+Kylmora to Applications. Builds are signed with a Developer ID and notarized by
+Apple, so they open without a security warning.
 
 Prefer to build it yourself? See [Building from source](#building-from-source) —
 you'll need macOS 14+ and a Swift 6 toolchain (no Xcode required).
