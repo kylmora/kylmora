@@ -13,9 +13,12 @@ jobs:
   release:
     name: Build & attach .dmg
     runs-on: macos-26
-    # Notarisation waits on Apple, which is usually minutes but has no
-    # guaranteed ceiling. Fail in an hour rather than burn the 6-hour default.
-    timeout-minutes: 60
+    # Notarisation waits on Apple, which has no guaranteed ceiling: this team's
+    # submissions have taken well over an hour. Long enough to let a slow queue
+    # finish, short enough not to burn the 6-hour default on a stuck one.
+    timeout-minutes: 180
+    env:
+      NOTARY_TIMEOUT: 75m
     steps:
       - uses: actions/checkout@v7
 
