@@ -35,8 +35,49 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" Resources/Info.plist
           echo "Building Kylmora $VERSION (build $GITHUB_RUN_NUMBER)"
 
+      # Put the Developer ID certificate into a throwaway keychain that exists
+      # only for this job, so codesign can find the identity.
+      - name: Import the signing certificate
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | grep 'Developer ID Application' | head -1 \
+            | sed -E 's/.*"(.*)"/\1/')
+          echo "DEV_ID=$IDENTITY" >> "$GITHUB_ENV"
+          echo "Signing as: $IDENTITY"
+
+      # Signed with the hardened runtime and a secure timestamp — both are
+      # required for notarisation.
       - name: Build the app bundle
-        run: make bundle
+        run: make bundle DEV_ID="$DEV_ID"
+
+      # Apple checks the app, then we staple the ticket into the bundle so it
+      # validates even on a machine that is offline.
+      - name: Notarize the app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ditto -c -k --keepParent build/Kylmora.app "$RUNNER_TEMP/Kylmora.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/Kylmora.zip" \
+            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple build/Kylmora.app
 
       # A styled installer image: a compact window, the app beside an
       # /Applications shortcut, and an arrow background. dmgbuild writes the
@@ -47,6 +88,21 @@ jobs:
           ./dmgvenv/bin/pip install --quiet dmgbuild Pillow
           ./dmgvenv/bin/dmgbuild -D app="build/Kylmora.app" \
             -s Tools/dmg-settings.py "Kylmora" "build/Kylmora.dmg"
+
+      # The disk image is notarised in its own right, so the download itself is
+      # trusted — not just the app once it has been copied out.
+      - name: Sign and notarize the .dmg
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          codesign --force --sign "$DEV_ID" --timestamp build/Kylmora.dmg
+          xcrun notarytool submit build/Kylmora.dmg \
+            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple build/Kylmora.dmg
+          spctl --assess --type open --context context:primary-signature -vv build/Kylmora.dmg
 
       - name: Publish the GitHub Release
         uses: softprops/action-gh-release@v3
@@ -60,7 +116,7 @@ jobs:
             Download `Kylmora.dmg` below, open it, and drag
             **Kylmora** to Applications.
 
-            This build is **unsigned**, so on first launch macOS may block it. To
-            open it: **System Settings → Privacy & Security**, scroll to the
-            Kylmora notice and click **Open Anyway** (or right-click the app and
-            choose **Open**). You only need to do this once.
+            Signed with a Developer ID and notarized by Apple, so it opens
+            normally — no security warning to click through.
+
+            Requires macOS 14 or later.
