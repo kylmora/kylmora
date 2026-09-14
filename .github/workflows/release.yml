@@ -5,20 +5,23 @@ on:
     tags:
       - 'v*'
 
-# Needed so the built-in token can create a Release and upload assets.
+# Only reads the repo: this workflow deliberately publishes nothing. Creating
+# the Release is Publish notarized releases' job, once Apple has said yes.
 permissions:
-  contents: write
+  contents: read
+
+# Two tags in flight are two independent builds and two independent
+# submissions; the same tag pushed twice queues rather than races.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build & attach .dmg
+  build:
+    name: Build & submit for notarization
     runs-on: macos-26
-    # Notarisation waits on Apple, which has no guaranteed ceiling: this team's
-    # submissions have taken well over an hour. Long enough to let a slow queue
-    # finish, short enough not to burn the 6-hour default on a stuck one.
-    timeout-minutes: 180
-    env:
-      NOTARY_TIMEOUT: 75m
+    # Nothing here waits on Apple, so this is a normal build's worth of time.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
@@ -71,15 +74,6 @@ jobs:
       - name: Build the app bundle
         run: make bundle DEV_ID="$DEV_ID"
 
-      # Apple checks the app, then we staple the ticket into the bundle so it
-      # validates even on a machine that is offline.
-      - name: Notarize the app
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: Tools/notarize.sh build/Kylmora.app
-
       # A styled installer image: a compact window, the app beside an
       # /Applications shortcut, and an arrow background. dmgbuild writes the
       # window layout directly (no Finder scripting), so it works headlessly.
@@ -90,35 +84,42 @@ jobs:
           ./dmgvenv/bin/dmgbuild -D app="build/Kylmora.app" \
             -s Tools/dmg-settings.py "Kylmora" "build/Kylmora.dmg"
 
-      # The disk image is notarised in its own right, so the download itself is
-      # trusted — not just the app once it has been copied out.
-      - name: Sign and notarize the .dmg
+      - name: Sign the .dmg
+        run: codesign --force --sign "$DEV_ID" --timestamp build/Kylmora.dmg
+
+      # Only the disk image is submitted, not the app inside it as well. Apple
+      # notarises the enclosed app either way, and one round trip through a
+      # queue with no ceiling is half the exposure of two back to back.
+      - name: Submit the .dmg to Apple
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          codesign --force --sign "$DEV_ID" --timestamp build/Kylmora.dmg
-          Tools/notarize.sh build/Kylmora.dmg
-          # What Gatekeeper itself will say when a user opens the download.
-          spctl --assess --type open --context context:primary-signature -vv build/Kylmora.dmg
+          mkdir -p pending
+          Tools/notarize.sh submit build/Kylmora.dmg > pending/submission-id.txt
+          cp build/Kylmora.dmg pending/
+          echo "Submitted $(cat pending/submission-id.txt) for $GITHUB_REF_NAME"
 
-      - name: Publish the GitHub Release
-        uses: softprops/action-gh-release@v3
+      # The unstapled .dmg parked where the publisher can find it. An artifact
+      # is private to the repo, so nothing unnotarised is reachable by a user.
+      - name: Park the build until Apple answers
+        uses: actions/upload-artifact@v4
         with:
-          files: build/Kylmora.dmg
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          body: |
-            ### Install
+          name: pending-notarization-${{ github.ref_name }}
+          path: pending/
+          retention-days: 30
+          if-no-files-found: error
 
-            Download `Kylmora.dmg` below, open it, and drag
-            **Kylmora** to Applications.
-
-            Signed with a Developer ID and notarized by Apple, so it opens
-            normally — no security warning to click through.
-
-            Requires macOS 14 or later.
+      - name: Where this goes next
+        run: |
+          echo "### Submitted to Apple :hourglass:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Submission \`$(cat pending/submission-id.txt)\` for **$GITHUB_REF_NAME**." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Publish notarized releases** checks every 15 minutes and will" >> "$GITHUB_STEP_SUMMARY"
+          echo "staple and publish the release once Apple accepts it. No release" >> "$GITHUB_STEP_SUMMARY"
+          echo "exists until then." >> "$GITHUB_STEP_SUMMARY"
 
       # The runner is torn down anyway, but the private key should not outlive
       # the job even if a later step fails.
@@ -126,4 +127,4 @@ jobs:
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
-          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/Kylmora.zip"
+          rm -f "$RUNNER_TEMP/cert.p12"
