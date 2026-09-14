@@ -1,0 +1,42 @@
+name: Notarization status
+
+# Run by hand from the Actions tab. Asks Apple what happened to a submission
+# without rebuilding anything, for when a release job gives up waiting.
+on:
+  workflow_dispatch:
+    inputs:
+      submission_id:
+        description: 'Submission UUID to inspect (blank = just list recent history)'
+        required: false
+        default: ''
+
+jobs:
+  status:
+    name: Ask Apple
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - name: Recent submissions
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool history \
+            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID"
+
+      - name: Details for one submission
+        if: inputs.submission_id != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          SUBMISSION_ID: ${{ inputs.submission_id }}
+        run: |
+          CREDS=(--apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID")
+          xcrun notarytool info "$SUBMISSION_ID" "${CREDS[@]}"
+          # The log exists only once Apple has finished processing; its absence
+          # is itself the answer when a submission is stuck.
+          xcrun notarytool log "$SUBMISSION_ID" "${CREDS[@]}" || \
+            echo "No log yet — Apple has not finished processing this submission."

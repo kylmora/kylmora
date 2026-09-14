@@ -36,7 +36,13 @@ enum BrandPalette {
 
                 // Hue buckets rather than RGB ones: two shades of the same
                 // brand colour should count as that colour, not as two.
-                let bucket = Int(rgb.hueComponent * 12) % 12
+                //
+                // Rounded, not truncated, so the buckets are centred on their
+                // hues instead of starting at them. Red sits at hue 0, where
+                // truncating splits it in two — 0.998 and 0.004 are the same
+                // red to the eye but fall either side of the wrap, and a
+                // red logo comes back as two colours instead of one.
+                let bucket = Int((rgb.hueComponent * 12).rounded()) % 12
                 if let existing = buckets[bucket] {
                     buckets[bucket] = (existing.color, existing.count + 1)
                 } else {

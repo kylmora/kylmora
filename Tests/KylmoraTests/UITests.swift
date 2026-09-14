@@ -920,6 +920,17 @@ struct BrandPaletteTests {
         #expect(found.count == 1)
     }
 
+    @Test("Reds either side of the hue wrap are one colour, not two")
+    func mergesAcrossTheHueSeam() {
+        // Red sits at hue 0, so two shades of it can land at 0.998 and 0.004.
+        // They are the same red to the eye and must bucket together. Stated as
+        // explicit hues rather than .systemRed, whose exact value moves between
+        // macOS releases — that drift is what hid this in the first place.
+        let below = NSColor(hue: 0.998, saturation: 0.9, brightness: 0.9, alpha: 1)
+        let above = NSColor(hue: 0.004, saturation: 0.9, brightness: 0.9, alpha: 1)
+        #expect(BrandPalette.colors(in: swatch([below, above])).count == 1)
+    }
+
     @Test("A monochrome icon gets a neutral ring rather than an invented one")
     func monochromeFallsBack() {
         let found = BrandPalette.colors(in: swatch([.white, .black, NSColor(white: 0.5, alpha: 1)]))
