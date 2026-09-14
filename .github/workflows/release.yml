@@ -5,24 +5,17 @@ on:
     tags:
       - 'v*'
 
-# Only reads the repo. This workflow deliberately publishes nothing: creating
-# the Release is Publish notarized releases' job, and only once Apple has
-# accepted both the app and the disk image.
+# Needed so the built-in token can create a Release and upload assets.
 permissions:
-  contents: read
-
-# Two tags in flight are two independent builds; the same tag pushed twice
-# queues rather than races.
-concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: false
+  contents: write
 
 jobs:
-  build:
-    name: Build & submit for notarization
+  release:
+    name: Build & attach .dmg
     runs-on: macos-26
-    # Nothing here waits on Apple, so this is just a build's worth of time.
-    timeout-minutes: 30
+    # No timeout-minutes on purpose: GitHub's own six-hour job limit is the only
+    # cap. Notarisation waits on Apple, which has no guaranteed ceiling, and a
+    # shorter cap here only turns a slow submission into a failed build.
     steps:
       - uses: actions/checkout@v7
 
@@ -75,45 +68,60 @@ jobs:
       - name: Build the app bundle
         run: make bundle DEV_ID="$DEV_ID"
 
-      # ditto, not zip: a .app is full of symlinks and permission bits that a
-      # plain archive mangles. This same zip is both what Apple receives and
-      # what the publisher unpacks later, so the bundle survives the handoff.
-      - name: Submit the app to Apple
+      # Apple checks the app, then the ticket is stapled into the bundle so it
+      # validates even on a machine that is offline. This blocks for as long as
+      # Apple takes.
+      - name: Notarize the app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: Tools/notarize.sh build/Kylmora.app
+
+      # A styled installer image: a compact window, the app beside an
+      # /Applications shortcut, and an arrow background. dmgbuild writes the
+      # window layout directly (no Finder scripting), so it works headlessly.
+      # Built around the stapled app, so what ships already carries its ticket.
+      - name: Package the styled .dmg
+        run: |
+          python3 -m venv dmgvenv
+          ./dmgvenv/bin/pip install --quiet dmgbuild Pillow
+          ./dmgvenv/bin/dmgbuild -D app="build/Kylmora.app" \
+            -s Tools/dmg-settings.py "Kylmora" "build/Kylmora.dmg"
+
+      # The disk image is notarised in its own right, so the download itself is
+      # trusted — not just the app once it has been copied out.
+      - name: Sign and notarize the .dmg
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          mkdir -p pending
-          ditto -c -k --keepParent build/Kylmora.app pending/Kylmora.app.zip
-          Tools/notarize.sh submit pending/Kylmora.app.zip > pending/submission-id.txt
-          echo "Submitted $(cat pending/submission-id.txt) for $GITHUB_REF_NAME"
+          codesign --force --sign "$DEV_ID" --timestamp build/Kylmora.dmg
+          Tools/notarize.sh build/Kylmora.dmg
+          # What Gatekeeper itself will say when a user opens the download.
+          spctl --assess --type open --context context:primary-signature -vv build/Kylmora.dmg
 
-      # Parked where the publisher can find it. A workflow artifact is private
-      # to the repo, so nothing unnotarised is reachable by a user.
-      - name: Park the app until Apple answers
-        uses: actions/upload-artifact@v4
+      # Only reached once both the app and the disk image are notarized and
+      # stapled, so an unnotarised build can never become a release.
+      - name: Publish the GitHub Release
+        uses: softprops/action-gh-release@v3
         with:
-          name: pending-app-${{ github.ref_name }}
-          path: pending/
-          retention-days: 30
-          if-no-files-found: error
+          files: build/Kylmora.dmg
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+          body: |
+            ### Install
 
-      - name: Where this goes next
-        run: |
-          {
-            echo "### Submitted to Apple :hourglass:"
-            echo ""
-            echo "App submission \`$(cat pending/submission-id.txt)\` for **$GITHUB_REF_NAME**."
-            echo ""
-            echo "**Publish notarized releases** takes it from here, checking every"
-            echo "15 minutes:"
-            echo ""
-            echo "1. Apple accepts the app → staple it, build the .dmg, submit that too"
-            echo "2. Apple accepts the .dmg → staple it and publish the release"
-            echo ""
-            echo "No release exists until both are notarized."
-          } >> "$GITHUB_STEP_SUMMARY"
+            Download `Kylmora.dmg` below, open it, and drag
+            **Kylmora** to Applications.
+
+            Signed with a Developer ID and notarized by Apple, so it opens
+            normally — no security warning to click through.
+
+            Requires macOS 14 or later.
 
       # The runner is torn down anyway, but the private key should not outlive
       # the job even if a later step fails.
@@ -121,4 +129,4 @@ jobs:
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
-          rm -f "$RUNNER_TEMP/cert.p12"
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/Kylmora.app.zip"
