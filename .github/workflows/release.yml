@@ -5,13 +5,14 @@ on:
     tags:
       - 'v*'
 
-# Only reads the repo: this workflow deliberately publishes nothing. Creating
-# the Release is Publish notarized releases' job, once Apple has said yes.
+# Only reads the repo. This workflow deliberately publishes nothing: creating
+# the Release is Publish notarized releases' job, and only once Apple has
+# accepted both the app and the disk image.
 permissions:
   contents: read
 
-# Two tags in flight are two independent builds and two independent
-# submissions; the same tag pushed twice queues rather than races.
+# Two tags in flight are two independent builds; the same tag pushed twice
+# queues rather than races.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -20,7 +21,7 @@ jobs:
   build:
     name: Build & submit for notarization
     runs-on: macos-26
-    # Nothing here waits on Apple, so this is a normal build's worth of time.
+    # Nothing here waits on Apple, so this is just a build's worth of time.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -74,52 +75,45 @@ jobs:
       - name: Build the app bundle
         run: make bundle DEV_ID="$DEV_ID"
 
-      # A styled installer image: a compact window, the app beside an
-      # /Applications shortcut, and an arrow background. dmgbuild writes the
-      # window layout directly (no Finder scripting), so it works headlessly.
-      - name: Package the styled .dmg
-        run: |
-          python3 -m venv dmgvenv
-          ./dmgvenv/bin/pip install --quiet dmgbuild Pillow
-          ./dmgvenv/bin/dmgbuild -D app="build/Kylmora.app" \
-            -s Tools/dmg-settings.py "Kylmora" "build/Kylmora.dmg"
-
-      - name: Sign the .dmg
-        run: codesign --force --sign "$DEV_ID" --timestamp build/Kylmora.dmg
-
-      # Only the disk image is submitted, not the app inside it as well. Apple
-      # notarises the enclosed app either way, and one round trip through a
-      # queue with no ceiling is half the exposure of two back to back.
-      - name: Submit the .dmg to Apple
+      # ditto, not zip: a .app is full of symlinks and permission bits that a
+      # plain archive mangles. This same zip is both what Apple receives and
+      # what the publisher unpacks later, so the bundle survives the handoff.
+      - name: Submit the app to Apple
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           mkdir -p pending
-          Tools/notarize.sh submit build/Kylmora.dmg > pending/submission-id.txt
-          cp build/Kylmora.dmg pending/
+          ditto -c -k --keepParent build/Kylmora.app pending/Kylmora.app.zip
+          Tools/notarize.sh submit pending/Kylmora.app.zip > pending/submission-id.txt
           echo "Submitted $(cat pending/submission-id.txt) for $GITHUB_REF_NAME"
 
-      # The unstapled .dmg parked where the publisher can find it. An artifact
-      # is private to the repo, so nothing unnotarised is reachable by a user.
-      - name: Park the build until Apple answers
+      # Parked where the publisher can find it. A workflow artifact is private
+      # to the repo, so nothing unnotarised is reachable by a user.
+      - name: Park the app until Apple answers
         uses: actions/upload-artifact@v4
         with:
-          name: pending-notarization-${{ github.ref_name }}
+          name: pending-app-${{ github.ref_name }}
           path: pending/
           retention-days: 30
           if-no-files-found: error
 
       - name: Where this goes next
         run: |
-          echo "### Submitted to Apple :hourglass:" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Submission \`$(cat pending/submission-id.txt)\` for **$GITHUB_REF_NAME**." >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Publish notarized releases** checks every 15 minutes and will" >> "$GITHUB_STEP_SUMMARY"
-          echo "staple and publish the release once Apple accepts it. No release" >> "$GITHUB_STEP_SUMMARY"
-          echo "exists until then." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Submitted to Apple :hourglass:"
+            echo ""
+            echo "App submission \`$(cat pending/submission-id.txt)\` for **$GITHUB_REF_NAME**."
+            echo ""
+            echo "**Publish notarized releases** takes it from here, checking every"
+            echo "15 minutes:"
+            echo ""
+            echo "1. Apple accepts the app → staple it, build the .dmg, submit that too"
+            echo "2. Apple accepts the .dmg → staple it and publish the release"
+            echo ""
+            echo "No release exists until both are notarized."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # The runner is torn down anyway, but the private key should not outlive
       # the job even if a later step fails.

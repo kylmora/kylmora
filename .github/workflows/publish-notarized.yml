@@ -1,14 +1,21 @@
 name: Publish notarized releases
 
-# The other half of Release. That workflow builds, signs and hands the .dmg to
-# Apple, then stops — Apple's notary queue has no ceiling and GitHub kills any
-# job at six hours, so waiting in line is not something a build job can do.
+# The rest of Release. That workflow builds, signs and hands the app to Apple,
+# then stops — Apple's notary queue has no ceiling (submissions have sat there
+# for ten hours) and GitHub kills any job at six, so waiting in line is not
+# something a build job can do.
 #
-# This one picks up where it left off: every 15 minutes it asks Apple about each
-# parked build and publishes the ones that have been accepted. A build waits as
-# long as Apple needs, at the cost of a couple of runner minutes per check, and
-# an unnotarised .dmg is never published — the release does not exist until the
-# ticket is stapled to it.
+# This one waits instead, in 15-minute glances, and walks each build through
+# the remaining stages:
+#
+#   pending-app-<tag>  Apple accepted the app  -> staple it, build and sign the
+#                      .dmg, submit that as well
+#   pending-dmg-<tag>  Apple accepted the .dmg -> staple it and publish
+#
+# A build therefore waits as long as Apple needs, at the cost of a couple of
+# runner minutes per glance. Nothing unnotarised is ever published: the release
+# is created only at the end of the second stage, once the ticket is stapled
+# into the .dmg and Gatekeeper agrees.
 on:
   schedule:
     - cron: '*/15 * * * *'
@@ -16,16 +23,16 @@ on:
 
 permissions:
   contents: write   # create the Release and upload the .dmg
-  actions: write    # read the parked builds, and delete them once published
+  actions: write    # read the parked builds, and retire them as they advance
 
-# One publisher at a time, so two runs cannot both claim the same build.
+# One publisher at a time, so two runs cannot both advance the same build.
 concurrency:
   group: publish-notarized
   cancel-in-progress: false
 
 jobs:
   # Cheap Linux pass so the expensive macOS runner only starts when there is
-  # actually something to do. Most of the time there is not.
+  # something to do. Most of the time there is not.
   scan:
     name: Anything waiting?
     runs-on: ubuntu-latest
@@ -40,32 +47,33 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" > artifacts.json
 
-          # One entry per tag. A tag built more than once keeps the newest
-          # artifact — the highest id — and ignores the superseded ones.
+          # One entry per parked build, newest artifact wins so a tag built more
+          # than once never publishes a superseded build.
           PENDING=$(jq -c '
             [ .artifacts[]
               | select(.expired == false)
-              | select(.name | startswith("pending-notarization-"))
+              | select(.name | test("^pending-(app|dmg)-"))
               | { name: .name,
                   artifact_id: .id,
                   run_id: .workflow_run.id,
-                  tag: (.name | ltrimstr("pending-notarization-")) } ]
+                  stage: (.name | capture("^pending-(?<s>app|dmg)-").s),
+                  tag: (.name | sub("^pending-(app|dmg)-"; "")) } ]
             | group_by(.name) | map(max_by(.artifact_id))
           ' artifacts.json)
 
           echo "pending=$PENDING" >> "$GITHUB_OUTPUT"
           echo "$PENDING" | jq -r 'if length == 0
             then "Nothing is waiting on Apple."
-            else "Waiting on Apple: " + (map(.tag) | join(", ")) end'
+            else "Waiting on Apple: " + (map(.tag + " (" + .stage + ")") | join(", ")) end'
 
-  publish:
-    # A separate job per parked tag, so a stuck v0.1.1 never holds up a v0.1.2
-    # that Apple has already accepted.
-    name: ${{ matrix.pending.tag }}
+  advance:
+    # A job per parked build, so a stuck v0.1.1 never holds up a v0.1.2 that
+    # Apple has already accepted.
+    name: ${{ matrix.pending.tag }} (${{ matrix.pending.stage }})
     needs: scan
     if: needs.scan.outputs.pending != '[]'
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -90,26 +98,99 @@ jobs:
         run: |
           SUBMISSION_ID="$(cat pending/submission-id.txt)"
           STATUS="$(Tools/notarize.sh status "$SUBMISSION_ID")"
-          echo "Submission $SUBMISSION_ID for ${{ matrix.pending.tag }}: $STATUS"
+          echo "${{ matrix.pending.tag }} (${{ matrix.pending.stage }})" \
+               "submission $SUBMISSION_ID: $STATUS"
           echo "id=$SUBMISSION_ID" >> "$GITHUB_OUTPUT"
           echo "status=$STATUS" >> "$GITHUB_OUTPUT"
 
       - name: Still in the queue
-        if: steps.verdict.outputs.status == 'In Progress'
+        if: success() && steps.verdict.outputs.status == 'In Progress'
         run: |
-          echo "Apple has not finished with ${{ matrix.pending.tag }} yet." \
-            "Checking again in 15 minutes." | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Apple has not finished with ${{ matrix.pending.tag }}" \
+            "(${{ matrix.pending.stage }}) yet. Checking again in 15 minutes." \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # Writes the ticket into the .dmg so it validates even offline, then
-      # asks Gatekeeper the same question a user's Mac will ask on download.
-      - name: Staple the ticket
-        if: steps.verdict.outputs.status == 'Accepted'
+      # ---- Stage one: the app came back accepted --------------------------
+      # Staple the ticket into the bundle, then build the disk image around the
+      # stapled app and send that to Apple in its turn. Signing the .dmg needs
+      # the Developer ID, so the certificate comes back out for this stage only.
+      - name: Import the signing certificate
+        if: success() && steps.verdict.outputs.status == 'Accepted' && matrix.pending.stage == 'app'
+        env:
+          CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/cert.p12"
+          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+            | grep 'Developer ID Application' | head -1 \
+            | sed -E 's/.*"(.*)"/\1/')
+          echo "DEV_ID=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Staple the app, then package and submit the .dmg
+        if: success() && steps.verdict.outputs.status == 'Accepted' && matrix.pending.stage == 'app'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          mkdir -p build
+          ditto -x -k pending/Kylmora.app.zip build/
+          Tools/notarize.sh staple build/Kylmora.app
+
+          # A styled installer image: a compact window, the app beside an
+          # /Applications shortcut, and an arrow background. dmgbuild writes the
+          # window layout directly (no Finder scripting), so it works headlessly.
+          python3 -m venv dmgvenv
+          ./dmgvenv/bin/pip install --quiet dmgbuild Pillow
+          ./dmgvenv/bin/dmgbuild -D app="build/Kylmora.app" \
+            -s Tools/dmg-settings.py "Kylmora" "build/Kylmora.dmg"
+
+          codesign --force --sign "$DEV_ID" --timestamp build/Kylmora.dmg
+
+          mkdir -p next
+          Tools/notarize.sh submit build/Kylmora.dmg > next/submission-id.txt
+          cp build/Kylmora.dmg next/
+          echo "App notarized. Disk image submitted as $(cat next/submission-id.txt)." \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Park the .dmg until Apple answers
+        if: success() && steps.verdict.outputs.status == 'Accepted' && matrix.pending.stage == 'app'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pending-dmg-${{ matrix.pending.tag }}
+          path: next/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Remove the signing keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      # ---- Stage two: the disk image came back accepted -------------------
+      # Write the ticket into the .dmg so it validates even offline, then ask
+      # Gatekeeper the same question a user's Mac asks on download. Only if
+      # that passes does a release get created.
+      - name: Staple the .dmg and check it as Gatekeeper would
+        if: success() && steps.verdict.outputs.status == 'Accepted' && matrix.pending.stage == 'dmg'
         run: |
           Tools/notarize.sh staple pending/Kylmora.dmg
           spctl --assess --type open --context context:primary-signature -vv pending/Kylmora.dmg
 
       - name: Publish the GitHub Release
-        if: steps.verdict.outputs.status == 'Accepted'
+        if: success() && steps.verdict.outputs.status == 'Accepted' && matrix.pending.stage == 'dmg'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ matrix.pending.tag }}
@@ -121,33 +202,27 @@ jobs:
           # it a draft, and the release would silently never go public.
           draft: false
           prerelease: false
-          body: |
-            ### Install
 
-            Download `Kylmora.dmg` below, open it, and drag
-            **Kylmora** to Applications.
-
-            Signed with a Developer ID and notarized by Apple, so it opens
-            normally — no security warning to click through.
-
-            Requires macOS 14 or later.
-
-      # Published, so it is no longer pending. Dropping the artifact is what
-      # takes this tag out of the queue the scan job reads.
-      - name: Retire the parked build
-        if: steps.verdict.outputs.status == 'Accepted'
+      # ---- Bookkeeping ----------------------------------------------------
+      # Advanced or published, this build is no longer at this stage. Dropping
+      # the artifact is what takes it out of the queue the scan job reads.
+      - name: Retire this stage
+        if: success() && steps.verdict.outputs.status == 'Accepted'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api -X DELETE \
             "repos/$GITHUB_REPOSITORY/actions/artifacts/${{ matrix.pending.artifact_id }}"
-          echo "Released **${{ matrix.pending.tag }}** :tada:" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ matrix.pending.stage }}" = "dmg" ]; then
+            echo "Released **${{ matrix.pending.tag }}**, notarized and stapled :tada:" \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # Anything that is neither Accepted nor In Progress is a refusal. Apple's
       # log names the offending binary; without it all you get is "Invalid".
       # The parked build is dropped so this does not fail every 15 minutes.
       - name: Apple refused this build
-        if: steps.verdict.outputs.status != 'Accepted' && steps.verdict.outputs.status != 'In Progress'
+        if: success() && steps.verdict.outputs.status != 'Accepted' && steps.verdict.outputs.status != 'In Progress'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
@@ -155,7 +230,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
-            echo "### ${{ matrix.pending.tag }} was not accepted"
+            echo "### ${{ matrix.pending.tag }} (${{ matrix.pending.stage }}) was not accepted"
             echo ""
             echo "Status: \`${{ steps.verdict.outputs.status }}\`"
             echo ""
