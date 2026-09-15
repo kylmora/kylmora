@@ -46,6 +46,8 @@ final class UpdateWindowController: NSWindowController {
         case prompt
         case downloading(progress: Double, bytesWritten: Int64, totalBytes: Int64)
         case readyToInstall(fileURL: URL)
+        /// Checking the download and putting it in place.
+        case installing
     }
 
     private(set) var displayState: DisplayState = .prompt
@@ -305,7 +307,20 @@ final class UpdateWindowController: NSWindowController {
             buttonStack.isHidden = true
             progressContainer.isHidden = true
             readyContainer.isHidden = false
-            readyDetailLabel.stringValue = "\(AppInfo.name) \(release.version) has been downloaded to \(fileURL.lastPathComponent). Relaunch now to apply the update."
+            readyDetailLabel.stringValue = "\(AppInfo.name) \(release.version) has been downloaded. Installing it replaces this copy and reopens it."
+        case .installing:
+            // The window keeps the progress bar it was already showing, now
+            // without a percentage: checking a signature and copying a bundle
+            // finish when they finish, and a bar that guesses at how long is
+            // worse than one that admits it does not know.
+            notesScrollView.isHidden = true
+            autoUpdateCheckbox.isHidden = true
+            buttonStack.isHidden = true
+            progressContainer.isHidden = false
+            readyContainer.isHidden = true
+            progressIndicator.isIndeterminate = true
+            progressIndicator.startAnimation(nil)
+            progressDetailLabel.stringValue = "Checking the download and installing it\u{2026}"
         }
     }
 

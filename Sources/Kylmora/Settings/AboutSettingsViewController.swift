@@ -40,7 +40,7 @@ final class AboutSettingsViewController: NSViewController {
     private let autoCheckCheckbox = NSButton(checkboxWithTitle: "Automatically check for updates", target: nil, action: nil)
     private let autoDownloadCheckbox = NSButton(checkboxWithTitle: "Automatically download updates", target: nil, action: nil)
     private let checkButton = NSButton(title: "Check for Updates\u{2026}", target: nil, action: nil)
-    private let downloadButton = NSButton(title: "Download", target: nil, action: nil)
+    private let downloadButton = NSButton(title: "Update Now", target: nil, action: nil)
     private let updateStatus = NSTextField(wrappingLabelWithString: "")
     private var checking = false
     private var downloadURL: URL?
@@ -175,6 +175,7 @@ final class AboutSettingsViewController: NSViewController {
         checkButton.isEnabled = false
         downloadButton.isHidden = true
         downloadURL = nil
+        release = nil
         updateStatus.textColor = .secondaryLabelColor
         updateStatus.stringValue = "Checking with kylmora.com\u{2026}"
         let current = AppInfo.version
@@ -199,6 +200,10 @@ final class AboutSettingsViewController: NSViewController {
             if let notes, !notes.isEmpty { text += " \(notes)" }
             updateStatus.stringValue = text
             downloadURL = url
+            release = UpdateCheck.Release(version: version, url: url, notes: notes)
+            // Only when there is something to fetch. A release the feed named
+            // but gave no address for cannot be installed or downloaded, and a
+            // button that would do neither is worse than no button.
             downloadButton.isHidden = url == nil
         case .unreachable(let reason):
             updateStatus.textColor = .secondaryLabelColor
@@ -215,10 +220,25 @@ final class AboutSettingsViewController: NSViewController {
         Settings.shared.automaticallyDownloadUpdates = (sender.state == .on)
     }
 
+    /// Hands the update to the installer rather than to a web page.
+    ///
+    /// This button used to open the download in a browser and leave the rest
+    /// to the user: find the disk image, open it, drag the app over the old
+    /// one, agree to replace it. `UpdateController` does the whole thing --
+    /// download, verify, swap, reopen -- so all this has to do is start it and
+    /// let the update window take over from here.
     @objc private func download() {
-        guard let downloadURL else { return }
-        NSWorkspace.shared.open(downloadURL)
+        guard let release else {
+            // No release in hand: fall back to the page, which is better than
+            // a button that does nothing.
+            if let downloadURL { NSWorkspace.shared.open(downloadURL) }
+            return
+        }
+        UpdateController.shared.presentUpdateWindow(for: release)
     }
+
+    /// The release the check found, which the Update Now button installs.
+    private var release: UpdateCheck.Release?
 
     /// What the status line says right now; for tests.
     var updateStatusText: String { updateStatus.stringValue }

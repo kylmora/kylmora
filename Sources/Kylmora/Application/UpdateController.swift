@@ -13,6 +13,8 @@ final class UpdateController: NSObject, URLSessionDownloadDelegate {
         case updateAvailable(UpdateCheck.Release)
         case downloading(progress: Double, bytesWritten: Int64, totalBytes: Int64)
         case readyToInstall(fileURL: URL, version: String)
+        /// Mounting, verifying and staging the download.
+        case installing
         case error(String)
     }
 
@@ -219,6 +221,17 @@ final class UpdateController: NSObject, URLSessionDownloadDelegate {
 
     // MARK: - Installation & Relaunch
 
+    /// Installs what was downloaded and reopens the new copy.
+    ///
+    /// The whole point of the button: no disk image to drag from, no old copy
+    /// to move to the Trash. The work is in `UpdateInstaller` -- mount,
+    /// verify, stage, then a script that swaps the bundle once this process
+    /// has gone. Nothing on disk changes until the download has proved it is
+    /// a notarised copy signed by whoever signed the copy already installed.
+    ///
+    /// Anything that fails falls back to what this used to do: reveal the
+    /// download and let the user install it by hand. A refused update is a
+    /// nuisance; an update that silently does nothing is worse.
     func relaunchAndInstall() {
         guard case .readyToInstall(let fileURL, _) = state else { return }
 
@@ -227,18 +240,63 @@ final class UpdateController: NSObject, URLSessionDownloadDelegate {
             return
         }
 
-        let fileExtension = fileURL.pathExtension.lowercased()
-        if fileExtension == "dmg" {
-            // Open DMG installer and terminate current instance
+        guard fileURL.pathExtension.lowercased() == "dmg" else {
+            // A .pkg carries its own installer and knows how to replace the
+            // app itself; anything else is handed to the user.
             NSWorkspace.shared.open(fileURL)
             NSApp.terminate(nil)
-        } else if fileExtension == "zip" {
-            // Unpack or reveal and terminate
-            NSWorkspace.shared.activateFileViewerSelecting([fileURL])
-            NSApp.terminate(nil)
-        } else {
-            NSWorkspace.shared.open(fileURL)
-            NSApp.terminate(nil)
+            return
+        }
+
+        state = .installing
+        updateWindowController?.transition(to: .installing)
+
+        Task { [weak self] in
+            let staged: URL
+            do {
+                staged = try await Self.stage(dmg: fileURL)
+            } catch {
+                await MainActor.run {
+                    self?.failInstall(error, fallback: fileURL)
+                }
+                return
+            }
+            await MainActor.run {
+                guard let self else { return }
+                do {
+                    try UpdateInstaller.startSwap(staged: staged)
+                } catch {
+                    self.failInstall(error, fallback: fileURL)
+                    return
+                }
+                // The script is waiting for this process to end.
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
+    /// Mounting and verifying touch the disk and run three command-line tools,
+    /// which has no business happening on the main thread while a window is
+    /// showing a spinner.
+    private static func stage(dmg: URL) async throws -> URL {
+        try await Task.detached(priority: .userInitiated) {
+            try UpdateInstaller.stage(dmg: dmg)
+        }.value
+    }
+
+    private func failInstall(_ error: any Error, fallback: URL) {
+        let reason = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        state = .error(reason)
+        updateWindowController?.transition(to: .readyToInstall(fileURL: fallback))
+
+        let alert = NSAlert()
+        alert.messageText = "Kylmora could not install the update"
+        alert.informativeText = reason + "\n\nThe download is still here, and you can install it yourself."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Show the Download")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.activateFileViewerSelecting([fallback])
         }
     }
 
