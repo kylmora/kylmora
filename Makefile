@@ -64,8 +64,9 @@ ifeq ($(CONFIG),release)
 	@# The symbol table is not needed to run: stripping it halves the binary.
 	@strip -x -S "$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)"
 endif
-	@# Not "kylmora": the file system is case-insensitive and that is the app binary.
-	@cp Tools/kylmora "$(APP_BUNDLE)/Contents/MacOS/kylmora-cli" && chmod +x "$(APP_BUNDLE)/Contents/MacOS/kylmora-cli"
+	@# In Resources, not MacOS: codesign treats anything in MacOS as nested code
+	@# that must carry its own signature, and a shell script cannot.
+	@cp Tools/kylmora "$(APP_BUNDLE)/Contents/Resources/kylmora-cli" && chmod +x "$(APP_BUNDLE)/Contents/Resources/kylmora-cli"
 ifeq ($(strip $(DEV_ID)),)
 	@codesign --force --sign - --identifier "$(BUNDLE_ID)" \
 		--entitlements "$(ENTITLEMENTS)" "$(APP_BUNDLE)" >/dev/null 2>&1 \

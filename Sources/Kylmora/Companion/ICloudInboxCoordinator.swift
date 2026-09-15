@@ -87,8 +87,8 @@ final class ICloudInboxCoordinator: ObservableObject {
         let path = dir.path(percentEncoded: false)
         let fd = open(path, O_EVTONLY)
         guard fd >= 0 else {
-            // If file descriptor open fails, rely on polling timer
-            startPolling()
+            // No directory to watch yet: poll, but not often.
+            startPolling(every: 30)
             isMonitoring = true
             return
         }
@@ -112,18 +112,22 @@ final class ICloudInboxCoordinator: ObservableObject {
 
         directorySource = source
         source.resume()
-        startPolling()
+        // The directory source is the real signal. The poll is a safety net
+        // for a file iCloud materialises without a change event, so it runs
+        // once a minute with room to coalesce, not every five seconds.
+        startPolling(every: 60)
         isMonitoring = true
     }
 
-    private func startPolling() {
+    private func startPolling(every seconds: TimeInterval) {
         pollTimer?.invalidate()
-        // Poll every 5 seconds to catch files arriving via iCloud Drive background sync
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        let timer = Timer.scheduledTimer(withTimeInterval: seconds, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.processInboxNow()
             }
         }
+        timer.tolerance = seconds / 4
+        pollTimer = timer
     }
 
     private func stopMonitoring() {

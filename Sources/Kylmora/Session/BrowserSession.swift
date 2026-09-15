@@ -2177,7 +2177,8 @@ extension BrowserSession: TabDelegate {
 
     func tab(_ tab: Tab, didExtractContent content: String, for url: URL, title: String) {
         guard let database, !settings.historyDisabled, !tab.isPrivate else { return }
-        Task { try? await database.indexVisitContent(url: url, title: title, content: content) }
+        // Indexing is never in the way of the page: background priority.
+        Task(priority: .utility) { try? await database.indexVisitContent(url: url, title: title, content: content) }
     }
 }
 

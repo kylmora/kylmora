@@ -205,13 +205,24 @@ public final class BrowserLockManager: NSObject {
         lock(animated: false)
     }
 
+    /// How often the idle clock is read: a fraction of the timeout, never
+    /// more than every five seconds and never less than every half minute,
+    /// with room to coalesce with other timers.
+    static func idleCheckInterval(forTimeout timeout: TimeInterval) -> TimeInterval {
+        guard timeout > 0 else { return 30 }
+        return min(30, max(5, timeout / 6))
+    }
+
     private func startIdleTimer() {
         idleTimer?.invalidate()
-        idleTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        let interval = Self.idleCheckInterval(forTimeout: Double(settings.browserLockIdleTimeout.rawValue))
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.checkIdleTimeout()
             }
         }
+        timer.tolerance = interval / 5
+        idleTimer = timer
     }
 
     private func checkIdleTimeout() {

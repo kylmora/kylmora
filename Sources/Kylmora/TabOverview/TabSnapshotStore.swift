@@ -10,28 +10,56 @@ import WebKit
 final class TabSnapshotStore {
     static let shared = TabSnapshotStore()
 
-    private var snapshots: [UUID: NSImage] = [:]
+    /// Thumbnails are drawn a few hundred points wide, so that is the width
+    /// they are captured at: WebKit renders the page scaled, and the image
+    /// costs about a megabyte instead of the twenty-five a full Retina
+    /// window would.
+    static let captureWidth: CGFloat = 480
 
-    init() {}
+    /// How many tabs keep a thumbnail. Beyond this the least recently used
+    /// goes; the overview captures a missing one on demand.
+    let capacity: Int
+
+    private var snapshots: [UUID: NSImage] = [:]
+    /// Most recently used last.
+    private var order: [UUID] = []
+
+    init(capacity: Int = 30) {
+        self.capacity = capacity
+    }
 
     /// Retrieves any cached snapshot for the given tab ID.
     func snapshot(for tabID: UUID) -> NSImage? {
-        snapshots[tabID]
+        guard let image = snapshots[tabID] else { return nil }
+        touch(tabID)
+        return image
     }
 
     /// Stores an explicit snapshot for the given tab ID (useful for testing and manual caching).
     func setSnapshot(_ image: NSImage, for tabID: UUID) {
         snapshots[tabID] = image
+        touch(tabID)
+        while order.count > capacity, let oldest = order.first {
+            order.removeFirst()
+            snapshots.removeValue(forKey: oldest)
+        }
     }
 
     /// Removes the snapshot for a closed tab.
     func removeSnapshot(for tabID: UUID) {
         snapshots.removeValue(forKey: tabID)
+        order.removeAll { $0 == tabID }
     }
 
     /// Clears all cached snapshots.
     func clear() {
         snapshots.removeAll()
+        order.removeAll()
+    }
+
+    private func touch(_ tabID: UUID) {
+        order.removeAll { $0 == tabID }
+        order.append(tabID)
     }
 
     /// Number of cached snapshots.
@@ -46,11 +74,18 @@ final class TabSnapshotStore {
     @discardableResult
     func capture(tab: Tab) async -> NSImage? {
         guard let webView = tab.currentWebView else { return nil }
-        guard webView.bounds.width > 0, webView.bounds.height > 0 else { return nil }
+        return await capture(webView: webView, for: tab.id)
+    }
 
+    /// Captures `webView` at thumbnail width and files it under `id`.
+    @discardableResult
+    func capture(webView: WKWebView, for id: UUID) async -> NSImage? {
+        guard webView.bounds.width > 0, webView.bounds.height > 0 else { return nil }
         do {
-            let image = try await webView.takeSnapshot(configuration: nil)
-            snapshots[tab.id] = image
+            let configuration = WKSnapshotConfiguration()
+            configuration.snapshotWidth = NSNumber(value: Double(min(Self.captureWidth, webView.bounds.width)))
+            let image = try await webView.takeSnapshot(configuration: configuration)
+            setSnapshot(image, for: id)
             return image
         } catch {
             return nil

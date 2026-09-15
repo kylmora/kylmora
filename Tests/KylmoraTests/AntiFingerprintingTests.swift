@@ -90,9 +90,8 @@ struct AntiFingerprintingTests {
         #expect(scriptSource.contains("getBattery"))
         #expect(scriptSource.contains("availWidth"))
 
-        // Verify that SiteBehaviourScripts.all includes the script
-        let allSources = SiteBehaviourScripts.all.map(\.source)
-        #expect(allSources.contains(scriptSource))
+        // The script rides inside the one document-start script every frame gets.
+        #expect(SiteBehaviourScripts.documentStart.contains(scriptSource))
     }
 
     @Test("CommandCatalog has toggle-anti-fingerprinting registered")

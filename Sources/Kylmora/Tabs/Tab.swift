@@ -350,6 +350,10 @@ final class Tab: Identifiable {
     /// The colour the user tagged this tab with, if any.
     private(set) var colorTag: TabColorTag?
 
+    /// The last page whose text went to the full-text index, and when.
+    private var lastIndexedURL: URL?
+    private var lastIndexedAt: Date = .distantPast
+
     /// A note the user attached to this tab, shown in its tooltip.
     private(set) var note: String?
 
@@ -1047,8 +1051,13 @@ final class Tab: Identifiable {
         let title = displayTitle
         delegate?.tab(self, didVisit: url, title: title)
 
-        if !isPrivate {
-            let script = "(function() { return (document.body && (document.body.innerText || document.body.textContent)) || ''; })()"
+        // The page's text goes to the full-text index once per page, not
+        // once per reload: a page reloaded every thirty seconds would
+        // otherwise pull its whole body over and re-index it each time.
+        if !isPrivate, url != lastIndexedURL || Date.now.timeIntervalSince(lastIndexedAt) > 300 {
+            lastIndexedURL = url
+            lastIndexedAt = .now
+            let script = "(function() { var b = document.body; if (!b) return ''; var t = b.innerText || b.textContent || ''; return t.length > 65536 ? t.slice(0, 65536) : t; })()"
             currentWebView?.evaluateJavaScript(script) { [weak self, weak delegate] result, _ in
                 guard let self, let text = result as? String, !text.isEmpty else { return }
                 delegate?.tab(self, didExtractContent: text, for: url, title: title)

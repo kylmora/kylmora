@@ -15,7 +15,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var listMenus: [WindowListMenu] = []
     private var suspender: TabSuspender?
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        Metrics.reportLaunchIfRequested(stage: "app-code-begins")
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Metrics.reportLaunchIfRequested(stage: "did-finish-launching")
         AppPaths.ensureSupportDirectory()
         // Before any window exists, so the first one is never drawn in the
         // wrong appearance and then corrected.
@@ -28,12 +33,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             NSLog("Kylmora: history and bookmarks are unavailable; could not open \(AppPaths.databaseFile.path())")
         }
 
+        Metrics.reportLaunchIfRequested(stage: "database-open")
         let session = BrowserSession(database: database)
         self.session = session
+        Metrics.reportLaunchIfRequested(stage: "session-restored")
 
         let syncCoordinator = SyncCoordinator(session: session, database: database)
         self.syncCoordinator = syncCoordinator
-        syncCoordinator.start()
 
         let bookmarksMenu = StoredItemsMenu(kind: .bookmarks, session: session)
         let historyMenu = StoredItemsMenu(kind: .history, session: session)
@@ -51,26 +57,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             spaces: listMenus[2]
         )
 
+        Metrics.reportLaunchIfRequested(stage: "menus-built")
         let controller = BrowserWindowController(session: session)
+        Metrics.reportLaunchIfRequested(stage: "window-built")
         mainWindowController = controller
         controller.showWindow(nil)
+        Metrics.reportLaunchIfRequested(stage: "window-ordered")
 
         let suspender = TabSuspender(session: session)
-        suspender.start()
         self.suspender = suspender
-
-        // Rules act on tabs from here on: page loads, idle tabs, media,
-        // downloads.
-        AutomationService.shared.start(session: session)
-        // Chords and custom-command keys, which the menus cannot carry.
-        ShortcutDispatcher.shared.install()
-        // After an update, once: what version this is and where its notes are.
-        WhatsNew.presentIfNeeded(on: controller.window)
-
-        // Live folders poll on their own timers from here on. Started after
-        // the window exists, so the first results land in a sidebar that can
-        // show them.
-        Task { await session.liveFolders.start() }
         // Filter lists: cached compilations come back at once, anything
         // missing is fetched and applied to open pages as it arrives.
         ContentBlocker.shared.start()
@@ -80,11 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // The Privacy pane's schedules, honoured at launch: a crash
         // report from last time, cookies that were due to go, history past
         // its retention.
-        CrashReporter.reviewPendingReport(policy: Settings.shared.crashReportPolicy)
         CrashReporter.install()
-        session.deleteCookiesIfDue()
-        session.pruneHistory()
-        DownloadManager.shared.pruneCompleted(atLaunch: true)
         // Picture-in-picture reports come from the page and need the tab
         // that owns the web view.
         SitePolicy.shared.tabResolver = { [weak session] webView in
@@ -103,10 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if #available(macOS 15.4, *) {
             ExtensionManager.shared.start(session: session, window: controller)
         }
-        UpdateController.shared.startBackgroundChecking()
         BrowserLockManager.shared.start()
-        TabResourceMonitor.shared.startBackgroundMonitoring(session: session)
-        ICloudInboxCoordinator.shared.start(session: session, windowController: controller)
 
         NotificationCenter.default.addObserver(
             forName: .developMenuSettingDidChange,
@@ -126,8 +114,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         _ = WebAppManager.shared.handleCommandLineArguments(CommandLine.arguments)
 
-        NSApp.activate(ignoringOtherApps: true)
+        NSApplication.shared.activate(ignoringOtherApps: true)
         Metrics.reportLaunchIfRequested(stage: "window-shown")
+
+        // Everything the first frame does not need waits for it: timers,
+        // sync, live folders, housekeeping and the update check start once
+        // the window has had a moment to draw.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.finishLaunching(session: session, controller: controller, syncCoordinator: syncCoordinator, suspender: suspender)
+        }
     }
 
     func rebuildMainMenu() {
@@ -389,6 +384,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 session.newTab(url: url, origin: .external)
             }
         }
+    }
+
+    /// The second half of launch, after the first window is on screen.
+    private func finishLaunching(
+        session: BrowserSession,
+        controller: BrowserWindowController,
+        syncCoordinator: SyncCoordinator,
+        suspender: TabSuspender
+    ) {
+        syncCoordinator.start()
+        suspender.start()
+        // Rules act on tabs from here on: page loads, idle tabs, media,
+        // downloads.
+        AutomationService.shared.start(session: session)
+        // Chords and custom-command keys, which the menus cannot carry.
+        ShortcutDispatcher.shared.install()
+        // Live folders poll on their own timers from here on. Started after
+        // the window exists, so the first results land in a sidebar that can
+        // show them.
+        Task { await session.liveFolders.start() }
+        // The Privacy pane's schedules, honoured at launch: a crash report
+        // from last time, cookies that were due to go, history past its
+        // retention, finished downloads past theirs.
+        CrashReporter.reviewPendingReport(policy: Settings.shared.crashReportPolicy)
+        session.deleteCookiesIfDue()
+        session.pruneHistory()
+        DownloadManager.shared.pruneCompleted(atLaunch: true)
+        UpdateController.shared.startBackgroundChecking()
+        TabResourceMonitor.shared.startBackgroundMonitoring(session: session)
+        ICloudInboxCoordinator.shared.start(session: session, windowController: controller)
+        // After an update, once: what version this is and where its notes are.
+        WhatsNew.presentIfNeeded(on: controller.window)
+        Metrics.reportLaunchIfRequested(stage: "launch-complete")
     }
 
     /// "Prevent ESC from exiting full screen": the key is swallowed while a

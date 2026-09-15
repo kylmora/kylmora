@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Testing
+import WebKit
 @testable import Kylmora
 
 
@@ -239,5 +240,36 @@ struct TabOverviewTests {
         #expect(overviewItem != nil)
         #expect(overviewItem?.keyEquivalent == "\\")
         #expect(overviewItem?.keyEquivalentModifierMask == [.command, .shift])
+    }
+}
+
+@Suite("Thumbnails stay small and few")
+@MainActor
+struct TabSnapshotBudgetTests {
+    @Test("The store keeps only the most recently used thumbnails")
+    func capacity() {
+        let store = TabSnapshotStore(capacity: 3)
+        let ids = (0..<4).map { _ in UUID() }
+        for id in ids { store.setSnapshot(NSImage(size: NSSize(width: 10, height: 10)), for: id) }
+        #expect(store.count == 3)
+        #expect(store.snapshot(for: ids[0]) == nil, "the oldest went")
+        _ = store.snapshot(for: ids[1])
+        store.setSnapshot(NSImage(size: NSSize(width: 10, height: 10)), for: UUID())
+        #expect(store.snapshot(for: ids[1]) != nil, "a use keeps a thumbnail alive")
+        #expect(store.snapshot(for: ids[2]) == nil)
+    }
+
+    @Test("A captured thumbnail is a few hundred points wide, not the window")
+    func captureWidth() async throws {
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1400, height: 900))
+        webView.loadHTMLString("<html><body style='background:#48f'><h1>Thumbnail</h1></body></html>", baseURL: nil)
+        for _ in 0..<100 where webView.isLoading { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(150))
+        let store = TabSnapshotStore()
+        let id = UUID()
+        let image = try #require(await store.capture(webView: webView, for: id))
+        #expect(image.size.width <= TabSnapshotStore.captureWidth)
+        #expect(image.size.width > 100)
+        #expect(store.snapshot(for: id) === image)
     }
 }

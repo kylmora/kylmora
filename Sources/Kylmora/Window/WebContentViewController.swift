@@ -187,8 +187,8 @@ final class WebContentViewController: NSViewController {
                             Task { [weak self] in
                                 await PageTranslator.shared.detectLanguage(in: webView, for: tab.id)
                                 self?.updateTopBar()
-                                await TabSnapshotStore.shared.capture(tab: tab)
                             }
+                            self.scheduleThumbnail(for: tab)
                         }
                     }
                 case .bookmarks:
@@ -322,6 +322,22 @@ final class WebContentViewController: NSViewController {
         )
         let zoom = tab.map { Double($0.currentWebView?.pageZoom ?? SiteSettings.shared.pageZoom(for: $0.url)) } ?? 1
         topBar.zoomControl.setPercent(Int((zoom * 100).rounded()))
+    }
+
+    // MARK: - Thumbnails
+
+    private var thumbnailTask: Task<Void, Never>?
+
+    /// One thumbnail a little after a page settles, not one per load event:
+    /// a page that fires a dozen state changes while it loads gets one
+    /// capture, and a page you leave within a second gets none.
+    private func scheduleThumbnail(for tab: Tab) {
+        thumbnailTask?.cancel()
+        thumbnailTask = Task { [weak self, weak tab] in
+            try? await Task.sleep(for: .milliseconds(1500))
+            guard !Task.isCancelled, let self, let tab, tab.id == self.session.activeTab?.id, !tab.isLoading else { return }
+            await TabSnapshotStore.shared.capture(tab: tab)
+        }
     }
 
     // MARK: - Tab strip

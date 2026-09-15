@@ -289,7 +289,7 @@ The app registers the `kylmora://` scheme, and a command-line tool ships inside
 the bundle. Link it onto your PATH once:
 
 ```sh
-ln -s /Applications/Kylmora.app/Contents/MacOS/kylmora-cli /usr/local/bin/kylmora
+ln -s /Applications/Kylmora.app/Contents/Resources/kylmora-cli /usr/local/bin/kylmora
 kylmora open https://example.com --space Work --background
 kylmora space Personal
 kylmora command print-page      # any command palette id
@@ -356,12 +356,26 @@ What is not built yet is in [docs/roadmap.md](docs/roadmap.md).
 
 ## Performance
 
-The release bundle is about 5 MB with no bundled frameworks and no package
-dependencies. Earlier figures from `make measure` on Apple silicon, before
-most of the features above: launch to window in about half a second, a
-footprint of a few tens of megabytes for the browser process, and one WebKit
-content process for twenty-five restored tabs, because a tab that has not
-been shown has no web view. Run `make measure` for the numbers on your Mac.
+Measured with `make measure` on Apple silicon, macOS 26, with 35 tabs
+restored and one page shown. Memory is physical footprint, the number
+Activity Monitor shows.
+
+| Metric | Value |
+|---|---|
+| Release bundle | 5.2 MB, no bundled frameworks, no package dependencies |
+| First line of app code | 0.39 s after launch (warm), 0.76 s (cold) |
+| Window on screen | 0.62 s (warm), 0.97 s (cold) |
+| Kylmora's own launch work, database to window | about 0.2 s |
+| Browser process at the window | 38 MB |
+| Browser process once launch finishes | 58 MB |
+| WebKit content process, one page | about 200 MB, which is the page's |
+
+Most of the time before the window is the system loading the binary and
+the frameworks it links; Kylmora's own work, from opening the database to
+ordering the window, is a fifth of a second. Sync, live folders, timers,
+housekeeping and the update check start only after the window has drawn.
+Twenty-five restored tabs cost a single content process, because a tab that
+has not been shown has no web view.
 
 ## Where data lives
 

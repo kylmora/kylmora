@@ -55,8 +55,7 @@ struct NativeVideoPlayerTests {
         #expect(script.contains("ytp-chrome-bottom"))
         #expect(script.contains("ytp-skip-ad-button"))
 
-        let allScripts = SiteBehaviourScripts.all
-        #expect(allScripts.contains { $0.source == SiteBehaviourScripts.nativeVideoPlayer })
+        #expect(SiteBehaviourScripts.documentStart.contains(SiteBehaviourScripts.nativeVideoPlayer))
     }
 
     @Test("CommandCatalog registers toggle-native-video command")

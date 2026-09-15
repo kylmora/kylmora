@@ -384,7 +384,8 @@ struct ExtraSiteSettingsTests {
         #expect(settings.policy(for: URL(string: "https://quiet.example/")!)["referrer"] == "none")
         #expect(SiteBehaviourScripts.clipboardRead.contains("readText"))
         #expect(SiteBehaviourScripts.referrer.contains("no-referrer"))
-        #expect(SiteBehaviourScripts.all.count >= 14)
+        #expect(SiteBehaviourScripts.all.count == 4, "one script per injection point")
+        #expect(SiteBehaviourScripts.documentStart.contains("readText"))
         for category in [SiteSettingCategory.images, .clipboardRead, .referrer] {
             #expect(!category.title.isEmpty)
             #expect(NSImage(systemSymbolName: category.symbolName, accessibilityDescription: nil) != nil)

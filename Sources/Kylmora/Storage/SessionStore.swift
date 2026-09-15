@@ -5,7 +5,7 @@ import Foundation
 /// Spaces and tabs are a small, wholly-rewritten document, so a file is the
 /// right shape for them; SQLite earns its place for history, which is appended
 /// to constantly and queried by prefix.
-struct SessionStore {
+final class SessionStore {
     let fileURL: URL
 
     init(fileURL: URL = AppPaths.sessionFile) {
@@ -18,7 +18,23 @@ struct SessionStore {
     }
 
     /// Atomic, so a crash mid-write cannot leave a truncated session behind.
+    /// The bytes last written, so an unchanged session is not written again.
+    /// Saves are debounced already; this catches the ones the debounce lets
+    /// through with nothing new in them.
+    private var lastWritten: Data?
+
     func save(_ snapshot: SessionSnapshot) throws {
+        // Sorted keys, so the same session always encodes to the same bytes
+        // and the comparison below means something.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(snapshot)
+        guard data != lastWritten else { return }
+        try data.write(to: fileURL, options: [.atomic])
+        lastWritten = data
+    }
+
+    private func saveUncached(_ snapshot: SessionSnapshot) throws {
         AppPaths.ensureSupportDirectory()
         let data = try JSONEncoder().encode(snapshot)
         try data.write(to: fileURL, options: [.atomic])

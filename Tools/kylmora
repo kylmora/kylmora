@@ -1,7 +1,7 @@
 #!/bin/sh
 # The Kylmora command-line tool. Ships inside the app bundle as
-# Contents/MacOS/kylmora-cli; link it somewhere on your PATH:
-#   ln -s /Applications/Kylmora.app/Contents/MacOS/kylmora-cli /usr/local/bin/kylmora
+# Contents/Resources/kylmora-cli; link it somewhere on your PATH:
+#   ln -s /Applications/Kylmora.app/Contents/Resources/kylmora-cli /usr/local/bin/kylmora
 #
 #   kylmora open URL [--space NAME] [--background]   open a page
 #   kylmora space NAME                               switch to a Space

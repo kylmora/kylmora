@@ -6,19 +6,22 @@ import WebKit
 /// when the value is the permissive default, so a page on a site with every
 /// setting at its default sees no difference from these being here.
 enum SiteBehaviourScripts {
+    /// The scripts that run at document start in every frame, as one
+    /// script: each is a self-contained function, and WebKit evaluates one
+    /// user script far more cheaply than eleven. A page with many iframes
+    /// used to pay for all eleven in each of them.
+    ///
+    /// Each part keeps the isolation it had as a script of its own: an
+    /// exception in one must not stop the ones after it, so every part runs
+    /// inside its own try.
+    static let documentStart: String = [
+        autoplay, notifications, geolocation, screenSharing, pictureInPicture, pictureInPictureWatcher,
+        mediaWatcher, nativeVideoPlayer, antiFingerprinting, hostileBehaviourBlocker, clipboardRead
+    ].map { "try {\n\($0)\n} catch (e) {}" }.joined(separator: "\n")
+
     static var all: [WKUserScript] {
         [
-            WKUserScript(source: autoplay, injectionTime: .atDocumentStart, forMainFrameOnly: false),
-            WKUserScript(source: notifications, injectionTime: .atDocumentStart, forMainFrameOnly: false),
-            WKUserScript(source: geolocation, injectionTime: .atDocumentStart, forMainFrameOnly: false),
-            WKUserScript(source: screenSharing, injectionTime: .atDocumentStart, forMainFrameOnly: false),
-            WKUserScript(source: pictureInPicture, injectionTime: .atDocumentStart, forMainFrameOnly: false),
-            WKUserScript(source: pictureInPictureWatcher, injectionTime: .atDocumentStart, forMainFrameOnly: false),
-            WKUserScript(source: mediaWatcher, injectionTime: .atDocumentStart, forMainFrameOnly: false),
-            WKUserScript(source: nativeVideoPlayer, injectionTime: .atDocumentStart, forMainFrameOnly: false),
-            WKUserScript(source: antiFingerprinting, injectionTime: .atDocumentStart, forMainFrameOnly: false),
-            WKUserScript(source: hostileBehaviourBlocker, injectionTime: .atDocumentStart, forMainFrameOnly: false),
-            WKUserScript(source: clipboardRead, injectionTime: .atDocumentStart, forMainFrameOnly: false),
+            WKUserScript(source: documentStart, injectionTime: .atDocumentStart, forMainFrameOnly: false),
             WKUserScript(source: referrer, injectionTime: .atDocumentStart, forMainFrameOnly: true),
             WKUserScript(source: autoplaySweep, injectionTime: .atDocumentEnd, forMainFrameOnly: false),
             WKUserScript(source: reader, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
@@ -464,7 +467,7 @@ enum SiteBehaviourScripts {
         // Prevent page scripts from removing controls attribute
         var origSetAttribute = video.setAttribute;
         video.setAttribute = function (name, val) {
-          if (name === "controls" && (\(policy).nativeVideoPlayer || "on") !== "off") {
+          if (name === "controls" && \(policy).nativeVideoPlayer || "on") !== "off") {
             return;
           }
           return origSetAttribute.apply(this, arguments);
@@ -472,7 +475,7 @@ enum SiteBehaviourScripts {
 
         var origRemoveAttribute = video.removeAttribute;
         video.removeAttribute = function (name) {
-          if (name === "controls" && (\(policy).nativeVideoPlayer || "on") !== "off") {
+          if (name === "controls" && \(policy).nativeVideoPlayer || "on") !== "off") {
             return;
           }
           return origRemoveAttribute.apply(this, arguments);
