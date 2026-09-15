@@ -393,13 +393,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         syncCoordinator: SyncCoordinator,
         suspender: TabSuspender
     ) {
+        Metrics.reportLaunchIfRequested(stage: "deferred-begins")
         syncCoordinator.start()
+        Metrics.reportLaunchIfRequested(stage: "sync-started")
         suspender.start()
         // Rules act on tabs from here on: page loads, idle tabs, media,
         // downloads.
         AutomationService.shared.start(session: session)
         // Chords and custom-command keys, which the menus cannot carry.
         ShortcutDispatcher.shared.install()
+        Metrics.reportLaunchIfRequested(stage: "rules-started")
         // Live folders poll on their own timers from here on. Started after
         // the window exists, so the first results land in a sidebar that can
         // show them.
@@ -411,8 +414,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         session.deleteCookiesIfDue()
         session.pruneHistory()
         DownloadManager.shared.pruneCompleted(atLaunch: true)
+        Metrics.reportLaunchIfRequested(stage: "housekeeping-done")
         UpdateController.shared.startBackgroundChecking()
         TabResourceMonitor.shared.startBackgroundMonitoring(session: session)
+        Metrics.reportLaunchIfRequested(stage: "monitors-started")
         ICloudInboxCoordinator.shared.start(session: session, windowController: controller)
         // After an update, once: what version this is and where its notes are.
         WhatsNew.presentIfNeeded(on: controller.window)

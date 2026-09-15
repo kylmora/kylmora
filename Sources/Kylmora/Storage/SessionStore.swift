@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Reads and writes the session snapshot as one JSON file.
@@ -17,21 +18,23 @@ final class SessionStore {
         return try? JSONDecoder().decode(SessionSnapshot.self, from: data)
     }
 
-    /// Atomic, so a crash mid-write cannot leave a truncated session behind.
-    /// The bytes last written, so an unchanged session is not written again.
-    /// Saves are debounced already; this catches the ones the debounce lets
-    /// through with nothing new in them.
-    private var lastWritten: Data?
+    /// A digest of the bytes last written, so an unchanged session is not
+    /// written again. Saves are debounced already; this catches the ones the
+    /// debounce lets through with nothing new in them. A digest, not the
+    /// bytes: a session file runs to megabytes.
+    private var lastWrittenDigest: SHA256Digest?
 
+    /// Atomic, so a crash mid-write cannot leave a truncated session behind.
     func save(_ snapshot: SessionSnapshot) throws {
         // Sorted keys, so the same session always encodes to the same bytes
         // and the comparison below means something.
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(snapshot)
-        guard data != lastWritten else { return }
+        let digest = SHA256.hash(data: data)
+        guard digest != lastWrittenDigest else { return }
         try data.write(to: fileURL, options: [.atomic])
-        lastWritten = data
+        lastWrittenDigest = digest
     }
 
     private func saveUncached(_ snapshot: SessionSnapshot) throws {
