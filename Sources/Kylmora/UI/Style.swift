@@ -239,6 +239,11 @@ enum Style {
         /// Emoji ignore weight, and at 13pt they sit a shade small next to
         /// 13pt text, so group emoji get their own size.
         static var groupEmoji: NSFont { .systemFont(ofSize: 12) }
+        /// A second line under a label: the sentence that explains a setting.
+        /// Smaller than the body and always drawn in the secondary colour, so
+        /// it reads as an aside rather than as more of the same.
+        static var note: NSFont { .systemFont(ofSize: 11) }
+
         /// The idle badge on a tab row. Smaller than the title and no lighter:
         /// a badge that is both smaller and greyer reads as damage rather than
         /// as a second line of information, and it is already grey.

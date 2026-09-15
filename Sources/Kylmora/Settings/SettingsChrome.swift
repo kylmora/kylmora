@@ -17,6 +17,12 @@ extension Style {
         /// have not learned yet is not a label, and there is no way to learn it
         /// except by clicking every tile. So the names are back, and the column
         /// is still a hundred points narrower than the rail it replaced.
+        /// How far a card's shadow spreads, and how far it is pushed down.
+        /// Smaller than the page card's, because a settings card is a fraction
+        /// of its size and a shadow has to scale with what casts it.
+        static let cardShadowRadius: CGFloat = 6
+        static let cardShadowOffset: CGFloat = 1
+
         static let spineWidth: CGFloat = 206
         static let spineRowHeight: CGFloat = 34
         static let spineRowRadius: CGFloat = 9
@@ -97,101 +103,73 @@ extension Style.Fonts {
         .systemFont(ofSize: Style.SettingsUI.headerTitleSize, weight: .bold)
     }
     /// A rail group's heading.
-    static var settingsGroup: NSFont { .systemFont(ofSize: 11, weight: .semibold) }
+    /// The settings window had a type scale of its own, parallel to the one
+    /// the browser window uses and the same sizes at three of its four steps.
+    /// These are now names for the shared scale rather than a second copy of
+    /// it, so a change to the chrome's type reaches both windows.
+    static var settingsGroup: NSFont { groupHeader }
     /// A row's label, and a rail row's title.
-    static var settingsRow: NSFont { .systemFont(ofSize: 13) }
+    static var settingsRow: NSFont { body }
     /// A heading over a card.
-    static var settingsSection: NSFont { .systemFont(ofSize: 13, weight: .semibold) }
+    static var settingsSection: NSFont { emphasis }
     /// The second line under a row's label.
-    static var settingsNote: NSFont { .systemFont(ofSize: 11) }
+    static var settingsNote: NSFont { note }
 }
 
 extension Style.Colors {
+    // The settings window used to define all of these by hand, each one its own
+    // `NSColor(name:)` closure switching on the appearance. That was twelve
+    // copies of the same six lines, and -- worse -- twelve chances for this
+    // window to drift away from the browser window it ships with. They are now
+    // written in the same vocabulary as the rest of the chrome (`veil`, `ink`,
+    // `shade`), and the ones that mean the same thing as a browser surface are
+    // that surface rather than a near-miss of it.
+
     /// The ground the whole window is painted on, before the space's wash goes
     /// over it. Deliberately not `windowBackgroundColor`: this window is a
     /// canvas, not a form, and the system's form grey is the single thing that
     /// would make it look like a settings panel again.
     static var settingsCanvas: NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(srgbRed: 0.07, green: 0.07, blue: 0.09, alpha: 1)
-                : NSColor(srgbRed: 0.925, green: 0.925, blue: 0.94, alpha: 1)
-        }
+        dynamic(
+            light: NSColor(srgbRed: 0.925, green: 0.925, blue: 0.94, alpha: 1),
+            dark: NSColor(srgbRed: 0.07, green: 0.07, blue: 0.09, alpha: 1)
+        )
     }
 
     /// A plate floating on the canvas. Translucent, so the space's wash comes
     /// through it and every card is quietly the colour of the space you are in.
-    static var settingsGlass: NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(white: 1, alpha: 0.07)
-                : NSColor(white: 1, alpha: 0.96)
-        }
-    }
+    static var settingsGlass: NSColor { veil(light: 0.96, dark: 0.07) }
 
     /// An unselected tile in the spine.
-    static var settingsSpineTile: NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(white: 1, alpha: 0.07)
-                : NSColor(white: 0, alpha: 0.05)
-        }
-    }
+    static var settingsSpineTile: NSColor { ink(light: 0.05, dark: 0.07) }
 
     /// The rail's ground. A shade off the detail side, which is what makes the
     /// two read as separate surfaces without a heavy divider between them.
-    static var settingsRail: NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(white: 1, alpha: 0.03)
-                : NSColor(white: 0, alpha: 0.025)
-        }
-    }
+    static var settingsRail: NSColor { ink(light: 0.025, dark: 0.03) }
+
     /// The detail side, and the window behind everything.
     static var settingsBackground: NSColor { .windowBackgroundColor }
+
     /// A card: lifted off the ground rather than outlined, so a page of eight
     /// of them does not turn into a grid of boxes.
-    static var settingsCard: NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(white: 1, alpha: 0.06)
-                : NSColor(white: 1, alpha: 0.75)
-        }
-    }
-    /// The card's edge. Barely there in light, where the card is nearly white
-    /// on near-white and needs the help; almost absent in dark, where the fill
-    /// alone already separates it.
-    static var settingsCardStroke: NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(white: 1, alpha: 0.06)
-                : NSColor(white: 0, alpha: 0.12)
-        }
-    }
-    /// Between two rows of one card. Lighter than a system separator, because
-    /// it divides rows that belong together rather than sections that do not.
-    static var settingsHairline: NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(white: 1, alpha: 0.08)
-                : NSColor(white: 0, alpha: 0.10)
-        }
-    }
-    /// The selected pane in the rail.
-    static var settingsRailSelected: NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(white: 1, alpha: 0.13)
-                : NSColor(white: 0, alpha: 0.10)
-        }
-    }
-    static var settingsRailHover: NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(white: 1, alpha: 0.06)
-                : NSColor(white: 0, alpha: 0.035)
-        }
-    }
+    static var settingsCard: NSColor { veil(light: 0.75, dark: 0.06) }
+
+    /// The card's edge, which is the browser's hairline: the two windows draw
+    /// the same line because they mean the same thing by it. It used to be
+    /// nearly twice as dark in light mode, which is what turned a page of
+    /// cards into a page of outlined boxes.
+    static var settingsCardStroke: NSColor { hairline }
+
+    /// Between two rows of one card. The same hairline again: a rule inside a
+    /// card and the card's own edge being different weights is a difference
+    /// with nothing behind it.
+    static var settingsHairline: NSColor { hairline }
+
+    /// The selected pane in the rail. The browser's selected row, because it
+    /// is the same idea -- the one item you are looking at -- and it should
+    /// not be a paler thing here than it is there.
+    static var settingsRailSelected: NSColor { rowSelectedFill }
+    static var settingsRailHover: NSColor { rowHoverFill }
 }
 
 /// A layer-backed plate that repaints itself when the appearance changes.
@@ -205,6 +183,14 @@ class SettingsPlateView: NSView {
     var fill: NSColor? { didSet { needsDisplay = true } }
     var stroke: NSColor? { didSet { needsDisplay = true } }
     var cornerRadius: CGFloat = 0 { didSet { needsDisplay = true } }
+
+    /// Whether the plate sits above the canvas rather than on it.
+    ///
+    /// A card was described as "lifted off the ground rather than outlined",
+    /// and it was not: it had a fill and an edge and nothing else, so a page of
+    /// cards read as a page of boxes. This is the lift the description always
+    /// meant, and it is the same one the page card in the browser window casts.
+    var elevated = false { didSet { needsDisplay = true; needsLayout = true } }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -230,9 +216,26 @@ class SettingsPlateView: NSView {
         // correct by construction rather than by AppKit's good manners.
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer.backgroundColor = fill?.cgColor
-            layer.borderWidth = stroke == nil ? 0 : 1
+            // A hairline, not a whole point. At 1 on a Retina screen this is
+            // two device pixels and reads as a drawn border rather than an edge.
+            layer.borderWidth = stroke == nil ? 0 : Style.Metrics.hairline
             layer.borderColor = stroke?.cgColor
+            layer.shadowColor = elevated ? Style.Colors.cardShadow.cgColor : nil
         }
+        layer.shadowOpacity = elevated ? 1 : 0
+        layer.shadowRadius = Style.SettingsUI.cardShadowRadius
+        layer.shadowOffset = CGSize(width: 0, height: -Style.SettingsUI.cardShadowOffset)
+    }
+
+    override func layout() {
+        super.layout()
+        guard let layer, elevated else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.shadowPath = CGPath(
+            roundedRect: bounds, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil
+        )
+        CATransaction.commit()
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -1178,26 +1181,10 @@ final class SettingsControlPlate: SettingsPlateView {
 }
 
 extension Style.Colors {
-    /// The surface of a pop-up, a field or a button on a card.
-    static var settingsControl: NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(white: 1, alpha: 0.09)
-                : NSColor(white: 0, alpha: 0.05)
-        }
-    }
-    static var settingsControlHover: NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(white: 1, alpha: 0.14)
-                : NSColor(white: 1, alpha: 1)
-        }
-    }
-    static var settingsControlStroke: NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                ? NSColor(white: 1, alpha: 0.10)
-                : NSColor(white: 0, alpha: 0.14)
-        }
-    }
+    /// The surface of a pop-up, a field or a button on a card. The same plate
+    /// the address bar wears, for the same reason: it is the shape that says
+    /// "this is the part you act on".
+    static var settingsControl: NSColor { fieldFill }
+    static var settingsControlHover: NSColor { veil(light: 1, dark: 0.14) }
+    static var settingsControlStroke: NSColor { fieldStroke }
 }

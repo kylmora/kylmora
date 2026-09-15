@@ -368,21 +368,39 @@ final class SettingsSpineView: NSView {
         override var wantsUpdateLayer: Bool { true }
 
         override func updateLayer() {
+            // The shape is set without animation: a pill that eased into place
+            // on a window resize would smear along behind the row.
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             pill.frame = bounds.insetBy(dx: Style.SettingsUI.railInset, dy: 0)
             pill.cornerCurve = .continuous
             pill.cornerRadius = Style.SettingsUI.spineRowRadius
-            // In this row's own appearance. The hover colour's light value is
-            // white at 0.55 against 0.07 in the dark, so this is the one place
-            // where resolving against the wrong appearance would be loud.
+            CATransaction.commit()
+
+            // The colour is. Choosing a pane and pointing at one are both worth
+            // seeing happen, and they now travel at the speeds the browser
+            // window's rows use rather than blinking on and off.
+            var colour: CGColor?
             effectiveAppearance.performAsCurrentDrawingAppearance {
-                pill.backgroundColor = isChosen
-                    ? Style.Colors.settingsGlass.cgColor
-                    : (isHovered ? Style.Colors.settingsSpineTile.withAlphaComponent(0.5).cgColor : nil)
+                colour = isChosen
+                    ? Style.Colors.settingsRailSelected.cgColor
+                    : (isHovered ? Style.Colors.settingsRailHover.cgColor : nil)
             }
+            let duration = Style.Motion.duration(
+                isChosen || wasChosen ? Style.Motion.selection : Style.Motion.hover
+            )
+            wasChosen = isChosen
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(duration)
+            CATransaction.setAnimationTimingFunction(Style.Motion.curve)
+            CATransaction.setDisableActions(duration == 0)
+            pill.backgroundColor = colour
             CATransaction.commit()
         }
+
+        /// Whether this row was the chosen one when it last drew, so that
+        /// losing the selection travels at the same speed as gaining it.
+        private var wasChosen = false
 
         /// Sized from `layout`, never by asking for a redraw from inside one:
         /// a view that dirties itself while drawing never stops drawing.

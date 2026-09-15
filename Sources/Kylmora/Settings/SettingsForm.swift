@@ -727,8 +727,18 @@ final class SettingsCardView: SettingsPlateView {
         fill = nil
         stroke = nil
         cornerRadius = 0
+        elevated = false
+        clip.layer?.cornerRadius = 0
         needsDisplay = true
     }
+
+    /// Holds the rows and rounds them off.
+    ///
+    /// The card used to mask its own layer, which meant it could never cast a
+    /// shadow: a layer that clips to its bounds clips its shadow away with
+    /// everything else. Moving the clipping one level in leaves the card's own
+    /// layer free to be lifted, and the rows are rounded off exactly as before.
+    private let clip = NSView()
 
     /// An empty card. `SettingsForm` makes one and fills it as a pane declares
     /// its settings.
@@ -737,19 +747,33 @@ final class SettingsCardView: SettingsPlateView {
         fill = Style.Colors.settingsGlass
         stroke = Style.Colors.settingsCardStroke
         cornerRadius = Style.SettingsUI.cardRadius
-        // Clipped to the plate, so nothing inside it squares off the corners.
-        layer?.masksToBounds = true
+        elevated = true
+
+        // Clipped one level in, so nothing inside squares off the corners and
+        // the card's own layer stays free to cast a shadow.
+        clip.wantsLayer = true
+        clip.layer?.masksToBounds = true
+        clip.layer?.cornerCurve = .continuous
+        clip.layer?.cornerRadius = Style.SettingsUI.cardRadius
+        clip.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(clip)
+        NSLayoutConstraint.activate([
+            clip.topAnchor.constraint(equalTo: topAnchor),
+            clip.leadingAnchor.constraint(equalTo: leadingAnchor),
+            clip.trailingAnchor.constraint(equalTo: trailingAnchor),
+            clip.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
 
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+        clip.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor)
+            stack.topAnchor.constraint(equalTo: clip.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: clip.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: clip.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: clip.bottomAnchor)
         ])
     }
 
