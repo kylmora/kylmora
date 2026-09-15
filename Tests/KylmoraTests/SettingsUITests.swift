@@ -531,6 +531,13 @@ struct SettingsPaneLayoutTests {
                 // "overflowing" by two points and always has been. Anything
                 // genuinely broken is out by tens.
                 if child.frame.maxX > limit + 4 { return child }
+                // Stop at a control's own edge. What AppKit does inside one is
+                // Apple's business, and on macOS 26 an `NSColorWell` draws its
+                // press highlight through SwiftUI, in a layer deliberately
+                // larger than and offset from the view hosting it. That is not
+                // this window's layout, and the runner's OS version should not
+                // decide whether these tests pass.
+                if child is NSControl { continue }
                 if let found = overflow(child, limit: child.bounds.width) { return found }
             }
             return nil
