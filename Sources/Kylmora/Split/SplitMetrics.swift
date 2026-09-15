@@ -35,6 +35,7 @@ enum SplitMetrics {
     /// The close button in a pane's corner, which appears on hover.
     static let paneCloseButtonSide: CGFloat = 20
     static let paneCloseButtonInset: CGFloat = 6
+    static let paneButtonSpacing: CGFloat = 4
 
     /// The outline colour. The accent is the only colour in the chrome that
     /// already means "this is the thing you are acting on", and a split has no

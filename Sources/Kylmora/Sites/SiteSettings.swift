@@ -31,6 +31,10 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
     case externalApps
     case pictureInPicture
     case tabSuspension
+    case forgetWhenClosed
+    case nativeVideoPlayer
+    case antiFingerprinting
+    case blockHostileBehaviour
 
     struct Option: Equatable, Sendable, Identifiable {
         let id: String
@@ -60,6 +64,10 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .externalApps: return "External Apps"
         case .pictureInPicture: return "Picture in Picture"
         case .tabSuspension: return "Tab Sleeping & Archiving"
+        case .forgetWhenClosed: return "Forget When Closed"
+        case .nativeVideoPlayer: return "Native Video Player"
+        case .antiFingerprinting: return "Anti-Fingerprinting"
+        case .blockHostileBehaviour: return "Hostile Behaviour Protection"
         }
     }
 
@@ -86,6 +94,10 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .externalApps: return "arrow.up.forward.app.fill"
         case .pictureInPicture: return "pip.fill"
         case .tabSuspension: return "moon.stars.fill"
+        case .forgetWhenClosed: return "xmark.bin.fill"
+        case .nativeVideoPlayer: return "play.rectangle.fill"
+        case .antiFingerprinting: return "shield.lefthalf.filled"
+        case .blockHostileBehaviour: return "hand.raised.slash.fill"
         }
     }
 
@@ -95,11 +107,12 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .autoPlay, .pageZoom: return .systemOrange
         case .downloads, .sslCheck: return .systemIndigo
         case .screenSharing, .location, .userAgent, .externalApps: return .systemBlue
-        case .contentBlockers, .trackingPrevention: return .systemGreen
+        case .contentBlockers, .trackingPrevention, .antiFingerprinting, .blockHostileBehaviour: return .systemGreen
         case .cookies: return .systemBrown
         case .javaScript: return .systemYellow
         case .compatibilityMode: return .systemTeal
         case .tabSuspension: return .systemPurple
+        case .forgetWhenClosed, .nativeVideoPlayer: return .systemRed
         }
     }
 
@@ -127,6 +140,10 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .externalApps: return "Allow or deny opening other apps from the websites below:"
         case .pictureInPicture: return "Allow or deny picture in picture on the websites below:"
         case .tabSuspension: return "Allow or prevent tab sleeping and auto-archiving on the websites below:"
+        case .forgetWhenClosed: return "Forget cookies and data when the website is closed on the websites below:"
+        case .nativeVideoPlayer: return "Use native HTML5 video player (Vinegar-style: PiP, background playback, no tracking) on the websites below:"
+        case .antiFingerprinting: return "Protect against device fingerprinting and canvas tracking on the websites below:"
+        case .blockHostileBehaviour: return "Protect against text un-selectability, context menu disabling, and clipboard snooping on the websites below:"
         }
     }
 
@@ -169,6 +186,26 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
                 Option(id: "allow", title: "Allow Sleeping & Archiving"),
                 Option(id: "never", title: "Never Sleep or Archive (Keep Awake)")
             ]
+        case .forgetWhenClosed:
+            return [
+                Option(id: "off", title: "Keep Data (Default)"),
+                Option(id: "on", title: "Forget When Closed")
+            ]
+        case .nativeVideoPlayer:
+            return [
+                Option(id: "on", title: "Native HTML5 Controls"),
+                Option(id: "off", title: "Site Default Player")
+            ]
+        case .antiFingerprinting:
+            return [
+                Option(id: "on", title: "Protect (Randomize & Mask)"),
+                Option(id: "off", title: "Disabled (Standard Readouts)")
+            ]
+        case .blockHostileBehaviour:
+            return [
+                Option(id: "on", title: "Protect (Force Selection & Unblock Right-Click)"),
+                Option(id: "off", title: "Site Default (Allow Restrictions)")
+            ]
         }
     }
 
@@ -191,6 +228,10 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .compatibilityMode: return "desktop"
         case .pictureInPicture: return "allow"
         case .tabSuspension: return "allow"
+        case .forgetWhenClosed: return "off"
+        case .nativeVideoPlayer: return "on"
+        case .antiFingerprinting: return "on"
+        case .blockHostileBehaviour: return "on"
         }
     }
 
@@ -354,9 +395,16 @@ final class SiteSettings {
             "notifications": resolve(.notifications, for: url),
             "location": resolve(.location, for: url),
             "screenSharing": resolve(.screenSharing, for: url),
-            "pictureInPicture": resolve(.pictureInPicture, for: url)
+            "pictureInPicture": resolve(.pictureInPicture, for: url),
+            "nativeVideoPlayer": resolve(.nativeVideoPlayer, for: url),
+            "antiFingerprinting": resolve(.antiFingerprinting, for: url),
+            "blockHostileBehaviour": resolve(.blockHostileBehaviour, for: url)
         ]
     }
+
+    func usesNativeVideoPlayer(for url: URL?) -> Bool { resolve(.nativeVideoPlayer, for: url) == "on" }
+    func usesAntiFingerprinting(for url: URL?) -> Bool { resolve(.antiFingerprinting, for: url) == "on" }
+    func blocksHostileBehaviour(for url: URL?) -> Bool { resolve(.blockHostileBehaviour, for: url) == "on" }
 
     func allowsPopups(for url: URL?) -> Bool { resolve(.popups, for: url) == "allow" }
     func allowsDownloads(for url: URL?) -> Bool { resolve(.downloads, for: url) == "allow" }
@@ -364,6 +412,7 @@ final class SiteSettings {
     func allowsJavaScript(for url: URL?) -> Bool { resolve(.javaScript, for: url) == "on" }
     func prefersMobile(for url: URL?) -> Bool { resolve(.compatibilityMode, for: url) == "mobile" }
     func allowsSuspension(for url: URL?) -> Bool { resolve(.tabSuspension, for: url) != "never" }
+    func forgetsWhenClosed(for url: URL?) -> Bool { resolve(.forgetWhenClosed, for: url) == "on" }
 
     /// The content rules the per-site cookie and font choices become: a
     /// small rule list compiled beside the filter lists.

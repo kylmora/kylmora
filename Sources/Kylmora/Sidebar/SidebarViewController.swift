@@ -12,6 +12,7 @@ final class SidebarViewController: NSViewController {
     private let diaHeader = SidebarHeaderView()
     private let pinnedTiles = PinnedTilesView()
     private let diaFooter = SidebarFooterView()
+    private let nowPlayingView = SidebarNowPlayingView()
     /// The archive, shown in place of the pins and the tab list. Held rather
     /// than built on demand so its scroll position survives being left.
     private let archiveList = ArchiveListView()
@@ -126,6 +127,7 @@ final class SidebarViewController: NSViewController {
         reloadTabs()
         reloadArchive()
         syncActiveTab()
+        refreshNowPlaying()
         startIdleTicking()
     }
 
@@ -257,7 +259,18 @@ final class SidebarViewController: NSViewController {
         contentStack.wantsLayer = true
         switchingContent = contentStack
 
-        let stack = NSStackView(views: [contentStack, diaFooter])
+        nowPlayingView.isHidden = true
+        nowPlayingView.onSelectTab = { [weak self] tab in
+            guard let self else { return }
+            if let space = self.session.spaces.first(where: { $0.tabs.contains(where: { $0.id == tab.id }) }) {
+                if space.id != self.session.activeSpaceID {
+                    self.session.selectSpace(space)
+                }
+                self.session.selectTab(tab)
+            }
+        }
+
+        let stack = NSStackView(views: [contentStack, nowPlayingView, diaFooter])
         stack.orientation = .vertical
         stack.spacing = 6
         stack.alignment = .leading
@@ -280,6 +293,7 @@ final class SidebarViewController: NSViewController {
             stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
             contentStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            nowPlayingView.widthAnchor.constraint(equalTo: stack.widthAnchor),
             diaHeader.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             diaFooter.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
@@ -353,25 +367,51 @@ final class SidebarViewController: NSViewController {
                     self.reloadSpaces()
                     self.reloadTabs()
                     self.reloadArchive()
+                    self.refreshNowPlaying()
                 case .tabs:
                     self.reloadTabs()
+                    self.refreshNowPlaying()
                 case .activeTab:
                     self.syncActiveTab()
                     self.refreshWash()
+                    self.refreshNowPlaying()
                 case .tab(let tab):
                     self.refreshRow(for: tab)
                     if tab.id == self.shownSpace.activeTab?.id { self.refreshWash() }
+                    self.refreshNowPlaying()
                 case .structure:
                     self.reloadTabs()
                     // Archiving, putting back, forgetting and a space's own
                     // groups all arrive as structure; only the archive cares
                     // which of them it was.
                     self.reloadArchive()
+                    self.refreshNowPlaying()
                 case .bookmarks:
                     break
                 }
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.addObserver(
+            forName: .tabMediaStateDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.refreshNowPlaying()
+            }
+        }
+    }
+
+    private func findActiveMediaTab() -> Tab? {
+        let all = session.allTabs
+        return all.first(where: { $0.id == session.activeTab?.id && ($0.isPlayingMedia || $0.isPlayingAudio) })
+            ?? all.first(where: { $0.isPlayingMedia || $0.isPlayingAudio })
+            ?? all.first(where: { $0.isInPictureInPicture })
+    }
+
+    private func refreshNowPlaying() {
+        nowPlayingView.update(with: findActiveMediaTab())
     }
 
     // MARK: - Switching animation
@@ -828,10 +868,23 @@ final class SidebarViewController: NSViewController {
         settingsItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: nil)
         menu.addItem(settingsItem)
 
+        let clearDataItem = NSMenuItem(
+            title: "Clear Space Data\u{2026}",
+            action: #selector(clearCurrentSpaceDataFromMenu),
+            keyEquivalent: ""
+        )
+        clearDataItem.target = self
+        clearDataItem.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
+        menu.addItem(clearDataItem)
+
         spaceMenuButton.menu = menu
         spaceMenuButton.toolTip = space.isPrivate
             ? "\(space.name) — nothing is written to disk"
             : space.name
+    }
+
+    @objc private func clearCurrentSpaceDataFromMenu() {
+        NSApp.sendAction(#selector(BrowserWindowController.clearCurrentSpaceData(_:)), to: nil, from: self)
     }
 
     private func reloadTabs() {
@@ -1031,14 +1084,22 @@ final class SidebarViewController: NSViewController {
             idleText: idleText(for: tab),
             idleSpoken: idleSpoken(for: tab),
             keepsAwake: tab.keepsAwake,
-            keepsInSidebar: tab.keepsInSidebar
+            keepsInSidebar: tab.keepsInSidebar,
+            isLocked: tab.isLocked,
+            isPlayingAudio: tab.isPlayingAudio,
+            isMuted: tab.isMuted
         ))
+        cell.onToggleMute = { [weak tab] in
+            tab?.toggleMute()
+        }
         // `tab.url` deliberately, not `displayURL`: the latter follows a typed
         // address before it commits, which would swap one site's icon for
         // another's mid-keystroke.
         cell.favicon.show(for: tab.url, in: tab.currentWebView, isPrivate: tab.isPrivate)
         cell.onClose = { [weak self] in
-            guard let self, TabClosing.confirm(closing: tab) else { return }
+            guard let self else { return }
+            guard !tab.isLocked else { return session.reportCloseRefused(tab) }
+            guard TabClosing.confirm(closing: tab) else { return }
             session.closeTab(tab)
         }
     }
@@ -1320,9 +1381,12 @@ final class SidebarViewController: NSViewController {
         add(tab.keepsAwake ? "Allow Sleeping" : "Keep Awake",
             #selector(toggleKeepAwakeFromMenu(_:)),
             symbol: tab.keepsAwake ? "moon" : "sun.max")
+        add(tab.isLocked ? "Unlock" : "Lock",
+            #selector(toggleLockedFromMenu(_:)),
+            symbol: tab.isLocked ? "lock.open.fill" : "lock.fill")
         add(tab.keepsInSidebar ? "Allow Archiving" : "Keep in Sidebar",
             #selector(toggleKeepInSidebarFromMenu(_:)),
-            symbol: tab.keepsInSidebar ? "lock.open" : "lock",
+            symbol: tab.keepsInSidebar ? "clock" : "clock.badge.xmark",
             // Archiving off means there is nothing to be kept from, and an
             // enabled switch that guards against nothing is a puzzle.
             enabled: settings.tabArchiveDelay != nil)
@@ -1357,7 +1421,11 @@ final class SidebarViewController: NSViewController {
         menu.addItem(.separator())
         add("Rename\u{2026}", #selector(renameTabFromMenu(_:)), symbol: "pencil")
         menu.addItem(.separator())
-        add("Close", #selector(closeTabFromMenu(_:)), symbol: "xmark", key: "w")
+        // Greyed rather than hidden. A Close that has gone missing looks like
+        // a bug in the menu; a Close that is there and cannot be pressed,
+        // directly under an item that says "Unlock", explains itself.
+        add("Close", #selector(closeTabFromMenu(_:)), symbol: "xmark", key: "w",
+            enabled: !tab.isLocked)
         add("Close Other Tabs", #selector(closeOtherTabsFromMenu(_:)), enabled: space.tabs.count > 1)
         let isLast = space.index(of: tab).map { $0 == space.tabs.count - 1 } ?? true
         add("Close Tabs Below", #selector(closeTabsBelowFromMenu(_:)), enabled: !isLast)
@@ -1405,7 +1473,15 @@ final class SidebarViewController: NSViewController {
             menu.addItem(move)
         }
         menu.addItem(.separator())
-        add("Remove Group", #selector(removeGroupFromMenu(_:)), symbol: "xmark")
+        add(group.isLocked ? "Unlock Folder" : "Lock Folder",
+            #selector(toggleGroupLockedFromMenu(_:)),
+            symbol: group.isLocked ? "lock.open.fill" : "lock.fill")
+        let remove = NSMenuItem(title: "Remove Group", action: #selector(removeGroupFromMenu(_:)), keyEquivalent: "")
+        remove.target = self
+        remove.representedObject = group
+        remove.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)
+        remove.isEnabled = !group.isLocked
+        menu.addItem(remove)
         return menu
     }
 
@@ -1518,6 +1594,16 @@ final class SidebarViewController: NSViewController {
         tab.setKeepsInSidebar(!tab.keepsInSidebar)
     }
 
+    @objc private func toggleLockedFromMenu(_ sender: Any?) {
+        guard let tab = tab(from: sender) else { return }
+        tab.setLocked(!tab.isLocked)
+    }
+
+    @objc private func toggleGroupLockedFromMenu(_ sender: Any?) {
+        guard let group = group(from: sender) else { return }
+        session.setLocked(!group.isLocked, for: group)
+    }
+
     /// Sleeps one tab by hand. Clearing "Keep Awake" first, because asking for
     /// this while the lock is on is the clearest possible statement that the
     /// lock is no longer wanted -- and silently doing nothing would look broken.
@@ -1590,6 +1676,9 @@ final class SidebarViewController: NSViewController {
         session.rename(tab, to: field.stringValue)
     }
 
+    /// The deliberate, single-tab close. Refusal is reported here rather than
+    /// swallowed, unlike the sweeps below, which step around a locked tab
+    /// without comment because stepping around it is the point.
     @objc private func closeTabFromMenu(_ sender: Any?) {
         guard let tab = tab(from: sender) else { return }
         session.closeTab(tab)
@@ -1880,7 +1969,12 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
     /// taller row rather than fighting the table's row height.
     private func groupHeaderCell(for group: TabGroup, depth: Int) -> NSView {
         let header = TabGroupHeaderView()
-        header.show(emoji: group.emoji, name: group.name, isExpanded: !group.isCollapsed)
+        header.show(
+            emoji: group.emoji,
+            name: group.name,
+            isExpanded: !group.isCollapsed,
+            isLocked: group.isLocked
+        )
         header.onToggle = { [weak self] _ in self?.session.toggleCollapsed(group) }
         // The cross asks first, and by default keeps the tabs (they come back
         // out as loose rows); the confirmation offers to close them instead.
@@ -2098,6 +2192,18 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
         return TabDropPlan.between(rows: dropRows, row: row, tabs: space.tabs, groups: space.groups)
     }
 
+    private func isTabSplitDrop(row: Int, payload: DropPayload, operation: NSTableView.DropOperation) -> Bool {
+        guard rows.indices.contains(row), case .tab(let targetTab, _, _) = rows[row] else { return false }
+        switch payload {
+        case .tab(let draggedTab, _):
+            return draggedTab.id != targetTab.id && (operation == .on || NSEvent.modifierFlags.contains(.option))
+        case .link:
+            return operation == .on || NSEvent.modifierFlags.contains(.option)
+        case .group:
+            return false
+        }
+    }
+
     func tableView(
         _ tableView: NSTableView,
         validateDrop info: any NSDraggingInfo,
@@ -2109,6 +2215,10 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
         // rows and the move is always allowed (a drop on itself is a no-op).
         if case .group = payload {
             tableView.setDropRow(max(0, row), dropOperation: .above)
+            return .move
+        }
+        if isTabSplitDrop(row: row, payload: payload, operation: dropOperation) {
+            tableView.setDropRow(row, dropOperation: .on)
             return .move
         }
         guard dropDestination(info, payload: payload, row: row, operation: dropOperation) != nil
@@ -2128,6 +2238,20 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
         if case .group(let dragged) = payload {
             session.moveGroup(dragged, before: groupReorderTarget(dropRow: row, dragged: dragged))
             return true
+        }
+        if dropOperation == .on, rows.indices.contains(row), case .tab(let targetTab, _, _) = rows[row] {
+            switch payload {
+            case .tab(let draggedTab, _):
+                guard draggedTab.id != targetTab.id else { return false }
+                session.splitTabs([targetTab, draggedTab], grid: .sideBySide)
+                return true
+            case .link(let url):
+                let newTab = session.newTab(url: url, select: false)
+                session.splitTabs([targetTab, newTab], grid: .sideBySide)
+                return true
+            case .group:
+                break
+            }
         }
         guard let destination = dropDestination(info, payload: payload, row: row, operation: dropOperation)
         else { return false }

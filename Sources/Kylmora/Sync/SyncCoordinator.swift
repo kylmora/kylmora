@@ -34,7 +34,7 @@ final class SyncCoordinator: ObservableObject {
         }
     }
 
-    private let session: BrowserSession
+    let session: BrowserSession
     private let database: BrowserDatabase?
     private let settings: Settings
 

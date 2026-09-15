@@ -146,6 +146,12 @@ struct CompactModeConfiguration: Sendable, Equatable {
     /// collapsed 60 because the floating plate carries its own padding.
     var collapsedWidth: CGFloat = 74
 
+    /// When true, a collapsed sidebar remains visible as a narrow icons-only strip
+    /// that expands to full width on hover.
+    var iconsOnlyCollapsed: Bool = false
+    /// Width of the icons-only strip left visible when collapsed.
+    var iconsOnlyVisibleWidth: CGFloat = 60
+
     init() {}
 
     /// The configuration with the illegal combination corrected.
@@ -316,7 +322,11 @@ struct CompactModeState: Sendable, Equatable {
     /// second, separate hover target would then have to be kept in sync with
     /// the sidebar's own -- two things to get wrong instead of one.
     var hiddenPushOut: CGFloat {
-        floatingSidebarWidth - revealedPushOut - 1
+        if effectiveConfiguration.iconsOnlyCollapsed {
+            let visible = effectiveConfiguration.iconsOnlyVisibleWidth
+            return max(0, floatingSidebarWidth - visible - revealedPushOut)
+        }
+        return floatingSidebarWidth - revealedPushOut - 1
     }
 
     /// A revealed sidebar sits half the float *outside* the window edge, so the

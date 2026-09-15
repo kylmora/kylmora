@@ -32,6 +32,14 @@ struct TabRowContent {
     var keepsAwake: Bool = false
     /// Never archived, by the user's instruction.
     var keepsInSidebar: Bool = false
+    /// Refuses to close. Drawn as a padlock, and it takes the close button's
+    /// place rather than sitting beside it: a cross that does nothing when
+    /// clicked is worse than no cross at all.
+    var isLocked: Bool = false
+    /// Whether audio is actively playing in this tab.
+    var isPlayingAudio: Bool = false
+    /// Whether audio has been muted for this tab.
+    var isMuted: Bool = false
 
     init(
         title: String,
@@ -42,7 +50,10 @@ struct TabRowContent {
         idleText: String? = nil,
         idleSpoken: String? = nil,
         keepsAwake: Bool = false,
-        keepsInSidebar: Bool = false
+        keepsInSidebar: Bool = false,
+        isLocked: Bool = false,
+        isPlayingAudio: Bool = false,
+        isMuted: Bool = false
     ) {
         self.title = title
         self.address = address
@@ -53,6 +64,9 @@ struct TabRowContent {
         self.idleSpoken = idleSpoken
         self.keepsAwake = keepsAwake
         self.keepsInSidebar = keepsInSidebar
+        self.isLocked = isLocked
+        self.isPlayingAudio = isPlayingAudio
+        self.isMuted = isMuted
     }
 }
 
@@ -72,6 +86,9 @@ final class TabRowView: NSTableCellView {
     /// Close button clicked. When `nil` the button never appears, which is what
     /// a row that is not a closable tab wants.
     var onClose: (() -> Void)?
+
+    /// Toggle mute clicked for playing audio.
+    var onToggleMute: (() -> Void)?
 
     /// Exposed so the caller can drive it from a `Tab` without this view ever
     /// seeing one.
@@ -124,12 +141,17 @@ final class TabRowView: NSTableCellView {
     /// because its contents come and go independently, and a stack with no
     /// visible arranged subview measures zero -- which is what lets the title
     /// run the full width of a row that has nothing to say.
-    private let lockIcon = TabRowView.badgeIcon("lock.fill", label: "kept in sidebar")
+    // The padlock belongs to the close lock, which is what a user means by
+    // "locked". "Kept in sidebar" is the narrower promise -- only that idleness
+    // will not carry the tab off -- so it gets the idle clock, struck through,
+    // which reads correctly sitting immediately beside the idle time itself.
+    private let lockedIcon = TabRowView.badgeIcon("lock.fill", label: "locked")
+    private let stayIcon = TabRowView.badgeIcon("clock.badge.xmark", label: "kept in sidebar")
     private let awakeIcon = TabRowView.badgeIcon("sun.max.fill", label: "kept awake")
     private let sleepIcon = TabRowView.badgeIcon("moon.zzz.fill", label: "sleeping")
     private let idleLabel = NSTextField(labelWithString: "")
     private lazy var badge: NSStackView = {
-        let stack = NSStackView(views: [lockIcon, awakeIcon, sleepIcon, idleLabel])
+        let stack = NSStackView(views: [lockedIcon, stayIcon, awakeIcon, sleepIcon, idleLabel])
         stack.orientation = .horizontal
         stack.spacing = 3
         stack.alignment = .centerY
@@ -158,11 +180,21 @@ final class TabRowView: NSTableCellView {
         onClick: { [weak self] in self?.onClose?() }
     )
 
+    private lazy var audioButton = IconButton(
+        symbolName: "speaker.wave.2.fill",
+        label: "Mute Tab",
+        side: 18,
+        onClick: { [weak self] in self?.onToggleMute?() }
+    )
+
     private var content = TabRowContent(title: "")
     private var leadingConstraint: NSLayoutConstraint?
     /// The spinner's and close button's trailing constraints, kept so a row on a
     /// group plate can pull them in to match the pill's trailing inset.
     private var trailingConstraints: [NSLayoutConstraint] = []
+    private var audioTrailingClose: NSLayoutConstraint?
+    private var audioTrailingEdge: NSLayoutConstraint?
+    private var titleAudioConstraint: NSLayoutConstraint?
     private var trackingArea: NSTrackingArea?
     private var isHovered = false {
         didSet {
@@ -204,6 +236,7 @@ final class TabRowView: NSTableCellView {
         spinner.translatesAutoresizingMaskIntoConstraints = false
 
         closeButton.isHidden = true
+        audioButton.isHidden = true
 
         idleLabel.font = Style.Fonts.badge
         idleLabel.textColor = Style.Colors.tertiaryText
@@ -214,6 +247,7 @@ final class TabRowView: NSTableCellView {
         addSubview(titleLabel)
         addSubview(badge)
         addSubview(spinner)
+        addSubview(audioButton)
         addSubview(closeButton)
         textField = titleLabel
 
@@ -234,7 +268,18 @@ final class TabRowView: NSTableCellView {
         let spinnerTrailing = spinner.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -contentInset)
         let closeTrailing = closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -contentInset)
         let badgeTrailing = badge.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -contentInset)
-        trailingConstraints = [spinnerTrailing, closeTrailing, badgeTrailing]
+        let audioEdge = audioButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -contentInset)
+        let audioClose = audioButton.trailingAnchor.constraint(equalTo: closeButton.leadingAnchor, constant: -2)
+        audioTrailingEdge = audioEdge
+        audioTrailingClose = audioClose
+
+        trailingConstraints = [spinnerTrailing, closeTrailing, badgeTrailing, audioEdge]
+
+        let titleAudio = titleLabel.trailingAnchor.constraint(
+            lessThanOrEqualTo: audioButton.leadingAnchor,
+            constant: -Style.Metrics.rowContentSpacing
+        )
+        titleAudioConstraint = titleAudio
 
         NSLayoutConstraint.activate([
             leading,
@@ -265,6 +310,9 @@ final class TabRowView: NSTableCellView {
             spinnerTrailing,
             spinner.centerYAnchor.constraint(equalTo: pillStrip.centerYAnchor),
             spinner.widthAnchor.constraint(equalToConstant: 14),
+
+            audioButton.centerYAnchor.constraint(equalTo: pillStrip.centerYAnchor),
+            audioEdge,
 
             closeTrailing,
             closeButton.centerYAnchor.constraint(equalTo: pillStrip.centerYAnchor)
@@ -297,7 +345,17 @@ final class TabRowView: NSTableCellView {
         // each is a separate fact about the row and any of them can be the one
         // the listener is looking for.
         if content.keepsAwake { described += ", kept awake" }
-        if content.keepsInSidebar { described += ", kept in sidebar" }
+        // One or the other, matching the badge: the lock says both.
+        if content.isLocked {
+            described += ", locked"
+        } else if content.keepsInSidebar {
+            described += ", kept in sidebar"
+        }
+        if content.isMuted {
+            described += ", muted"
+        } else if content.isPlayingAudio {
+            described += ", playing audio"
+        }
         if let spoken = content.idleSpoken { described += ", \(spoken)" }
         setAccessibilityRole(.row)
         setAccessibilityLabel(described)
@@ -323,14 +381,14 @@ final class TabRowView: NSTableCellView {
         return true
     }
 
-    /// The trailing edge has two candidates for one slot -- close button and
-    /// spinner -- so the precedence lives in one place rather than in two
-    /// `isHidden` assignments scattered through the class. The close button
-    /// wins, because a row the pointer is over is a row the user is about to
-    /// act on, and the selected row shows it too: the tab you are looking at
-    /// is the one you most often want to close.
+    /// The trailing edge has candidates for the trailing slot -- close button,
+    /// audio/mute button, and spinner -- so the precedence lives in one place.
     private func updateTrailing() {
-        let canClose = onClose != nil
+        // A locked tab has no close button at any point, hovered or selected.
+        // The padlock that stands there instead is the whole affordance: it
+        // says why the cross is missing, in the exact spot the eye went to
+        // look for it.
+        let canClose = onClose != nil && !content.isLocked
         let showClose = (isHovered || isSelected) && canClose
         closeButton.isHidden = !showClose
         if content.isLoading && !showClose {
@@ -339,11 +397,35 @@ final class TabRowView: NSTableCellView {
             spinner.stopAnimation(nil)
         }
 
-        // Third in line for the one trailing slot, and it yields to both of the
-        // others: reaching for the close button should not have to aim past a
-        // moon, and a row that is loading is not idle by definition.
-        let showBadge = !showClose && !content.isLoading
-        lockIcon.isHidden = !(showBadge && content.keepsInSidebar)
+        let hasAudio = content.isPlayingAudio || content.isMuted
+        audioButton.isHidden = !hasAudio
+        if hasAudio {
+            if content.isMuted {
+                audioButton.setSymbol("speaker.slash.fill", label: "Unmute Tab")
+            } else {
+                audioButton.setSymbol("speaker.wave.2.fill", label: "Mute Tab")
+            }
+            if showClose {
+                audioTrailingEdge?.isActive = false
+                audioTrailingClose?.isActive = true
+            } else {
+                audioTrailingClose?.isActive = false
+                audioTrailingEdge?.isActive = true
+            }
+            titleAudioConstraint?.isActive = true
+        } else {
+            titleAudioConstraint?.isActive = false
+        }
+
+        // Third in line for the trailing slot, yielding to close, spinner and audio.
+        let showBadge = !showClose && !content.isLoading && !hasAudio
+        // The lock outranks the badge's own yielding: it is the reason the row
+        // has no close button, so it shows even while the row is hovered.
+        lockedIcon.isHidden = !(content.isLocked && !hasAudio)
+        // Suppressed under a padlock rather than drawn next to it. Locking a
+        // tab already keeps it in the sidebar, and two glyphs for one promise
+        // invites the reader to hunt for a difference that is not there.
+        stayIcon.isHidden = !(showBadge && content.keepsInSidebar && !content.isLocked)
         awakeIcon.isHidden = !(showBadge && content.keepsAwake)
         sleepIcon.isHidden = !(showBadge && content.isAsleep)
         let idle = showBadge ? content.idleText : nil
@@ -428,7 +510,7 @@ final class TabRowView: NSTableCellView {
         isHovered = false
         isSelected = false
         content = TabRowContent(title: "")
-        for view in [lockIcon, awakeIcon, sleepIcon] { view.isHidden = true }
+        for view in [lockedIcon, stayIcon, awakeIcon, sleepIcon] { view.isHidden = true }
         idleLabel.stringValue = ""
         idleLabel.isHidden = true
         // Set by `configure`, and the one thing there that is not derived

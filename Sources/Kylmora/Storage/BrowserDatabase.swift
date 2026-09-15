@@ -9,7 +9,7 @@ struct HistoryEntry: Sendable, Equatable {
     let lastVisited: Date
 }
 
-struct Bookmark: Sendable, Equatable, Identifiable {
+struct Bookmark: Sendable, Equatable, Identifiable, Codable {
     let id: Int64
     let url: URL
     let title: String
@@ -18,6 +18,26 @@ struct Bookmark: Sendable, Equatable, Identifiable {
     /// level. Set when a bookmark is imported from another browser that kept
     /// folders; manually added bookmarks are always top level.
     var folder: String = ""
+    /// User-assigned tags for categorization and search.
+    var tags: [String] = []
+
+    init(id: Int64 = 0, url: URL, title: String, created: Date = Date(), folder: String = "", tags: [String] = []) {
+        self.id = id
+        self.url = url
+        self.title = title
+        self.created = created
+        self.folder = folder
+        self.tags = tags
+    }
+}
+
+struct FullTextHistoryResult: Sendable, Equatable, Identifiable {
+    var id: String { url.absoluteString + "::" + String(rank) }
+    let url: URL
+    let title: String
+    let snippet: String
+    let rank: Double
+    let lastVisited: Date?
 }
 
 /// History and bookmarks, on SQLite.
@@ -58,6 +78,19 @@ actor BrowserDatabase {
         if try !columnExists("folder", in: "bookmarks", database) {
             try database.execute("ALTER TABLE bookmarks ADD COLUMN folder TEXT NOT NULL DEFAULT '';")
         }
+        if try !columnExists("tags", in: "bookmarks", database) {
+            try database.execute("ALTER TABLE bookmarks ADD COLUMN tags TEXT NOT NULL DEFAULT '';")
+        }
+
+        // FTS5 Full-Text Search index over page history
+        try database.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS history_fts USING fts5(
+                url UNINDEXED,
+                title,
+                content,
+                tokenize = 'porter unicode61'
+            );
+            """)
     }
 
     /// Whether `table` already has `column`, read from SQLite's own catalogue.
@@ -130,11 +163,55 @@ actor BrowserDatabase {
 
     func clearHistory() throws {
         try database.run("DELETE FROM visits;")
+        try? database.run("DELETE FROM history_fts;")
     }
 
     /// Forgets everything visited before a moment.
     func deleteHistory(before date: Date) throws {
         try database.run("DELETE FROM visits WHERE visited_at < ?;", [.double(date.timeIntervalSince1970)])
+        try? database.run("DELETE FROM history_fts WHERE url NOT IN (SELECT url FROM visits);")
+    }
+
+    /// Indexes page text content for on-device full-text search.
+    func indexVisitContent(url: URL, title: String, content: String) throws {
+        let clean = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return }
+        let capped = clean.count > 65536 ? String(clean.prefix(65536)) : clean
+        try database.run("DELETE FROM history_fts WHERE url = ?;", [.text(url.absoluteString)])
+        try database.run(
+            "INSERT INTO history_fts (url, title, content) VALUES (?, ?, ?);",
+            [.text(url.absoluteString), .text(title), .text(capped)]
+        )
+    }
+
+    /// Searches visited pages by full-text content using SQLite FTS5.
+    func searchHistoryFullText(query: String, limit: Int = 50) throws -> [FullTextHistoryResult] {
+        let clean = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return [] }
+
+        let sanitized = clean
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !sanitized.isEmpty else { return [] }
+
+        let matchExpr = sanitized.split(separator: " ").map { "\($0)*" }.joined(separator: " ")
+        let sql = """
+            SELECT url, title, snippet(history_fts, 2, '<mark>', '</mark>', '…', 24) AS snip, rank
+            FROM history_fts
+            WHERE history_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?;
+            """
+        return try database.query(sql, [.text(matchExpr), .integer(Int64(limit))]) { row in
+            FullTextHistoryResult(
+                url: URL(string: row.text(0) ?? "") ?? URL(string: "about:blank")!,
+                title: row.text(1) ?? "",
+                snippet: row.text(2) ?? "",
+                rank: row.double(3),
+                lastVisited: nil
+            )
+        }
     }
 
     private func group(
@@ -175,14 +252,152 @@ actor BrowserDatabase {
     /// A manually made bookmark, always at the top level. A page bookmarked
     /// again keeps whatever folder it already had (an import may have filed it),
     /// so re-bookmarking never quietly moves it to the root.
-    func addBookmark(url: URL, title: String, at date: Date = .now) throws {
+    func addBookmark(url: URL, title: String, folder: String = "", tags: [String] = [], at date: Date = .now) throws {
+        let tagString = tags.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.joined(separator: ", ")
         try database.run(
             """
-            INSERT INTO bookmarks (url, title, created_at, folder) VALUES (?, ?, ?, '')
-            ON CONFLICT(url) DO UPDATE SET title = excluded.title;
+            INSERT INTO bookmarks (url, title, created_at, folder, tags) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(url) DO UPDATE SET title = excluded.title,
+                                           folder = CASE WHEN excluded.folder != '' THEN excluded.folder ELSE bookmarks.folder END,
+                                           tags = CASE WHEN excluded.tags != '' THEN excluded.tags ELSE bookmarks.tags END;
             """,
-            [.text(url.absoluteString), .text(title), .double(date.timeIntervalSince1970)]
+            [.text(url.absoluteString), .text(title), .double(date.timeIntervalSince1970), .text(folder), .text(tagString)]
         )
+    }
+
+    /// Updates existing bookmark attributes (folder, tags, title).
+    func updateBookmark(url: URL, title: String? = nil, folder: String? = nil, tags: [String]? = nil) throws {
+        if let title {
+            try database.run("UPDATE bookmarks SET title = ? WHERE url = ?;", [.text(title), .text(url.absoluteString)])
+        }
+        if let folder {
+            try database.run("UPDATE bookmarks SET folder = ? WHERE url = ?;", [.text(folder), .text(url.absoluteString)])
+        }
+        if let tags {
+            try setBookmarkTags(tags, for: url)
+        }
+    }
+
+    func setBookmarkTags(_ tags: [String], for url: URL) throws {
+        let tagString = tags.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }.joined(separator: ", ")
+        try database.run("UPDATE bookmarks SET tags = ? WHERE url = ?;", [.text(tagString), .text(url.absoluteString)])
+    }
+
+    func addBookmarkTag(_ tag: String, to url: URL) throws {
+        let clean = tag.trimmingCharacters(in: .whitespaces)
+        guard !clean.isEmpty else { return }
+        let current = try bookmarks().first { $0.url == url }?.tags ?? []
+        if !current.contains(clean) {
+            try setBookmarkTags(current + [clean], for: url)
+        }
+    }
+
+    func removeBookmarkTag(_ tag: String, from url: URL) throws {
+        let clean = tag.trimmingCharacters(in: .whitespaces)
+        guard !clean.isEmpty else { return }
+        let current = try bookmarks().first { $0.url == url }?.tags ?? []
+        let updated = current.filter { $0 != clean }
+        try setBookmarkTags(updated, for: url)
+    }
+
+    func allBookmarkTags() throws -> [String] {
+        let all = try bookmarks().flatMap(\.tags)
+        return Array(Set(all)).sorted()
+    }
+
+    func searchBookmarks(query: String, tag: String? = nil) throws -> [Bookmark] {
+        let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let tagFilter = tag?.trimmingCharacters(in: .whitespaces).lowercased()
+        var all = try bookmarks()
+
+        if let tagFilter, !tagFilter.isEmpty {
+            all = all.filter { bm in bm.tags.contains { $0.lowercased() == tagFilter } }
+        }
+
+        guard !needle.isEmpty else { return all }
+
+        return all.filter { bm in
+            bm.title.localizedCaseInsensitiveContains(needle) ||
+            bm.url.absoluteString.localizedCaseInsensitiveContains(needle) ||
+            bm.folder.localizedCaseInsensitiveContains(needle) ||
+            bm.tags.contains { $0.localizedCaseInsensitiveContains(needle) }
+        }
+    }
+
+    /// Strips tracking parameters, trailing slashes, default ports and fragments for canonical comparison.
+    static func canonicalBookmarkKey(for url: URL) -> String {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: true) else {
+            return url.absoluteString.lowercased()
+        }
+        components.host = components.host?.lowercased()
+        if components.port == 80 || components.port == 443 {
+            components.port = nil
+        }
+        if let path = components.path as String?, path.hasSuffix("/") && path.count > 1 {
+            components.path = String(path.dropLast())
+        }
+        let trackingKeys: Set<String> = [
+            "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+            "ref", "fbclid", "gclid", "msclkid", "mc_cid", "mc_eid"
+        ]
+        if let queryItems = components.queryItems {
+            let filtered = queryItems.filter { !trackingKeys.contains($0.name.lowercased()) }
+            components.queryItems = filtered.isEmpty ? nil : filtered
+        }
+        components.fragment = nil
+        return components.string?.lowercased() ?? url.absoluteString.lowercased()
+    }
+
+    /// Groups bookmarks sharing the same canonical target URL.
+    func findDuplicateBookmarks() throws -> [[Bookmark]] {
+        let all = try bookmarks()
+        var grouped: [String: [Bookmark]] = [:]
+        for bm in all {
+            let key = Self.canonicalBookmarkKey(for: bm.url)
+            grouped[key, default: []].append(bm)
+        }
+        return grouped.values.filter { $0.count > 1 }.sorted { $0[0].title < $1[0].title }
+    }
+
+    /// Consolidates duplicate bookmarks: keeps the most tagged/folder-organized bookmark,
+    /// merges all tags from duplicates, and removes redundant copies.
+    @discardableResult
+    func cleanupDuplicateBookmarks() throws -> Int {
+        let duplicates = try findDuplicateBookmarks()
+        var removedCount = 0
+
+        for group in duplicates {
+            guard group.count > 1 else { continue }
+            let sorted = group.sorted { a, b in
+                if (!a.folder.isEmpty) != (!b.folder.isEmpty) {
+                    return !a.folder.isEmpty
+                }
+                if a.tags.count != b.tags.count {
+                    return a.tags.count > b.tags.count
+                }
+                return a.created < b.created
+            }
+
+            let keeper = sorted[0]
+            let toRemove = sorted.dropFirst()
+
+            // If keeper has no folder but any duplicate did, adopt that folder
+            if keeper.folder.isEmpty, let bestFolder = group.first(where: { !$0.folder.isEmpty })?.folder {
+                try updateBookmark(url: keeper.url, folder: bestFolder)
+            }
+
+            let mergedTags = Array(Set(group.flatMap(\.tags))).sorted()
+            if mergedTags != keeper.tags {
+                try setBookmarkTags(mergedTags, for: keeper.url)
+            }
+
+            for dup in toRemove {
+                try removeBookmark(url: dup.url)
+                removedCount += 1
+            }
+        }
+
+        return removedCount
     }
 
     /// Bookmarks read from another browser, in one transaction so a few
@@ -197,7 +412,7 @@ actor BrowserDatabase {
             for item in items {
                 try database.run(
                     """
-                    INSERT INTO bookmarks (url, title, created_at, folder) VALUES (?, ?, ?, ?)
+                    INSERT INTO bookmarks (url, title, created_at, folder, tags) VALUES (?, ?, ?, ?, '')
                     ON CONFLICT(url) DO UPDATE SET title = excluded.title, folder = excluded.folder;
                     """,
                     [.text(item.url.absoluteString), .text(item.title),
@@ -217,13 +432,16 @@ actor BrowserDatabase {
     }
 
     func bookmarks() throws -> [Bookmark] {
-        try database.query("SELECT id, url, title, created_at, folder FROM bookmarks ORDER BY created_at DESC;") { row in
-            Bookmark(
+        try database.query("SELECT id, url, title, created_at, folder, tags FROM bookmarks ORDER BY created_at DESC;") { row in
+            let tagsRaw = row.text(5) ?? ""
+            let tags = tagsRaw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            return Bookmark(
                 id: row.integer(0),
                 url: URL(string: row.text(1) ?? "") ?? URL(string: "about:blank")!,
                 title: row.text(2) ?? "",
                 created: Date(timeIntervalSince1970: row.double(3)),
-                folder: row.text(4) ?? ""
+                folder: row.text(4) ?? "",
+                tags: tags
             )
         }
     }

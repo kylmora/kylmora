@@ -44,10 +44,31 @@ SUBMISSION_ID=$(
 )
 echo "notarize: submission $SUBMISSION_ID — waiting for Apple"
 
-# No --timeout: wait for as long as Apple takes. `wait` exits non-zero if the
-# verdict is anything but Accepted, and Apple's log is the useful thing to show.
-if ! xcrun notarytool wait "$SUBMISSION_ID" "${CREDS[@]}"; then
-    echo "notarize: not accepted — Apple's log follows" >&2
+# Poll rather than one blocking `wait`. A runner losing its network for a
+# moment used to read as a refusal and threw away hours of queueing; here only
+# a real verdict ends the loop, and a connection error is just retried. Exit 2
+# marks that as infrastructure, distinct from exit 1 for an actual rejection.
+UNREACHABLE=0
+while true; do
+    if INFO=$(xcrun notarytool info "$SUBMISSION_ID" "${CREDS[@]}" \
+                  --output-format json 2>/dev/null); then
+        UNREACHABLE=0
+        STATUS=$(printf '%s' "$INFO" \
+            | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
+        [ "$STATUS" = "In Progress" ] || break
+    else
+        UNREACHABLE=$((UNREACHABLE + 1))
+        echo "notarize: cannot reach Apple (${UNREACHABLE}/30) — retrying in 60s"
+        if [ "$UNREACHABLE" -ge 30 ]; then
+            echo "notarize: no route to Apple for 30 minutes — giving up" >&2
+            exit 2
+        fi
+    fi
+    sleep 60
+done
+
+if [ "$STATUS" != "Accepted" ]; then
+    echo "notarize: $STATUS — Apple's log follows" >&2
     xcrun notarytool log "$SUBMISSION_ID" "${CREDS[@]}" >&2 || true
     exit 1
 fi

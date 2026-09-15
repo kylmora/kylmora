@@ -214,9 +214,20 @@ final class ContentContainerView: NSView {
         updateBackground()
     }
 
+    var onPinchToOverview: (() -> Void)?
+
+    override func magnify(with event: NSEvent) {
+        if event.magnification < -0.15 {
+            onPinchToOverview?()
+        } else {
+            super.magnify(with: event)
+        }
+    }
+
     private func updateBackground() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             card.layer?.backgroundColor = Style.Colors.pageFill.cgColor
         }
     }
 }
+

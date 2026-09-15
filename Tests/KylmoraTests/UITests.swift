@@ -379,6 +379,30 @@ struct TabRowTests {
         #expect(visible.isEmpty)
     }
 
+    @Test("A locked row shows a padlock instead of a close button")
+    func lockedRowHidesClose() {
+        // The padlock stands exactly where the cross would be: it is the
+        // answer to "why can I not close this?", in the place the question
+        // gets asked.
+        let row = TabRowView()
+        row.onClose = {}
+        row.configure(TabRowContent(title: "Start", isLocked: true))
+        row.isSelected = true
+        let icons = UITestSupport.imageViews(in: row)
+            .filter { !($0 is FaviconImageView) && !$0.isHidden }
+        #expect(icons.count == 1)
+        #expect(row.accessibilityLabel() == "Start, locked")
+    }
+
+    @Test("A lock does not draw a second glyph for the archive it already covers")
+    func lockAbsorbsTheStayBadge() {
+        let row = TabRowView()
+        row.configure(TabRowContent(title: "Start", keepsInSidebar: true, isLocked: true))
+        let icons = UITestSupport.imageViews(in: row)
+            .filter { !($0 is FaviconImageView) && !$0.isHidden }
+        #expect(icons.count == 1)
+    }
+
     @Test("Visual-only state is spoken as well as shown", arguments: [
         (true, false, false, "Start, failed to load"),
         (false, true, false, "Start, sleeping"),
@@ -989,7 +1013,7 @@ struct SidebarContextMenuTests {
         let titles = sidebar.makeTabMenu(for: tab).items.map { $0.isSeparatorItem ? "-" : $0.title }
         #expect(titles == [
             "Pin", "-",
-            "Keep Awake", "Keep in Sidebar", "Sleep Now", "Archive Now", "-",
+            "Keep Awake", "Lock", "Keep in Sidebar", "Sleep Now", "Archive Now", "-",
             "Open as Split", "Duplicate", "-",
             "New Group with Tab", "Move to Space", "-",
             "Rename\u{2026}", "-",

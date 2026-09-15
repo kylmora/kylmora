@@ -30,6 +30,15 @@ enum AppPaths {
         return fallback
     }
 
+    /// Directory where iPhone / iPad links arrive via iCloud Drive or local folder drop (F-35).
+    static var iCloudInboxDirectory: URL {
+        let (url, _, _) = CloudStorageDetector.resolveFolder(for: .iCloud)
+        let root = url ?? supportDirectory.appending(path: "iCloud/Kylmora", directoryHint: .isDirectory)
+        let inbox = root.appending(path: "Inbox", directoryHint: .isDirectory)
+        try? FileManager.default.createDirectory(at: inbox, withIntermediateDirectories: true)
+        return inbox
+    }
+
     /// Creates the support directory if needed. Returns false if it could not be
     /// created, so callers can degrade to running without persistence rather
     /// than crashing.

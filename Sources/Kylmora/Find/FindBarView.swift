@@ -20,6 +20,7 @@ final class FindBarView: NSVisualEffectView, NSSearchFieldDelegate {
     private let field = NSSearchField()
     private let statusLabel = NSTextField(labelWithString: "")
     private let matchCaseButton = NSButton(title: "Aa", target: nil, action: nil)
+    private let regexButton = NSButton(title: ".*", target: nil, action: nil)
     private let previousButton = FindBarView.iconButton("chevron.up", "Previous Match")
     private let nextButton = FindBarView.iconButton("chevron.down", "Next Match")
     private let doneButton = FindBarView.iconButton("xmark", "Done")
@@ -34,10 +35,16 @@ final class FindBarView: NSVisualEffectView, NSSearchFieldDelegate {
         state = .active
         wantsLayer = true
         layer?.cornerCurve = .continuous
-        layer?.cornerRadius = 8
+        layer?.cornerRadius = 10
         layer?.borderWidth = 1
         maskImage = nil
         setAccessibilityLabel("Find on Page")
+
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.18)
+        shadow.shadowOffset = NSSize(width: 0, height: -2)
+        shadow.shadowBlurRadius = 8
+        self.shadow = shadow
 
         buildLayout()
         applyBorderColor()
@@ -56,7 +63,7 @@ final class FindBarView: NSVisualEffectView, NSSearchFieldDelegate {
         field.delegate = self
         field.translatesAutoresizingMaskIntoConstraints = false
 
-        statusLabel.font = .systemFont(ofSize: 11)
+        statusLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.alignment = .right
         statusLabel.setContentHuggingPriority(.required, for: .horizontal)
@@ -64,11 +71,20 @@ final class FindBarView: NSVisualEffectView, NSSearchFieldDelegate {
         matchCaseButton.setButtonType(.pushOnPushOff)
         matchCaseButton.bezelStyle = .accessoryBarAction
         matchCaseButton.font = .systemFont(ofSize: 11, weight: .semibold)
-        matchCaseButton.toolTip = "Match Case"
+        matchCaseButton.toolTip = "Match Case (Aa)"
         matchCaseButton.setAccessibilityLabel("Match Case")
         matchCaseButton.target = self
         matchCaseButton.action = #selector(toggleMatchCase)
         matchCaseButton.setContentHuggingPriority(.required, for: .horizontal)
+
+        regexButton.setButtonType(.pushOnPushOff)
+        regexButton.bezelStyle = .accessoryBarAction
+        regexButton.font = .monospacedSystemFont(ofSize: 11, weight: .bold)
+        regexButton.toolTip = "Regular Expression (.*)"
+        regexButton.setAccessibilityLabel("Regular Expression")
+        regexButton.target = self
+        regexButton.action = #selector(toggleRegex)
+        regexButton.setContentHuggingPriority(.required, for: .horizontal)
 
         previousButton.target = self
         previousButton.action = #selector(findPrevious)
@@ -78,7 +94,7 @@ final class FindBarView: NSVisualEffectView, NSSearchFieldDelegate {
         doneButton.action = #selector(dismiss)
 
         let stack = NSStackView(views: [
-            field, statusLabel, matchCaseButton, previousButton, nextButton, doneButton
+            field, statusLabel, matchCaseButton, regexButton, previousButton, nextButton, doneButton
         ])
         stack.orientation = .horizontal
         stack.alignment = .centerY
@@ -92,7 +108,7 @@ final class FindBarView: NSVisualEffectView, NSSearchFieldDelegate {
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            field.widthAnchor.constraint(equalToConstant: 200)
+            field.widthAnchor.constraint(equalToConstant: 180)
         ])
     }
 
@@ -111,10 +127,15 @@ final class FindBarView: NSVisualEffectView, NSSearchFieldDelegate {
     func update(with state: FindState) {
         if field.stringValue != state.query { field.stringValue = state.query }
         matchCaseButton.state = state.matchesCase ? .on : .off
+        matchCaseButton.contentTintColor = state.matchesCase ? .controlAccentColor : .secondaryLabelColor
+
+        regexButton.state = state.isRegex ? .on : .off
+        regexButton.contentTintColor = state.isRegex ? .controlAccentColor : .secondaryLabelColor
+
         statusLabel.stringValue = state.statusMessage ?? ""
         statusLabel.isHidden = state.statusMessage == nil
-        // WebKit reports no match count, so the arrows cannot know whether
-        // there is somewhere to go. They are live whenever there is a term.
+        statusLabel.textColor = state.isFailing ? .systemRed : .secondaryLabelColor
+
         previousButton.isEnabled = state.canRepeat
         nextButton.isEnabled = state.canRepeat
         field.textColor = state.isFailing ? .systemRed : .labelColor
@@ -133,6 +154,10 @@ final class FindBarView: NSVisualEffectView, NSSearchFieldDelegate {
         delegate?.findBarDidChangeOptions(self)
     }
 
+    @objc private func toggleRegex() {
+        delegate?.findBarDidChangeOptions(self)
+    }
+
     @objc private func findNext() {
         delegate?.findBarWantsNextMatch(self)
     }
@@ -146,6 +171,7 @@ final class FindBarView: NSVisualEffectView, NSSearchFieldDelegate {
     }
 
     var matchesCaseIsOn: Bool { matchCaseButton.state == .on }
+    var isRegexOn: Bool { regexButton.state == .on }
 
     // MARK: - NSSearchFieldDelegate
 

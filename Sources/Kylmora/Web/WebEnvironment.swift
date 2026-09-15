@@ -18,7 +18,14 @@ final class WebEnvironment {
 
     private var stores: [Space.Identity: WKWebsiteDataStore] = [:]
 
-    private init() {}
+    private init() {
+        NetworkConfigManager.shared.allStoresProvider = { [weak self] in
+            Array(self?.stores.map { ($0.key, $0.value) } ?? [])
+        }
+        RAMCacheManager.shared.storesProvider = { [weak self] in
+            Array(self?.stores.map { ($0.key, $0.value) } ?? [])
+        }
+    }
 
     func dataStore(for identity: Space.Identity) -> WKWebsiteDataStore {
         if let existing = stores[identity] { return existing }
@@ -29,6 +36,10 @@ final class WebEnvironment {
         case .ephemeral: .nonPersistent()
         }
         stores[identity] = store
+        NetworkConfigManager.shared.apply(to: store, spaceIdentity: identity)
+        if RAMCacheManager.shared.isRAMOnly {
+            store.removeData(ofTypes: [WKWebsiteDataTypeDiskCache], modifiedSince: .distantPast) { }
+        }
         return store
     }
 
@@ -105,10 +116,12 @@ final class WebEnvironment {
         configuration.preferences.isElementFullscreenEnabled = true
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.preferences.setValue(true, forKey: "developerExtrasEnabled")
 
         // Glance records the link under the pointer on mousedown, in a content
         // world the page cannot reach.
         GlanceLinkMonitor.shared.install(in: configuration)
+        ContextMenuManager.shared.install(in: configuration)
 
         // The chosen filter lists, applied inside WebKit.
         ContentBlocker.shared.attach(configuration.userContentController)
@@ -124,6 +137,11 @@ final class WebEnvironment {
         PasswordAutofill.shared.attach(configuration.userContentController)
         // Site Boosts (custom CSS, JS, and Universal Dark Mode).
         BoostCoordinator.shared.attach(configuration.userContentController)
+        // Link hints and Vim-style keyboard navigation.
+        LinkHintsCoordinator.shared.attach(configuration.userContentController)
+        VimNavigationCoordinator.shared.attach(configuration.userContentController)
+        // Reader Mode, Speech, and Reading List.
+        ReaderModeController.shared.attach(configuration.userContentController)
         // The space's default fonts.
         WebFontStyling.install(fonts(for: identity), in: configuration.userContentController)
 
@@ -151,6 +169,9 @@ final class WebEnvironment {
         let webView = GlanceWebView(frame: frame, configuration: configuration)
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsMagnification = true
+        if #available(macOS 13.3, *) {
+            webView.isInspectable = true
+        }
         return webView
     }
 }

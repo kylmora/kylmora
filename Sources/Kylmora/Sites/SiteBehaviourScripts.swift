@@ -14,6 +14,10 @@ enum SiteBehaviourScripts {
             WKUserScript(source: screenSharing, injectionTime: .atDocumentStart, forMainFrameOnly: false),
             WKUserScript(source: pictureInPicture, injectionTime: .atDocumentStart, forMainFrameOnly: false),
             WKUserScript(source: pictureInPictureWatcher, injectionTime: .atDocumentStart, forMainFrameOnly: false),
+            WKUserScript(source: mediaWatcher, injectionTime: .atDocumentStart, forMainFrameOnly: false),
+            WKUserScript(source: nativeVideoPlayer, injectionTime: .atDocumentStart, forMainFrameOnly: false),
+            WKUserScript(source: antiFingerprinting, injectionTime: .atDocumentStart, forMainFrameOnly: false),
+            WKUserScript(source: hostileBehaviourBlocker, injectionTime: .atDocumentStart, forMainFrameOnly: false),
             WKUserScript(source: autoplaySweep, injectionTime: .atDocumentEnd, forMainFrameOnly: false),
             WKUserScript(source: reader, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         ]
@@ -187,6 +191,134 @@ enum SiteBehaviourScripts {
     })();
     """
 
+    /// Monitors HTML audio/video playback and MediaSession metadata, and provides
+    /// controls for muting, play/pause and requesting Picture-in-Picture.
+    static let mediaWatcher = """
+    (function () {
+      var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.kylmoraSite;
+      if (!bridge) { return; }
+
+      var isMuted = false;
+      var activeMedia = new Set();
+
+      function getTitle() {
+        try {
+          if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.title) {
+            return navigator.mediaSession.metadata.title;
+          }
+        } catch (e) {}
+        return document.title || "";
+      }
+
+      function getArtist() {
+        try {
+          if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.artist) {
+            return navigator.mediaSession.metadata.artist;
+          }
+        } catch (e) {}
+        return "";
+      }
+
+      function report() {
+        var isPlaying = false;
+        var hasAudio = false;
+        var hasVideo = false;
+
+        activeMedia.forEach(function (el) {
+          if (!el.paused && !el.ended) {
+            isPlaying = true;
+            if (el.tagName === "VIDEO") {
+              hasVideo = true;
+            }
+            if (!el.muted && el.volume > 0) {
+              hasAudio = true;
+            }
+          }
+        });
+
+        bridge.postMessage({
+          kind: "mediaPlayback",
+          isPlaying: isPlaying,
+          hasAudio: hasAudio,
+          hasVideo: hasVideo,
+          isMuted: isMuted,
+          title: getTitle(),
+          artist: getArtist()
+        });
+      }
+
+      function attach(el) {
+        if (!el || el.__kylmoraTracked) { return; }
+        el.__kylmoraTracked = true;
+        if (isMuted) { el.muted = true; }
+
+        var events = ["play", "playing", "pause", "ended", "emptied", "volumechange", "ratechange"];
+        for (var i = 0; i < events.length; i++) {
+          el.addEventListener(events[i], function () {
+            if (!el.paused && !el.ended) {
+              activeMedia.add(el);
+            } else {
+              activeMedia.delete(el);
+            }
+            report();
+          }, true);
+        }
+      }
+
+      function scan() {
+        var elements = document.querySelectorAll("audio, video");
+        for (var i = 0; i < elements.length; i++) {
+          attach(elements[i]);
+        }
+      }
+
+      scan();
+      document.addEventListener("DOMContentLoaded", scan);
+      if (document.documentElement) {
+        var observer = new MutationObserver(function () { scan(); });
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+      }
+
+      window.__kylmoraMedia = {
+        setMuted: function (muted) {
+          isMuted = !!muted;
+          var elements = document.querySelectorAll("audio, video");
+          for (var i = 0; i < elements.length; i++) {
+            elements[i].muted = isMuted;
+          }
+          report();
+        },
+        togglePlayPause: function () {
+          var anyPlaying = false;
+          var elements = document.querySelectorAll("audio, video");
+          for (var i = 0; i < elements.length; i++) {
+            if (!elements[i].paused && !elements[i].ended) {
+              anyPlaying = true;
+              elements[i].pause();
+            }
+          }
+          if (!anyPlaying && elements.length > 0) {
+            elements[0].play().catch(function () {});
+          }
+          report();
+        },
+        requestPiP: function () {
+          var video = document.querySelector("video");
+          if (!video) { return false; }
+          if (video.requestPictureInPicture) {
+            video.requestPictureInPicture().catch(function () {});
+            return true;
+          } else if (video.webkitSetPresentationMode) {
+            var next = video.webkitPresentationMode === "picture-in-picture" ? "inline" : "picture-in-picture";
+            video.webkitSetPresentationMode(next);
+            return true;
+          }
+          return false;
+        }
+      };
+    })();
+    """
+
     /// Reader mode: the article, on its own.
     ///
     /// The article is the element holding the most paragraph text, found by
@@ -241,6 +373,402 @@ enum SiteBehaviourScripts {
         '</style></head><body><article class="kylmora-reader"><h1>' + esc(title) + "</h1>" +
         (byline ? '<div class="kylmora-byline">' + esc(textOf(byline)) + "</div>" : "") +
         clone.innerHTML + "</article></body>";
+    })();
+    """
+
+    /// Native HTML5 video player option (Vinegar-like: PiP, background playback, no tracking).
+    ///
+    /// Replaces custom video player UI (such as YouTube's custom DOM player)
+    /// with clean native HTML5 controls, enables Picture-in-Picture directly,
+    /// allows seamless background audio/video playback without being paused
+    /// by the Page Visibility API, and skips/bypasses ads and tracking.
+    static let nativeVideoPlayer = """
+    (function () {
+      var setting = \(policy).nativeVideoPlayer || "on");
+      if (setting === "off") { return; }
+
+      // 1. Background Playback & Visibility API Spoofing
+      // YouTube and other video sites listen to visibilitychange and document.hidden
+      // to forcefully pause playback when switching tabs. We preserve background playback.
+      try {
+        Object.defineProperty(document, "hidden", { get: function () { return false; }, configurable: true });
+        Object.defineProperty(document, "visibilityState", { get: function () { return "visible"; }, configurable: true });
+        Object.defineProperty(document, "webkitVisibilityState", { get: function () { return "visible"; }, configurable: true });
+      } catch (e) {}
+
+      window.addEventListener("visibilitychange", function (e) {
+        if (\(policy).nativeVideoPlayer || "on") !== "off") {
+          e.stopImmediatePropagation();
+        }
+      }, true);
+
+      document.addEventListener("visibilitychange", function (e) {
+        if (\(policy).nativeVideoPlayer || "on") !== "off") {
+          e.stopImmediatePropagation();
+        }
+      }, true);
+
+      // Protect against blur-induced pauses on window
+      window.addEventListener("blur", function (e) {
+        if (\(policy).nativeVideoPlayer || "on") !== "off") {
+          e.stopImmediatePropagation();
+        }
+      }, true);
+
+      // 2. Native Controls Enforcement & Ad-Bypass for YouTube & HTML5 video
+      function enhanceVideoElement(video) {
+        if (!video || video.__kylmoraNativeVideo) { return; }
+        video.__kylmoraNativeVideo = true;
+
+        // Force native controls & PiP
+        video.controls = true;
+        video.disablePictureInPicture = false;
+        if (typeof video.webkitAllowsInlineMediaPlayback !== "undefined") {
+          video.webkitAllowsInlineMediaPlayback = true;
+        }
+
+        // Prevent page scripts from removing controls attribute
+        var origSetAttribute = video.setAttribute;
+        video.setAttribute = function (name, val) {
+          if (name === "controls" && (\(policy).nativeVideoPlayer || "on") !== "off") {
+            return;
+          }
+          return origSetAttribute.apply(this, arguments);
+        };
+
+        var origRemoveAttribute = video.removeAttribute;
+        video.removeAttribute = function (name) {
+          if (name === "controls" && (\(policy).nativeVideoPlayer || "on") !== "off") {
+            return;
+          }
+          return origRemoveAttribute.apply(this, arguments);
+        };
+      }
+
+      function cleanYouTubeOverlays() {
+        if (!location.hostname.includes("youtube.com") && !location.hostname.includes("youtu.be")) {
+          return;
+        }
+
+        // Auto-skip video ads immediately
+        var skipBtn = document.querySelector(".ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-ad-overlay-close-button");
+        if (skipBtn) {
+          try { skipBtn.click(); } catch (e) {}
+        }
+
+        // Skip unskippable or ad video segment to the end
+        var adShowing = document.querySelector(".ad-showing video, .ad-interrupting video");
+        if (adShowing && !isNaN(adShowing.duration) && isFinite(adShowing.duration) && adShowing.currentTime < adShowing.duration) {
+          try { adShowing.currentTime = adShowing.duration; } catch (e) {}
+        }
+
+        // Apply style to hide YouTube player overlay and expose native controls
+        if (!document.getElementById("kylmora-native-video-style")) {
+          var style = document.createElement("style");
+          style.id = "kylmora-native-video-style";
+          style.textContent = `
+            .ytp-chrome-bottom, .ytp-gradient-bottom, .ytp-chrome-top, .ytp-gradient-top,
+            .ytp-pause-overlay, .ytp-ad-module, .ytp-ad-player-overlay, .video-ads,
+            .ytp-ce-element, .annotation, .ytp-share-panel, .ytp-contextmenu {
+              display: none !important;
+              pointer-events: none !important;
+            }
+            .html5-video-player video {
+              pointer-events: auto !important;
+              z-index: 20 !important;
+            }
+            .html5-video-player {
+              background: #000 !important;
+            }
+          `;
+          (document.head || document.documentElement).appendChild(style);
+        }
+      }
+
+      function sweepVideos() {
+        var videos = document.querySelectorAll("video");
+        for (var i = 0; i < videos.length; i++) {
+          enhanceVideoElement(videos[i]);
+        }
+        cleanYouTubeOverlays();
+      }
+
+      sweepVideos();
+      document.addEventListener("DOMContentLoaded", sweepVideos);
+      if (document.documentElement) {
+        var observer = new MutationObserver(function () { sweepVideos(); });
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+      }
+      setInterval(cleanYouTubeOverlays, 600);
+    })();
+    """
+
+    /// Randomizes Canvas / WebGL read-backs with per-space seed, masks AudioContext signatures,
+    /// and standardizes hardware parameters to defeat browser fingerprinting.
+    static let antiFingerprinting = """
+    (function () {
+      var site = window.__kylmoraSite || {};
+      if (site.antiFingerprinting === "off") { return; }
+
+      var seed = typeof site.spaceSeed === 'number' ? site.spaceSeed : 42069;
+      var allowCanvasNoise = site.canvasNoise !== false;
+      var allowAudioNoise = site.audioNoise !== false;
+      var allowHardwareMasking = site.hardwareMasking !== false;
+
+      // Deterministic PRNG per Space
+      function makeRNG(s) {
+        return function () {
+          var t = s += 0x6D2B79F5;
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      var rng = makeRNG(seed);
+
+      // 1. Canvas 2D Read-back Noise Farbling
+      if (allowCanvasNoise && window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype.getImageData) {
+        var origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+        CanvasRenderingContext2D.prototype.getImageData = function () {
+          var imageData = origGetImageData.apply(this, arguments);
+          var data = imageData.data;
+          var len = data.length;
+          if (len > 0) {
+            var step = Math.max(16, (len / 120) | 0);
+            for (var i = 0; i < len; i += step) {
+              if (data[i + 3] > 10) {
+                var delta = (rng() > 0.5 ? 1 : -1);
+                var ch = i % 3;
+                data[i + ch] = Math.min(255, Math.max(0, data[i + ch] + delta));
+              }
+            }
+          }
+          return imageData;
+        };
+      }
+
+      // Canvas toDataURL Noise Farbling
+      if (allowCanvasNoise && window.HTMLCanvasElement && HTMLCanvasElement.prototype.toDataURL) {
+        var origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+        HTMLCanvasElement.prototype.toDataURL = function () {
+          try {
+            var ctx = this.getContext && this.getContext('2d');
+            if (ctx && this.width > 0 && this.height > 0) {
+              var img = ctx.getImageData(0, 0, Math.min(this.width, 8), Math.min(this.height, 8));
+              if (img.data.length > 0) {
+                img.data[0] = img.data[0] ^ (seed & 1);
+                ctx.putImageData(img, 0, 0);
+              }
+            }
+          } catch (e) {}
+          return origToDataURL.apply(this, arguments);
+        };
+      }
+
+      // 2. AudioContext & Web Audio Acoustic Jitter
+      if (allowAudioNoise && window.AudioBuffer && AudioBuffer.prototype.getChannelData) {
+        var origGetChannelData = AudioBuffer.prototype.getChannelData;
+        AudioBuffer.prototype.getChannelData = function () {
+          var channel = origGetChannelData.apply(this, arguments);
+          if (channel && channel.length > 0) {
+            var aRng = makeRNG(seed + channel.length);
+            var step = Math.max(16, (channel.length / 60) | 0);
+            for (var i = 0; i < channel.length; i += step) {
+              channel[i] += (aRng() - 0.5) * 1e-7;
+            }
+          }
+          return channel;
+        };
+      }
+
+      if (allowAudioNoise && window.AnalyserNode && AnalyserNode.prototype.getFloatFrequencyData) {
+        var origGetFloat = AnalyserNode.prototype.getFloatFrequencyData;
+        AnalyserNode.prototype.getFloatFrequencyData = function (array) {
+          origGetFloat.apply(this, arguments);
+          if (array && array.length > 0) {
+            for (var i = 0; i < array.length; i += 4) {
+              array[i] += (rng() - 0.5) * 0.01;
+            }
+          }
+        };
+      }
+
+      // 3. WebGL Unmasked Renderer & Vendor Masking
+      function maskGL(proto) {
+        if (!proto || !proto.getParameter) return;
+        var origGetParam = proto.getParameter;
+        proto.getParameter = function (param) {
+          if (param === 0x9245) return "Apple Inc.";
+          if (param === 0x9246) return "Apple GPU";
+          return origGetParam.apply(this, arguments);
+        };
+      }
+      if (window.WebGLRenderingContext) maskGL(WebGLRenderingContext.prototype);
+      if (window.WebGL2RenderingContext) maskGL(WebGL2RenderingContext.prototype);
+
+      // 4. Hardware Concurrency & Memory Standardization
+      if (allowHardwareMasking) {
+        try {
+          Object.defineProperty(navigator, 'hardwareConcurrency', { get: function () { return 8; }, configurable: true });
+          Object.defineProperty(navigator, 'deviceMemory', { get: function () { return 8; }, configurable: true });
+        } catch (e) {}
+      }
+
+      // 5. Battery API Neutralization
+      if (navigator.getBattery) {
+        navigator.getBattery = function () {
+          return Promise.resolve({
+            charging: true,
+            chargingTime: 0,
+            dischargingTime: Infinity,
+            level: 1.0,
+            addEventListener: function () {},
+            removeEventListener: function () {},
+            dispatchEvent: function () { return false; }
+          });
+        };
+      }
+
+      // 6. Screen dimension normalization
+      try {
+        if (window.screen) {
+          Object.defineProperty(screen, 'availWidth', { get: function () { return screen.width; }, configurable: true });
+          Object.defineProperty(screen, 'availHeight', { get: function () { return screen.height; }, configurable: true });
+        }
+      } catch (e) {}
+    })();
+    """
+
+    /// Blocks hostile page behaviour: forces text to remain selectable, prevents
+    /// right-click and context menu hijacking, and shields against unsolicited clipboard snooping.
+    static let hostileBehaviourBlocker = """
+    (function () {
+      var setting = \(policy).blockHostileBehaviour || "on");
+      if (setting === "off") return;
+
+      // 1. Force Selectable Text & Re-enable Copying
+      function injectStyles() {
+        try {
+          if (document.getElementById('kylmora-anti-hostile-style')) return;
+          var style = document.createElement('style');
+          style.id = 'kylmora-anti-hostile-style';
+          style.textContent = 'html, body, p, span, div, h1, h2, h3, h4, h5, h6, li, td, th, pre, code, blockquote, article, section, main, em, strong, b, i, a { -webkit-user-select: text !important; user-select: text !important; -webkit-touch-callout: default !important; }';
+          (document.head || document.documentElement).appendChild(style);
+        } catch (e) {}
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', injectStyles);
+      } else {
+        injectStyles();
+      }
+
+      // 2. Prevent right-click trapping and preventDefault on contextmenu, selectstart, dragstart
+      var origPreventDefault = Event.prototype.preventDefault;
+      Event.prototype.preventDefault = function () {
+        if (this.type === 'contextmenu' || this.type === 'selectstart' || this.type === 'dragstart') {
+          var currentSetting = \(policy).blockHostileBehaviour || "on");
+          if (currentSetting !== "off") {
+            return;
+          }
+        }
+        return origPreventDefault.apply(this, arguments);
+      };
+
+      // 3. Clear hostile event listeners and property traps in capture phase
+      ['contextmenu', 'selectstart', 'dragstart', 'copy', 'cut'].forEach(function (evtName) {
+        window.addEventListener(evtName, function (e) {
+          var currentSetting = \(policy).blockHostileBehaviour || "on");
+          if (currentSetting === "off") return;
+
+          if (document['on' + evtName]) document['on' + evtName] = null;
+          if (document.body && document.body['on' + evtName]) document.body['on' + evtName] = null;
+          if (window['on' + evtName]) window['on' + evtName] = null;
+        }, { capture: true, passive: true });
+      });
+
+      // 4. Protect clipboard access (no clipboard reading or writing without user gesture)
+      if (navigator.clipboard) {
+        if (navigator.clipboard.readText) {
+          var origReadText = navigator.clipboard.readText;
+          navigator.clipboard.readText = function () {
+            var currentSetting = \(policy).blockHostileBehaviour || "on");
+            if (currentSetting !== "off") {
+              var hasUserActivation = !!(navigator.userActivation && navigator.userActivation.isActive);
+              if (!hasUserActivation) {
+                return Promise.reject(new DOMException("Clipboard access blocked by Kylmora hostile behaviour protection.", "NotAllowedError"));
+              }
+            }
+            return origReadText.apply(this, arguments);
+          };
+        }
+
+        if (navigator.clipboard.read) {
+          var origRead = navigator.clipboard.read;
+          navigator.clipboard.read = function () {
+            var currentSetting = \(policy).blockHostileBehaviour || "on");
+            if (currentSetting !== "off") {
+              var hasUserActivation = !!(navigator.userActivation && navigator.userActivation.isActive);
+              if (!hasUserActivation) {
+                return Promise.reject(new DOMException("Clipboard access blocked by Kylmora hostile behaviour protection.", "NotAllowedError"));
+              }
+            }
+            return origRead.apply(this, arguments);
+          };
+        }
+
+        if (navigator.clipboard.writeText) {
+          var origWriteText = navigator.clipboard.writeText;
+          navigator.clipboard.writeText = function (data) {
+            var currentSetting = \(policy).blockHostileBehaviour || "on");
+            if (currentSetting !== "off") {
+              var hasUserActivation = !!(navigator.userActivation && (navigator.userActivation.isActive || navigator.userActivation.hasBeenActive));
+              if (!hasUserActivation) {
+                return Promise.reject(new DOMException("Unsolicited clipboard write blocked by Kylmora hostile behaviour protection.", "NotAllowedError"));
+              }
+            }
+            return origWriteText.apply(this, arguments);
+          };
+        }
+      }
+
+      // 5. Clean inline attributes on elements as they appear
+      function scrubNode(node) {
+        if (!node || node.nodeType !== 1) return;
+        try {
+          if (node.hasAttribute('oncontextmenu')) node.removeAttribute('oncontextmenu');
+          if (node.hasAttribute('onselectstart')) node.removeAttribute('onselectstart');
+          if (node.hasAttribute('oncopy')) node.removeAttribute('oncopy');
+          if (node.hasAttribute('unselectable')) node.removeAttribute('unselectable');
+          if (node.style && node.style.userSelect === 'none') node.style.userSelect = 'auto';
+          if (node.style && node.style.webkitUserSelect === 'none') node.style.webkitUserSelect = 'auto';
+        } catch (e) {}
+      }
+
+      var observer = new MutationObserver(function (mutations) {
+        var currentSetting = \(policy).blockHostileBehaviour || "on");
+        if (currentSetting === "off") return;
+        for (var i = 0; i < mutations.length; i++) {
+          var added = mutations[i].addedNodes;
+          for (var j = 0; j < added.length; j++) {
+            scrubNode(added[j]);
+            if (added[j].querySelectorAll) {
+              var subs = added[j].querySelectorAll('[oncontextmenu], [onselectstart], [oncopy], [unselectable]');
+              for (var k = 0; k < subs.length; k++) scrubNode(subs[k]);
+            }
+          }
+        }
+      });
+
+      if (document.documentElement) {
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+      } else {
+        document.addEventListener('DOMContentLoaded', function () {
+          if (document.documentElement) {
+            observer.observe(document.documentElement, { childList: true, subtree: true });
+          }
+        });
+      }
     })();
     """
 }

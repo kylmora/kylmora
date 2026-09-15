@@ -40,6 +40,9 @@ final class DownloadManager {
     /// buttons whenever its actions are set.
     var listAnchor: (() -> NSView?)?
 
+    /// Resolves which space initiated a download, allowing per-space downloads folder override.
+    var spaceResolver: ((WKDownload) -> Space?)?
+
     private let store: DownloadStore
     private var delegate: DownloadDelegate?
     /// Held between openings, so the list keeps its scroll position and the
@@ -234,10 +237,13 @@ final class DownloadManager {
         // A resumed transfer must continue into the partial file it already
         // wrote, so the existing row's destination wins over a fresh name. A
         // row that is starting over instead needs a new one, because the old
+        let space = spaceResolver?(webKitDownload)
+        let defaultDirectory = space?.effectiveDownloadsDirectory ?? DownloadDestination.downloadsDirectory()
+
         // path may now hold the bytes of the attempt that failed.
         if let existing = row(for: webKitDownload) {
             if existing.isResuming { return existing.destination }
-            guard let directory = DownloadDestination.downloadsDirectory(),
+            guard let directory = defaultDirectory,
                   let resolution = DownloadDestination.resolve(suggested: suggestedFilename, in: directory)
             else { return nil }
             existing.relocate(to: resolution.url)
@@ -256,10 +262,10 @@ final class DownloadManager {
             // "Ask for each download": the save panel's answer is the
             // destination, name and all; a cancelled panel is a cancelled
             // download, which WebKit reports when nil comes back.
-            guard let chosen = askWhereToSave(suggestedFilename: suggestedFilename) else { return nil }
+            guard let chosen = askWhereToSave(suggestedFilename: suggestedFilename, defaultDirectory: defaultDirectory) else { return nil }
             destination = chosen
         } else {
-            guard let directory = DownloadDestination.downloadsDirectory() else {
+            guard let directory = defaultDirectory else {
                 record(failure: "Could not open the Downloads folder", source: response.url, name: suggestedFilename)
                 return nil
             }
@@ -280,11 +286,11 @@ final class DownloadManager {
         return destination
     }
 
-    private func askWhereToSave(suggestedFilename: String) -> URL? {
+    private func askWhereToSave(suggestedFilename: String, defaultDirectory: URL? = nil) -> URL? {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = DownloadDestination.sanitized(suggestedFilename)
         panel.canCreateDirectories = true
-        panel.directoryURL = DownloadDestination.downloadsDirectory()
+        panel.directoryURL = defaultDirectory ?? DownloadDestination.downloadsDirectory()
         guard panel.runModal() == .OK, let url = panel.url else { return nil }
         // The panel's file is created empty by the panel; WebKit needs the
         // path free.

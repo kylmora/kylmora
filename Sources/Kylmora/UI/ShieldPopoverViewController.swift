@@ -117,7 +117,9 @@ final class ShieldPopoverViewController: NSViewController {
         userRuleLabel.font = .systemFont(ofSize: 11)
         userRuleLabel.textColor = .secondaryLabelColor
 
-        let cookieStatus = Settings.shared.autoRejectCookieBanners ? "Active" : "Disabled"
+        let cookieCount = CookieConsentAutoReject.shared.totalRejectionsCount
+        let countSuffix = cookieCount > 0 ? " (\(cookieCount) rejected)" : ""
+        let cookieStatus = Settings.shared.autoRejectCookieBanners ? "Active\(countSuffix)" : "Disabled"
         let cookieLabel = NSTextField(labelWithString: "🍪 Auto-reject cookie banners: \(cookieStatus)")
         cookieLabel.font = .systemFont(ofSize: 11)
         cookieLabel.textColor = .secondaryLabelColor

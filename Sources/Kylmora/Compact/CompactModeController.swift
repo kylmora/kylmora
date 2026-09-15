@@ -182,7 +182,8 @@ final class CompactModeController {
         cancelKeepHover(for: target)
         outsideWindowTask?.cancel()
         outsideWindowTask = nil
-        debounce { [weak self] in
+        let delay = isDrag ? 0 : state.effectiveConfiguration.hoverDebounce
+        debounce(delay: delay) { [weak self] in
             guard let self else { return }
             self.mutateReasons(target) {
                 $0.insert(isDrag ? .dragHover : .pointerHover)
@@ -203,7 +204,10 @@ final class CompactModeController {
         isStillInside: @escaping @MainActor () -> Bool = { false }
     ) {
         ignoresNextHover = false
-        debounce { [weak self] in
+        // Cancel any pending reveal debounce so a cursor passing across does not reveal after leaving
+        debounceTask?.cancel()
+        debounceTask = nil
+        debounce(delay: 0) { [weak self] in
             guard let self, !isStillInside() else { return }
             let grace = target == .sidebar ? self.state.effectiveConfiguration.sidebarKeepHover : 0
             let clear = { [weak self] in
@@ -312,13 +316,13 @@ final class CompactModeController {
         host?.compactMode(self, apply: state.presentation, transition: transition)
     }
 
-    private func debounce(_ work: @escaping @MainActor () -> Void) {
-        let delay = state.effectiveConfiguration.hoverDebounce
-        guard delay > 0 else { return work() }
+    private func debounce(delay: Double? = nil, _ work: @escaping @MainActor () -> Void) {
+        let actualDelay = delay ?? state.effectiveConfiguration.hoverDebounce
+        guard actualDelay > 0 else { return work() }
         debounceTask?.cancel()
         debounceTask = Task { [weak self] in
             guard let self else { return }
-            try? await self.sleep(delay)
+            try? await self.sleep(actualDelay)
             guard !Task.isCancelled else { return }
             work()
         }

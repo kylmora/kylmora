@@ -56,7 +56,10 @@ final class LittleArcCoordinator {
             guard let session, let parent = session.activeTab else { return nil }
             return session.adoptChildTab(of: parent, configuration: configuration).webView()
         }
-        controller.onClose = { [weak self] closed in
+        controller.onClose = { [weak self, weak session] closed in
+            if let url = closed.pageURL, let session {
+                session.recordClosedLittleArcTab(url: url, title: closed.window?.title, spaceID: space.id)
+            }
             // Deferred: the window is still inside its own close call, and
             // dropping the last reference to the controller from in there would
             // deallocate it half-way through.

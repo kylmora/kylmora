@@ -27,6 +27,11 @@ final class TabGroupHeaderView: NSView {
     private lazy var customizeButton = IconButton(symbolName: "ellipsis", label: "Customize Folder") { [weak self] in
         self?.onCustomize?()
     }
+    /// Shown in place of the cross on a locked folder. Not a button: there is
+    /// nothing to click, and the point of it is to explain the cross's absence
+    /// to someone who went looking for it.
+    private let lockGlyph = NSImageView()
+    private var isLocked = false
     private let titleLabel = NSTextField(labelWithString: "")
     private let chevron = NSImageView()
     private var trackingArea: NSTrackingArea?
@@ -107,6 +112,13 @@ final class TabGroupHeaderView: NSView {
         customizeButton.isHidden = true
         customizeButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(customizeButton)
+        lockGlyph.image = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: "locked")
+        lockGlyph.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+        lockGlyph.contentTintColor = Style.Colors.tertiaryText
+        lockGlyph.isHidden = true
+        lockGlyph.setAccessibilityElement(false)
+        lockGlyph.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(lockGlyph)
         NSLayoutConstraint.activate([
             removeButton.trailingAnchor.constraint(
                 equalTo: trailingAnchor,
@@ -116,7 +128,11 @@ final class TabGroupHeaderView: NSView {
             // The three-dot sits just inside the cross, so the two hover
             // controls read as one cluster at the trailing edge.
             customizeButton.trailingAnchor.constraint(equalTo: removeButton.leadingAnchor, constant: -2),
-            customizeButton.centerYAnchor.constraint(equalTo: centerYAnchor)
+            customizeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            // Exactly where the cross would have been, so the padlock reads as
+            // its replacement rather than as one more thing on the row.
+            lockGlyph.centerXAnchor.constraint(equalTo: removeButton.centerXAnchor),
+            lockGlyph.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
 
         setAccessibilityRole(.disclosureTriangle)
@@ -129,17 +145,23 @@ final class TabGroupHeaderView: NSView {
 
     /// - Parameter emoji: omitted when the group has none; the name then starts
     ///   where the emoji would have been, rather than after a blank gap.
-    func show(emoji: String?, name: String, isExpanded: Bool) {
+    func show(emoji: String?, name: String, isExpanded: Bool, isLocked: Bool = false) {
         emojiLabel.stringValue = emoji ?? ""
         emojiLabel.isHidden = (emoji ?? "").isEmpty
         titleLabel.stringValue = name
         self.isExpanded = isExpanded
+        self.isLocked = isLocked
+        updateHoverButtons()
         applyExpansion()
     }
 
     private func updateHoverButtons() {
-        removeButton.isHidden = !(isHovered && onRemove != nil)
+        // A locked folder never offers the cross, hovered or not. Everything
+        // else on the header still works: the lock is on deleting the folder,
+        // not on renaming, recolouring or folding it.
+        removeButton.isHidden = !(isHovered && onRemove != nil && !isLocked)
         customizeButton.isHidden = !(isHovered && onCustomize != nil)
+        lockGlyph.isHidden = !isLocked
     }
 
     /// Flips the group and tells the caller. Used by the click handler and by
@@ -159,6 +181,7 @@ final class TabGroupHeaderView: NSView {
         setAccessibilityValue(isExpanded)
         let name = titleLabel.stringValue
         setAccessibilityLabel(name.isEmpty ? "Tab group" : name)
+        setAccessibilityLabel(isLocked ? "\(name.isEmpty ? "Tab group" : name), locked" : (name.isEmpty ? "Tab group" : name))
         toolTip = isExpanded ? "Collapse \(name)" : "Expand \(name)"
     }
 

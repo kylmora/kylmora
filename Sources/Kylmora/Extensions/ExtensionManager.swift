@@ -237,9 +237,22 @@ final class ExtensionManager: NSObject {
     // MARK: - Actions
 
     /// The loaded extensions that put a button somewhere, with the action
+    /// Checks whether an extension is enabled in a specific space.
+    func isExtensionEnabled(_ recordID: UUID, in space: Space?) -> Bool {
+        guard let record = records.first(where: { $0.id == recordID }), record.isEnabled else {
+            return false
+        }
+        guard let space, let allowed = space.enabledExtensionIDs else {
+            return true
+        }
+        return allowed.contains(recordID)
+    }
+
     /// for the visible tab.
     var actions: [(entry: Entry, action: WKWebExtension.Action)] {
-        entries.compactMap { entry in
+        let activeSpace = session?.activeSpace
+        return entries.compactMap { entry in
+            guard isExtensionEnabled(entry.id, in: activeSpace) else { return nil }
             guard let context = contexts[entry.id] else { return nil }
             let tab = session?.activeTab.map { adapter(for: $0) }
             guard let action = context.action(for: tab) else { return nil }

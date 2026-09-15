@@ -375,4 +375,137 @@ struct SplitViewTests {
     func paneCorner() {
         #expect(SplitMetrics.paneCornerRadius == Style.Metrics.contentCornerRadius)
     }
+
+    // MARK: - F-17 Split View Refinements
+
+    @Test("Replacing a tab in SplitLayout preserves exact proportions and tree structure")
+    func testReplacingPaneInLayout() {
+        let tabs = ids(3)
+        let layout = SplitLayout(tabs: tabs, grid: .grid)!.settingShares(at: [0], to: [0.3, 0.7])
+        let replacement = UUID()
+
+        let updated = layout.replacing(tabs[0], with: replacement)
+        #expect(updated.tabIDs == [replacement, tabs[1], tabs[2]])
+        #expect(updated.grid == layout.grid)
+
+        // Proportions are kept
+        guard case .split(.horizontal, let columns, _) = updated.root,
+              case .split(.vertical, let cells, _) = columns[0] else {
+            Issue.record("layout structure should be preserved")
+            return
+        }
+        expectClose(cells[0].share, 0.3)
+        expectClose(cells[1].share, 0.7)
+    }
+
+    @Test("Sticky pane stays open in split while switching other tabs in sidebar")
+    func testStickyPaneBehavior() {
+        let session = BrowserSession(database: nil)
+        let tabA = session.newTab(url: URL(string: "https://a.com")!, select: true)
+        let tabB = session.newTab(url: URL(string: "https://b.com")!, select: false)
+        let tabC = session.newTab(url: URL(string: "https://c.com")!, select: false)
+
+        session.splitTabs([tabA, tabB], grid: .sideBySide)
+        #expect(session.activeSplit?.tabIDs == [tabA.id, tabB.id])
+
+        // Stick Tab A
+        session.toggleStickPane(tabA.id)
+        #expect(session.isSticky(tabA.id))
+        #expect(!session.isSticky(tabB.id))
+
+        // Select Tab C in sidebar -> Tab A stays stuck, Tab B replaced with Tab C
+        session.selectTab(tabC)
+        #expect(session.activeSplit != nil)
+        #expect(session.activeSplit?.contains(tabA.id) == true)
+        #expect(session.activeSplit?.contains(tabC.id) == true)
+        #expect(session.activeSplit?.contains(tabB.id) == false)
+
+        // Unstick Tab A
+        session.toggleStickPane(tabA.id)
+        #expect(!session.isSticky(tabA.id))
+    }
+
+    @Test("Undo split restores previous single tab or split layout")
+    func testUndoSplit() {
+        let session = BrowserSession(database: nil)
+        let tabA = session.newTab(url: URL(string: "https://a.com")!, select: true)
+        let tabB = session.newTab(url: URL(string: "https://b.com")!, select: false)
+
+        #expect(session.activeSplit == nil)
+        #expect(session.activeTab?.id == tabA.id)
+
+        session.splitTabs([tabA, tabB], grid: .sideBySide)
+        #expect(session.activeSplit != nil)
+        #expect(session.canUndoSplit)
+
+        // Undo split
+        session.undoSplit()
+        #expect(session.activeSplit == nil)
+        #expect(session.activeTab?.id == tabA.id)
+
+        // Redo split
+        session.undoSplit()
+        #expect(session.activeSplit != nil)
+    }
+
+    @Test("Equalize split balances shares equally")
+    func testEqualizeSplit() {
+        let session = BrowserSession(database: nil)
+        let tabA = session.newTab(url: URL(string: "https://a.com")!, select: true)
+        let tabB = session.newTab(url: URL(string: "https://b.com")!, select: false)
+
+        session.splitTabs([tabA, tabB], grid: .sideBySide)
+        let dragged = session.activeSplit!.settingShares(at: [], to: [0.2, 0.8])
+        session.updateSplitLayout(dragged)
+
+        session.equalizeSplit()
+        guard case .split(_, let children, _) = session.activeSplit!.root else {
+            Issue.record("root should be split")
+            return
+        }
+        expectClose(children[0].share, 0.5)
+        expectClose(children[1].share, 0.5)
+    }
+
+    @Test("openLinkInSplit splits with new tab when not in split")
+    func testOpenLinkInSplitStandalone() {
+        let session = BrowserSession(database: nil)
+        let tabA = session.newTab(url: URL(string: "https://a.com")!, select: true)
+        #expect(session.activeSplit == nil)
+
+        let targetURL = URL(string: "https://split-target.com")!
+        session.openLinkInSplit(targetURL, from: tabA)
+
+        #expect(session.activeSplit != nil)
+        #expect(session.activeSplit?.paneCount == 2)
+        #expect(session.activeTab?.url == targetURL)
+    }
+
+    @Test("CommandCatalog has F-17 split refinement commands")
+    func testSplitCommandCatalog() {
+        let commands = CommandCatalog.all
+        let ids = Set(commands.map(\.id))
+
+        #expect(ids.contains("toggle-sticky-pane"))
+        #expect(ids.contains("undo-split"))
+        #expect(ids.contains("equalize-split"))
+
+        let stickyCmd = commands.first(where: { $0.id == "toggle-sticky-pane" })
+        #expect(stickyCmd?.shortcut == "⌥⌘S")
+
+        let undoCmd = commands.first(where: { $0.id == "undo-split" })
+        #expect(undoCmd?.shortcut == "⌥⌘Z")
+    }
+
+    @Test("SplitPaneView builds stick, unsplit, and close buttons")
+    func testSplitPaneViewButtons() {
+        let pane = SplitPaneView(tabID: UUID())
+        #expect(!pane.isSticky)
+
+        pane.setSticky(true)
+        #expect(pane.isSticky)
+
+        pane.setSticky(false)
+        #expect(!pane.isSticky)
+    }
 }

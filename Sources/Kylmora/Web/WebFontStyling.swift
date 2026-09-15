@@ -8,6 +8,7 @@ import WebKit
 /// once rather than on the next navigation. The sheet is the first author
 /// style in the document, so anything the page says afterwards overrides it;
 /// that is what makes these defaults rather than overrides.
+@MainActor
 enum WebFontStyling {
     /// Marks the script so it can be found and replaced among the others.
     private static let marker = "/* kylmora.fonts */"

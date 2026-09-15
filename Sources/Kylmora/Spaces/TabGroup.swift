@@ -53,6 +53,12 @@ final class TabGroup: Identifiable {
     /// no business reloading a row because a poll timer moved.
     var isLive: Bool
 
+    /// Refuses to be deleted. Protects the folder itself -- its name, its
+    /// colour, the fact that it groups these tabs -- not the tabs inside it,
+    /// which carry their own locks. Deleting a folder is one keystroke away
+    /// from a fortnight of filing, and there is no undo for it.
+    var isLocked: Bool
+
     init(
         id: UUID = UUID(),
         name: String,
@@ -62,7 +68,8 @@ final class TabGroup: Identifiable {
         isCollapsed: Bool = false,
         parentID: TabGroup.ID? = nil,
         symbolName: String? = nil,
-        isLive: Bool = false
+        isLive: Bool = false,
+        isLocked: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -73,6 +80,7 @@ final class TabGroup: Identifiable {
         self.parentID = parentID
         self.symbolName = symbolName
         self.isLive = isLive
+        self.isLocked = isLocked
     }
 
     var displayName: String {

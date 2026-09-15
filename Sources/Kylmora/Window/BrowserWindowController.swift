@@ -20,6 +20,9 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     /// Held while shown so it is not deallocated mid-display.
     private var siteSettingsPopover: NSPopover?
     private var shieldPopover: NSPopover?
+    private var translationPopover: NSPopover?
+    private var readingListPopover: NSPopover?
+    private var bookmarkManagerPopover: NSPopover?
     /// The small windows links from other apps open in. Owned here because this
     /// is the browser window they belong to, and it outlives every one of them.
     private lazy var littleArcs = LittleArcCoordinator(session: session)
@@ -27,6 +30,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     /// sidebar slot, which is not available until after `super.init`.
     private var compact: CompactChrome!
     private let gestures = SidebarSwipeController()
+    private var mouseGestureController: MouseGestureController?
     /// Remembered across a detach: a sidebar that is out of the split view has
     /// no width left to read.
     private var lastSidebarWidth = Style.Metrics.sidebarWidth
@@ -40,14 +44,21 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     /// Compact mode has put the window's lights on the page's top bar, which
     /// then has to make room for them.
     private var lightsRideOnTopBar = false
+    private var isZenMode = false
+    private var zenModeSavedState: (mode: SidebarMode, compactEnabled: Bool)?
     /// The top bar's bookmark button, whose glyph follows the page.
     private weak var bookmarkButton: IconButton?
+    private let webPanel: WebPanelViewController
+    private var webPanelSplitItem: NSSplitViewItem?
+    private var tabOverviewController: TabOverviewGridViewController?
+    var isTabOverviewOpen: Bool { tabOverviewController?.isOpen ?? false }
     private var cancellables: Set<AnyCancellable> = []
 
     init(session: BrowserSession) {
         self.session = session
         self.sidebar = SidebarViewController(session: session)
         self.content = WebContentViewController(session: session)
+        self.webPanel = WebPanelViewController(store: .shared)
 
         let window = BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
@@ -64,19 +75,28 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         window.tabbingMode = .disallowed
 
         super.init(window: window)
+        window.delegate = self
 
         buildSplitView()
         wireTopBar()
         wireCommandBar()
         root.host(splitViewController)
         window.contentViewController = root
-        // While the command bar is open the page may not take the keyboard:
-        // a page that autofocuses a field would otherwise swallow the address
+        // While the command bar or tab overview is open the page may not take the keyboard:
+        // a page that autofocuses a field would otherwise swallow the address or filter
         // being typed (see `BrowserWindow`).
         window.focusPolicy = { [weak self] responder in
-            guard let self, self.commandBar.isOpen else { return true }
-            return !Self.isWebContent(responder)
+            guard let self else { return true }
+            if self.commandBar.isOpen || self.isTabOverviewOpen {
+                return !Self.isWebContent(responder)
+            }
+            return true
         }
+
+        content.onPinchToOverview = { [weak self] in
+            self?.showTabOverview()
+        }
+
 
         compact = CompactChrome(
             slot: self,
@@ -90,9 +110,51 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             self?.lightsRideOnTopBar = host == .toolbar
             self?.updateTrafficLights()
         }
-        // Restoring a compact window must not play the entry animation, or
-        // every launch starts with the sidebar sliding away.
         compact.setEnabled(Settings.shared.compactModeEnabled, animated: false)
+        if Settings.shared.sidebarMode == .iconsOnly {
+            setSidebarMode(.iconsOnly)
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .sidebarModeDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.setSidebarMode(Settings.shared.sidebarMode)
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .sidebarPositionDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.applySidebarPosition(animated: true)
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .sidebarHoverDelayDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                var config = self.compact.controller.state.configuration
+                config.hoverDebounce = Settings.shared.sidebarHoverDelay
+                self.compact.setConfiguration(config)
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .zenModeDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.setZenMode(Settings.shared.zenModeEnabled)
+            }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .browserLockStateDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                if let window = self?.window {
+                    BrowserLockManager.shared.attachOverlayIfNeeded(to: window)
+                }
+            }
+        }
         // The sidebar already follows the session for this; it hands the
         // space on so the strip around the page card and the rim around the
         // window match it exactly rather than being computed a second time
@@ -123,12 +185,61 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             guard let self else { return }
             self.littleArcs.open(url: url, in: self.externalLinkSpace)
         }
+        ContextMenuManager.shared.onSearch = { [weak self] query, engine in
+            guard let self, let url = engine.url(for: query) else { return }
+            _ = self.session.newTab(url: url)
+        }
+        ContextMenuManager.shared.onCopyCleanLink = { [weak self] url in
+            guard let self else { return }
+            let cleaned = TrackingParameters.cleaned(url) ?? url
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(cleaned.absoluteString, forType: .string)
+            self.session.showToast?(Toast(
+                symbolName: "link.badge.plus",
+                message: "Clean link copied to clipboard",
+                identity: "clean-link"
+            ))
+        }
+        ContextMenuManager.shared.onOpenGlance = { url, origin, source in
+            GlanceLinkMonitor.shared.onOpenGlance?(url, origin, source)
+        }
+        ContextMenuManager.shared.onOpenLittleArc = { [weak self] url in
+            guard let self else { return }
+            self.littleArcs.open(url: url, in: self.externalLinkSpace)
+        }
+        ContextMenuManager.shared.onOpenSplit = { url in
+            GlanceLinkMonitor.shared.onOpenSplit?(url)
+        }
         content.topBar.onHoverChanged = { [weak self] isHovered in
             self?.isTopBarHovered = isHovered
             self?.updateTrafficLights()
         }
         gestures.delegate = self
         gestures.install()
+
+        webPanel.onOpenInTab = { [weak self] url in
+            guard let self else { return }
+            _ = self.session.newTab(url: url)
+            self.setWebPanelOpen(false, animated: true)
+        }
+        webPanel.onPopOut = { [weak self] webView, panel in
+            guard let self else { return }
+            self.setWebPanelOpen(false, animated: true)
+            FloatingWindowManager.shared.openFloatingWindow(
+                webView: webView,
+                url: nil,
+                panel: panel
+            )
+        }
+        webPanel.onClose = { [weak self] in
+            self?.setWebPanelOpen(false, animated: true)
+        }
+        FloatingWindowManager.shared.onDockWebPanel = { [weak self] webView, panel in
+            guard let self else { return }
+            self.webPanel.adoptWebView(webView, for: panel)
+            self.setWebPanelOpen(true, animated: true)
+        }
+
         observeWindowState()
         observeTitle()
 
@@ -147,6 +258,14 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             window.center()
         }
         window.setFrameAutosaveName("KylmoraMainWindow")
+        self.mouseGestureController = MouseGestureController(windowController: self)
+    }
+
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
+        if let window {
+            BrowserLockManager.shared.attachOverlayIfNeeded(to: window)
+        }
     }
 
     required init?(coder: NSCoder) {
@@ -165,8 +284,25 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         let contentItem = NSSplitViewItem(viewController: content)
         contentItem.minimumThickness = 400
 
-        splitViewController.addSplitViewItem(sidebarItem)
-        splitViewController.addSplitViewItem(contentItem)
+        let webPanelItem = NSSplitViewItem(viewController: webPanel)
+        webPanelItem.minimumThickness = WebPanelStore.minWidth
+        webPanelItem.maximumThickness = WebPanelStore.maxWidth
+        webPanelItem.preferredThicknessFraction = 0.25
+        webPanelItem.canCollapse = true
+        webPanelItem.holdingPriority = .defaultLow
+        webPanelItem.isCollapsed = !WebPanelStore.shared.isOpen
+        self.webPanelSplitItem = webPanelItem
+
+        let isTrailing = Settings.shared.sidebarPosition == .trailing
+        if isTrailing {
+            splitViewController.addSplitViewItem(webPanelItem)
+            splitViewController.addSplitViewItem(contentItem)
+            splitViewController.addSplitViewItem(sidebarItem)
+        } else {
+            splitViewController.addSplitViewItem(sidebarItem)
+            splitViewController.addSplitViewItem(contentItem)
+            splitViewController.addSplitViewItem(webPanelItem)
+        }
         splitViewController.splitView.autosaveName = "KylmoraSidebar"
 
         // Hiding the sidebar leaves the traffic lights on the page's top bar,
@@ -179,15 +315,20 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             let isCollapsed = change.newValue ?? false
             MainActor.assumeIsolated { [weak self] in
                 self?.isSidebarCollapsed = isCollapsed
-                self?.content.cardLeadingInset = isCollapsed
-                    ? Style.Metrics.elementSeparation
-                    : 0
+                self?.updateCardInsets()
                 self?.updateTrafficLights()
             }
         }
         // The autosaved position wins over the item's thickness bounds, so the
         // measured width has to be asked for explicitly.
-        splitViewController.splitView.setPosition(Style.Metrics.sidebarWidth, ofDividerAt: 0)
+        if isTrailing {
+            let width = splitViewController.view.bounds.width
+            if width > Style.Metrics.sidebarWidth {
+                splitViewController.splitView.setPosition(width - Style.Metrics.sidebarWidth, ofDividerAt: 0)
+            }
+        } else {
+            splitViewController.splitView.setPosition(Style.Metrics.sidebarWidth, ofDividerAt: 0)
+        }
     }
 
     /// The top bar repeats commands the menu already owns, so it calls the same
@@ -222,6 +363,15 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         var actions = [
             TopBarAction(symbolName: "checkmark.shield.fill", label: "Shield") { [weak self] in
                 self?.showShieldPopover()
+            },
+            TopBarAction(symbolName: "translate", label: "Translate Page") { [weak self] in
+                self?.toggleTranslationPopover(nil)
+            },
+            TopBarAction(symbolName: "doc.plaintext", label: "Reader Mode") { [weak self] in
+                self?.toggleReaderMode(nil)
+            },
+            TopBarAction(symbolName: "eyeglasses", label: "Reading List") { [weak self] in
+                self?.toggleReadingListPopover(nil)
             },
             TopBarAction(symbolName: "gearshape.fill", label: "Site Settings") { [weak self] in
                 self?.showSiteSettings()
@@ -259,10 +409,26 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         let url = tab.displayURL
         let menu = NSMenu()
 
-        let reader = NSMenuItem(title: "Reader Mode", action: #selector(togglePageReaderMode), keyEquivalent: "")
+        let reader = NSMenuItem(title: "Reader Mode", action: #selector(toggleReaderMode(_:)), keyEquivalent: "")
         reader.target = self
-        reader.state = SiteSettings.shared.resolve(.readerMode, for: url) == "on" ? .on : .off
         menu.addItem(reader)
+
+        let domainReader = NSMenuItem(title: "Always Use Reader on This Domain", action: #selector(toggleDomainReaderMode(_:)), keyEquivalent: "")
+        domainReader.target = self
+        domainReader.state = SiteSettings.shared.resolve(.readerMode, for: url) == "on" ? .on : .off
+        menu.addItem(domainReader)
+
+        let addReadingList = NSMenuItem(title: "Add to Reading List", action: #selector(addToReadingList(_:)), keyEquivalent: "")
+        addReadingList.target = self
+        menu.addItem(addReadingList)
+
+        let showReadingList = NSMenuItem(title: "Show Reading List\u{2026}", action: #selector(toggleReadingListPopover(_:)), keyEquivalent: "")
+        showReadingList.target = self
+        menu.addItem(showReadingList)
+
+        let readAloud = NSMenuItem(title: "Read Aloud (Text to Speech)", action: #selector(readAloudCurrentPage(_:)), keyEquivalent: "")
+        readAloud.target = self
+        menu.addItem(readAloud)
 
         menu.addItem(.separator())
 
@@ -328,14 +494,70 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         openStandaloneItem.target = self
         menu.addItem(openStandaloneItem)
 
+        menu.addItem(.separator())
+
+        let translateItem = NSMenuItem(title: "Translate Page\u{2026}", action: #selector(toggleTranslationPopover(_:)), keyEquivalent: "t")
+        translateItem.keyEquivalentModifierMask = [.command, .option]
+        translateItem.target = self
+        menu.addItem(translateItem)
+
+        if PageTranslator.shared.state(for: tab.id).isTranslated {
+            let restoreItem = NSMenuItem(title: "Show Original Page", action: #selector(restoreOriginalActivePage(_:)), keyEquivalent: "")
+            restoreItem.target = self
+            menu.addItem(restoreItem)
+        }
+
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.maxY + 4), in: anchor)
     }
 
-    @objc private func togglePageReaderMode() {
+    @objc func toggleReaderMode(_ sender: Any?) {
+        guard let webView = session.activeTab?.currentWebView else { return }
+        ReaderModeController.shared.toggleReader(in: webView)
+    }
+
+    @objc func toggleDomainReaderMode(_ sender: Any?) {
         guard let url = session.activeTab?.displayURL, let host = url.host() else { return }
         let now = SiteSettings.shared.resolve(.readerMode, for: url)
-        SiteSettings.shared.update { $0.set(now == "on" ? "off" : "on", for: host, in: .readerMode) }
-        session.activeTab?.reload()
+        let newSetting = now == "on" ? "off" : "on"
+        SiteSettings.shared.update { $0.set(newSetting, for: host, in: .readerMode) }
+        session.showToast?(Toast(
+            symbolName: "doc.plaintext",
+            message: newSetting == "on" ? "Always use Reader on \(host)" : "Reader not forced on \(host)",
+            identity: "reader-mode-domain"
+        ))
+    }
+
+    @objc func addToReadingList(_ sender: Any?) {
+        guard let tab = session.activeTab else { return }
+        let url = tab.displayURL
+        let title = tab.displayTitle
+        ReadingListStore.shared.add(url: url, title: title)
+        session.showToast?(Toast(
+            symbolName: "eyeglasses",
+            message: "Added to Reading List",
+            identity: "reading-list-added"
+        ))
+    }
+
+    @objc func toggleReadingListPopover(_ sender: Any?) {
+        if let pop = readingListPopover, pop.isShown {
+            pop.performClose(nil)
+            readingListPopover = nil
+            return
+        }
+        guard let anchor = content.topBar.actionButton(labelled: "Reading List") ?? content.topBar.actionButton(labelled: "Page Menu") else { return }
+        let popover = ReadingListPopover(session: session)
+        readingListPopover = popover
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+    }
+
+    @objc func readAloudCurrentPage(_ sender: Any?) {
+        guard let webView = session.activeTab?.currentWebView else { return }
+        ReaderModeController.shared.speakOrToggle(in: webView)
+    }
+
+    @objc private func togglePageReaderMode() {
+        toggleReaderMode(nil)
     }
 
     @objc private func selectSearchEngine(_ sender: NSMenuItem) {
@@ -386,6 +608,64 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         popover.contentViewController = shieldVC
         shieldPopover = popover
         popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+    }
+
+    // MARK: - Translation
+
+    @objc func toggleTranslationPopover(_ sender: Any?) {
+        if let pop = translationPopover, pop.isShown {
+            pop.performClose(nil)
+            translationPopover = nil
+            return
+        }
+        guard let tab = session.activeTab,
+              let anchor = content.topBar.actionButton(labelled: "Translate Page") ?? content.topBar.actionButton(labelled: "Page Menu") else {
+            return
+        }
+        showTranslationPopover(for: tab, relativeTo: anchor)
+    }
+
+    func showTranslationPopover(for tab: Tab, relativeTo anchor: NSView) {
+        let popover = NSPopover()
+        popover.behavior = .transient
+        let transVC = TranslationPopoverViewController(
+            tab: tab,
+            onTranslate: { [weak self, weak popover] targetLang in
+                guard let self, let webView = tab.currentWebView else { return }
+                Task {
+                    _ = try? await PageTranslator.shared.translatePage(in: webView, for: tab.id, targetLanguage: targetLang)
+                    self.content.updateTopBar()
+                    (popover?.contentViewController as? TranslationPopoverViewController)?.refresh()
+                }
+            },
+            onRestore: { [weak self, weak popover] in
+                guard let self, let webView = tab.currentWebView else { return }
+                Task {
+                    _ = await PageTranslator.shared.restoreOriginal(in: webView, for: tab.id)
+                    self.content.updateTopBar()
+                    (popover?.contentViewController as? TranslationPopoverViewController)?.refresh()
+                }
+            }
+        )
+        popover.contentViewController = transVC
+        translationPopover = popover
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+    }
+
+    @objc func translateActivePage(_ sender: Any?) {
+        guard let tab = session.activeTab, let webView = tab.currentWebView else { return }
+        Task {
+            _ = try? await PageTranslator.shared.translatePage(in: webView, for: tab.id)
+            self.content.updateTopBar()
+        }
+    }
+
+    @objc func restoreOriginalActivePage(_ sender: Any?) {
+        guard let tab = session.activeTab, let webView = tab.currentWebView else { return }
+        Task {
+            _ = await PageTranslator.shared.restoreOriginal(in: webView, for: tab.id)
+            self.content.updateTopBar()
+        }
     }
 
     @objc func startElementPickerFromMenu(_ sender: Any?) {
@@ -758,7 +1038,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     /// Ours rather than `NSSplitViewController.toggleSidebar`, which only acts
     /// on an item created with sidebar behaviour.
     @objc func toggleKylmoraSidebar(_ sender: Any?) {
-        guard let item = splitViewController.splitViewItems.first else { return }
+        guard let item = splitViewController.splitViewItem(for: sidebar) else { return }
         item.animator().isCollapsed.toggle()
     }
 
@@ -770,9 +1050,42 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             sidebar.setArchiveVisible(false)
             return
         }
-        splitViewController.splitViewItems.first?.animator().isCollapsed = false
+        splitViewController.splitViewItem(for: sidebar)?.animator().isCollapsed = false
         sidebar.setArchiveVisible(true)
     }
+
+    // MARK: - Safari-Style Tab Overview Grid
+
+    @objc func toggleTabOverview(_ sender: Any?) {
+        if isTabOverviewOpen {
+            hideTabOverview()
+        } else {
+            showTabOverview()
+        }
+    }
+
+    func showTabOverview() {
+        if let activeTab = session.activeTab, let webView = activeTab.currentWebView, webView.bounds.width > 0 {
+            Task {
+                _ = await TabSnapshotStore.shared.capture(tab: activeTab)
+            }
+        }
+
+        if tabOverviewController == nil {
+            let controller = TabOverviewGridViewController(session: session)
+            controller.onDismissHandler = { [weak self] in
+                self?.tabOverviewController = nil
+            }
+            tabOverviewController = controller
+        }
+
+        tabOverviewController?.present(in: content.view)
+    }
+
+    func hideTabOverview() {
+        tabOverviewController?.dismissOverview()
+    }
+
 
     @objc func openCommandBar(_ sender: Any?) {
         commandBar.toggle()
@@ -803,6 +1116,11 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     @objc func toggleCompactMode(_ sender: Any?) {
         compact.toggle()
         Settings.shared.compactModeEnabled = compact.controller.state.isEnabled
+        if compact.controller.state.isEnabled {
+            Settings.shared.sidebarMode = .compact
+        } else {
+            Settings.shared.sidebarMode = .expanded
+        }
     }
 
     /// Pins the floating sidebar open. The only reveal reason no timer clears.
@@ -817,6 +1135,180 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         configuration.hidesToolbar.toggle()
         Settings.shared.compactModeConfiguration = configuration
         compact.controller.setConfiguration(configuration)
+    }
+
+    // MARK: - Sidebar Modes, Positioning & Zen Mode (F-13)
+
+    @objc func toggleIconsOnlySidebar(_ sender: Any?) {
+        if Settings.shared.sidebarMode == .iconsOnly {
+            setSidebarMode(.expanded)
+        } else {
+            setSidebarMode(.iconsOnly)
+        }
+    }
+
+    @objc func toggleSidebarPosition(_ sender: Any?) {
+        let current = Settings.shared.sidebarPosition
+        setSidebarPosition(current == .leading ? .trailing : .leading)
+    }
+
+    @objc func setSidebarPositionFromMenu(_ sender: NSMenuItem) {
+        if let pos = sender.representedObject as? SidebarPosition {
+            setSidebarPosition(pos)
+        }
+    }
+
+    func setSidebarPosition(_ position: SidebarPosition) {
+        Settings.shared.sidebarPosition = position
+        applySidebarPosition(animated: true)
+    }
+
+    func applySidebarPosition(animated: Bool = false) {
+        let isTrailing = Settings.shared.sidebarPosition == .trailing
+        let edge: CompactSidebarEdge = isTrailing ? .trailing : .leading
+
+        // 1. Update compact configuration & overlay
+        var configuration = compact.controller.state.configuration
+        configuration.sidebarEdge = edge
+        compact.setConfiguration(configuration)
+
+        // 2. If sidebar is in split view, reorder items if needed
+        if !compact.controller.state.isEnabled,
+           let sidebarItem = splitViewController.splitViewItem(for: sidebar) {
+            let currentIndex = splitViewController.splitViewItems.firstIndex(where: { $0 === sidebarItem })
+            let targetIndex = isTrailing ? (splitViewController.splitViewItems.count - 1) : 0
+            if let current = currentIndex, current != targetIndex {
+                splitViewController.removeSplitViewItem(sidebarItem)
+                splitViewController.insertSplitViewItem(sidebarItem, at: targetIndex)
+                if isTrailing {
+                    let width = splitViewController.view.bounds.width
+                    if width > lastSidebarWidth {
+                        splitViewController.splitView.setPosition(width - lastSidebarWidth, ofDividerAt: 0)
+                    }
+                } else {
+                    splitViewController.splitView.setPosition(lastSidebarWidth, ofDividerAt: 0)
+                }
+            }
+        }
+
+        // Web Panel stays on the opposite edge of the sidebar
+        if let webPanelItem = splitViewController.splitViewItem(for: webPanel) {
+            let targetWebPanelIndex = isTrailing ? 0 : (splitViewController.splitViewItems.count - 1)
+            let currentWebPanelIndex = splitViewController.splitViewItems.firstIndex(where: { $0 === webPanelItem })
+            if let current = currentWebPanelIndex, current != targetWebPanelIndex {
+                splitViewController.removeSplitViewItem(webPanelItem)
+                splitViewController.insertSplitViewItem(webPanelItem, at: targetWebPanelIndex)
+            }
+        }
+
+        // 3. Update insets and traffic lights
+        updateCardInsets()
+        updateTrafficLights()
+    }
+
+    @objc func setSidebarModeFromMenu(_ sender: NSMenuItem) {
+        if let mode = sender.representedObject as? SidebarMode {
+            setSidebarMode(mode)
+        }
+    }
+
+    func setSidebarMode(_ mode: SidebarMode) {
+        Settings.shared.sidebarMode = mode
+        switch mode {
+        case .expanded:
+            if isZenMode { setZenMode(false) }
+            var config = Settings.shared.compactModeConfiguration
+            config.iconsOnlyCollapsed = false
+            config.hidesSidebar = false
+            compact.setConfiguration(config)
+            compact.setEnabled(false, animated: true)
+            if let item = splitViewController.splitViewItem(for: sidebar) {
+                item.animator().isCollapsed = false
+            }
+        case .iconsOnly:
+            if isZenMode { setZenMode(false) }
+            var config = Settings.shared.compactModeConfiguration
+            config.iconsOnlyCollapsed = true
+            config.hidesSidebar = true
+            compact.setConfiguration(config)
+            compact.setEnabled(true, animated: true)
+        case .compact:
+            if isZenMode { setZenMode(false) }
+            var config = Settings.shared.compactModeConfiguration
+            config.iconsOnlyCollapsed = false
+            config.hidesSidebar = true
+            compact.setConfiguration(config)
+            compact.setEnabled(true, animated: true)
+        case .hidden:
+            if compact.controller.state.isEnabled {
+                compact.setEnabled(false, animated: false)
+            }
+            if let item = splitViewController.splitViewItem(for: sidebar) {
+                item.animator().isCollapsed = true
+            }
+        }
+        updateCardInsets()
+        updateTrafficLights()
+    }
+
+    @objc func toggleZenMode(_ sender: Any?) {
+        setZenMode(!isZenMode)
+    }
+
+    func setZenMode(_ enabled: Bool) {
+        guard enabled != isZenMode else { return }
+        isZenMode = enabled
+        Settings.shared.zenModeEnabled = enabled
+        if enabled {
+            zenModeSavedState = (Settings.shared.sidebarMode, compact.controller.state.isEnabled)
+            // Fully collapse sidebar
+            var config = compact.controller.state.configuration
+            config.hidesSidebar = true
+            config.iconsOnlyCollapsed = false
+            compact.setConfiguration(config)
+            compact.setEnabled(true, animated: true)
+
+            // Hide top bar
+            content.topBar.animator().alphaValue = 0
+            content.topBar.isHidden = true
+            updateCardInsets()
+            updateTrafficLights()
+        } else {
+            content.topBar.isHidden = false
+            content.topBar.animator().alphaValue = 1
+            if let prev = zenModeSavedState {
+                setSidebarMode(prev.mode)
+                zenModeSavedState = nil
+            } else {
+                setSidebarMode(.expanded)
+            }
+            updateCardInsets()
+            updateTrafficLights()
+        }
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        if isZenMode {
+            setZenMode(false)
+            return
+        }
+        super.cancelOperation(sender)
+    }
+
+    private func updateCardInsets() {
+        let mode = Settings.shared.sidebarMode
+        let isTrailing = Settings.shared.sidebarPosition == .trailing
+        if isZenMode {
+            content.cardLeadingInset = 0
+            return
+        }
+        if mode == .iconsOnly && !compact.controller.state.isEnabled {
+            content.cardLeadingInset = isTrailing ? 0 : 60
+        } else if isSidebarCollapsed {
+            content.cardLeadingInset = Style.Metrics.elementSeparation
+        } else {
+            content.cardLeadingInset = isTrailing ? Style.Metrics.elementSeparation : 0
+        }
     }
 
     /// Hides the window controls while the sidebar is hidden, and brings them
@@ -880,9 +1372,17 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
 
     private func updateTrafficLights() {
         guard let window else { return }
-        if lightsRideOnTopBar {
+        let isTrailing = Settings.shared.sidebarPosition == .trailing
+        if isZenMode {
+            for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+                window.standardWindowButton(type)?.alphaValue = 0
+            }
+            return
+        }
+        if lightsRideOnTopBar || isTrailing {
             // Compact mode has re-parented the lights onto the bar itself,
-            // eight points in; the bar's own buttons start after them.
+            // or the sidebar is on the trailing (right) edge so the window's
+            // top-left traffic lights ride above the content top bar.
             for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
                 window.standardWindowButton(type)?.alphaValue = 1
             }
@@ -961,6 +1461,9 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     @objc func splitStacked(_ sender: Any?) { beginSplit(.stacked) }
     @objc func splitGrid(_ sender: Any?) { beginSplit(.grid) }
     @objc func unsplit(_ sender: Any?) { session.unsplit() }
+    @objc func toggleStickyPane(_ sender: Any?) { session.stickActivePane() }
+    @objc func undoSplit(_ sender: Any?) { session.undoSplit() }
+    @objc func equalizeSplitPanes(_ sender: Any?) { session.equalizeSplit() }
 
     private func beginSplit(_ grid: SplitLayout.Grid) {
         let tabs = session.activeSpace.tabs
@@ -974,6 +1477,27 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     }
     @objc func reopenClosedTab(_ sender: Any?) {
         session.reopenClosedTab()
+    }
+
+    @objc func reopenClosedTabFromMenu(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? UUID {
+            session.reopenClosedTab(id: id)
+        } else {
+            session.reopenClosedTab()
+        }
+    }
+
+    @objc func reopenClosedWindowFromMenu(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        session.reopenClosedWindow(id: id)
+    }
+
+    @objc func reopenAllClosedTabs(_ sender: Any?) {
+        session.reopenAllClosedTabs()
+    }
+
+    @objc func clearRecentlyClosed(_ sender: Any?) {
+        session.clearRecentlyClosed()
     }
 
     @objc func newTab(_ sender: Any?) {
@@ -992,7 +1516,11 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             session.closeTabs(multiSelected)
             return
         }
-        guard let tab = session.activeTab, TabClosing.confirm(closing: tab) else { return }
+        guard let tab = session.activeTab else { return }
+        // The mis-hit Cmd-W is exactly what the lock is for, so this is the
+        // path that has to say something rather than appear to do nothing.
+        guard !tab.isLocked else { return session.reportCloseRefused(tab) }
+        guard TabClosing.confirm(closing: tab) else { return }
         session.closeTab(tab)
     }
 
@@ -1000,16 +1528,231 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         session.closeAllTabs(in: session.activeSpace)
     }
 
+    @objc func clearCurrentSpaceData(_ sender: Any?) {
+        let space = session.activeSpace
+        let alert = NSAlert()
+        alert.messageText = "Clear Data for \"\(space.name)\"?"
+        alert.informativeText = "This will delete cookies, cache, local storage, and database records for this space. Open tabs in this space will be reloaded."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Clear Space Data")
+        alert.addButton(withTitle: "Cancel")
+        if let button = alert.buttons.first {
+            button.hasDestructiveAction = true
+        }
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else { return }
+
+        Task { [weak self] in
+            guard let self else { return }
+            await self.session.clearSpaceData(for: space)
+        }
+    }
+
+    @objc func togglePictureInPicture(_ sender: Any?) {
+        guard let tab = session.activeTab else { return }
+        if tab.isInPictureInPicture {
+            tab.exitPictureInPicture()
+        } else {
+            tab.requestPictureInPicture()
+        }
+    }
+
+    @objc func toggleMuteActiveTab(_ sender: Any?) {
+        session.activeTab?.toggleMute()
+    }
+
+    @objc func toggleNativeVideoPlayer(_ sender: Any?) {
+        guard let url = session.activeTab?.url, let host = url.host() else { return }
+        let current = SiteSettings.shared.usesNativeVideoPlayer(for: url)
+        let next = current ? "off" : "on"
+        SiteSettings.shared.update { $0.set(next, for: host, in: .nativeVideoPlayer) }
+        session.showToast?(Toast(
+            symbolName: "play.rectangle",
+            message: next == "on" ? "Native Video Player enabled for \(host)" : "Native Video Player disabled for \(host)",
+            identity: "native-video-\(host)"
+        ))
+    }
+
+    @objc func toggleAntiFingerprinting(_ sender: Any?) {
+        guard let url = session.activeTab?.url, let host = url.host() else {
+            Settings.shared.antiFingerprintingEnabled.toggle()
+            let enabled = Settings.shared.antiFingerprintingEnabled
+            session.showToast?(Toast(
+                symbolName: enabled ? "shield.lefthalf.filled" : "shield.slash",
+                message: enabled ? "Anti-Fingerprinting protection enabled globally" : "Anti-Fingerprinting protection disabled globally",
+                identity: "anti-fingerprinting-global"
+            ))
+            return
+        }
+        let current = SiteSettings.shared.usesAntiFingerprinting(for: url)
+        let next = current ? "off" : "on"
+        SiteSettings.shared.update { $0.set(next, for: host, in: .antiFingerprinting) }
+        session.showToast?(Toast(
+            symbolName: next == "on" ? "shield.lefthalf.filled" : "shield.slash",
+            message: next == "on" ? "Anti-Fingerprinting enabled for \(host)" : "Anti-Fingerprinting disabled for \(host)",
+            identity: "anti-fingerprinting-\(host)"
+        ))
+    }
+
+    @objc func showWebInspector(_ sender: Any?) {
+        guard !EnterprisePolicyManager.shared.isDeveloperToolsDisabled else {
+            NSSound.beep()
+            return
+        }
+        guard let tab = session.activeTab else { return }
+        tab.showWebInspector()
+    }
+
+    @objc func showJavaScriptConsole(_ sender: Any?) {
+        guard !EnterprisePolicyManager.shared.isDeveloperToolsDisabled else {
+            NSSound.beep()
+            return
+        }
+        guard let tab = session.activeTab else { return }
+        tab.showJavaScriptConsole()
+    }
+
+    @objc func inspectElement(_ sender: Any?) {
+        guard !EnterprisePolicyManager.shared.isDeveloperToolsDisabled else {
+            NSSound.beep()
+            return
+        }
+        guard let tab = session.activeTab else { return }
+        tab.showWebInspector()
+    }
+
+    @objc func showEnterprisePolicies(_ sender: Any?) {
+        guard let window else { return }
+        let controller = EnterprisePoliciesViewController()
+        let sheetWindow = NSWindow(contentViewController: controller)
+        sheetWindow.styleMask = [.titled, .closable]
+        sheetWindow.title = "Enterprise Policies"
+        window.beginSheet(sheetWindow) { _ in }
+    }
+
+    @objc func emptyCaches(_ sender: Any?) {
+        let types = WKWebsiteDataStore.allWebsiteDataTypes().filter { $0.contains("DiskCache") || $0.contains("MemoryCache") }
+        WKWebsiteDataStore.default().removeData(ofTypes: Set(types), modifiedSince: .distantPast) { [weak self] in
+            Task { @MainActor in
+                self?.session.activeTab?.reload()
+            }
+        }
+    }
+
+    @objc func captureVisibleArea(_ sender: Any?) {
+        performScreenshot(scope: .visible, destination: .saveToDownloads())
+    }
+
+    @objc func copyVisibleAreaToClipboard(_ sender: Any?) {
+        performScreenshot(scope: .visible, destination: .copyToClipboard)
+    }
+
+    @objc func captureFullPage(_ sender: Any?) {
+        performScreenshot(scope: .fullPage, destination: .saveToDownloads())
+    }
+
+    @objc func copyFullPageToClipboard(_ sender: Any?) {
+        performScreenshot(scope: .fullPage, destination: .copyToClipboard)
+    }
+
+    func performScreenshot(scope: ScreenshotScope, destination: ScreenshotDestination) {
+        guard let tab = session.activeTab, let webView = tab.currentWebView else { return }
+        ScreenshotService.flashFeedback(in: webView)
+        ScreenshotService.playShutterSound()
+
+        Task { @MainActor in
+            do {
+                let image = try await ScreenshotService.capture(webView: webView, scope: scope)
+                switch destination {
+                case .saveToDownloads(let customDir):
+                    let fileURL = try ScreenshotService.saveImageToDownloads(
+                        image: image,
+                        tabTitle: tab.displayTitle,
+                        url: tab.url,
+                        customDirectory: customDir
+                    )
+                    session.showToast?(Toast(
+                        symbolName: "camera.fill",
+                        message: scope == .fullPage ? "Full page screenshot saved to Downloads" : "Screenshot saved to Downloads",
+                        action: Toast.Action(title: "Show") {
+                            NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+                        }
+                    ))
+                case .copyToClipboard:
+                    ScreenshotService.copyImageToClipboard(image: image)
+                    session.showToast?(Toast(
+                        symbolName: "doc.on.clipboard.fill",
+                        message: scope == .fullPage ? "Full page screenshot copied to clipboard" : "Screenshot copied to clipboard"
+                    ))
+                }
+            } catch {
+                session.showToast?(Toast(
+                    symbolName: "exclamationmark.triangle",
+                    message: "Could not capture screenshot"
+                ))
+            }
+        }
+    }
+
     private func executeCommand(_ id: String) {
         switch id {
+        case "capture-visible-area":
+            captureVisibleArea(nil)
+        case "copy-visible-area":
+            copyVisibleAreaToClipboard(nil)
+        case "capture-full-page":
+            captureFullPage(nil)
+        case "copy-full-page":
+            copyFullPageToClipboard(nil)
+        case "toggle-mouse-gestures":
+            Settings.shared.mouseGesturesEnabled.toggle()
+            let enabled = Settings.shared.mouseGesturesEnabled
+            session.showToast?(Toast(
+                symbolName: enabled ? "hand.draw.fill" : "hand.draw",
+                message: enabled ? "Mouse gestures enabled" : "Mouse gestures disabled"
+            ))
+        case "show-link-hints":
+            showLinkHints(nil)
+        case "show-link-hints-new-tab":
+            showLinkHintsNewTab(nil)
+        case "toggle-vim-bindings":
+            toggleVimBindings(nil)
+        case "check-for-updates":
+            UpdateController.shared.checkForUpdates(userInitiated: true, in: window)
+        case "lock-browser":
+            BrowserLockManager.shared.lock(animated: true)
+        case "task-manager":
+            openTaskManager(nil)
+        case "clear-space-data":
+            clearCurrentSpaceData(nil)
+        case "pip-video":
+            togglePictureInPicture(nil)
+        case "toggle-mute-tab":
+            toggleMuteActiveTab(nil)
+        case "toggle-native-video":
+            toggleNativeVideoPlayer(nil)
+        case "toggle-anti-fingerprinting":
+            toggleAntiFingerprinting(nil)
+        case "show-web-inspector":
+            showWebInspector(nil)
+        case "show-js-console":
+            showJavaScriptConsole(nil)
+        case "inspect-element":
+            inspectElement(nil)
+        case "empty-caches":
+            emptyCaches(nil)
         case "new-tab":
             _ = session.newTab()
         case "close-tab":
             let multiSelected = sidebar.selectedTabs
             if multiSelected.count > 1 {
                 session.closeTabs(multiSelected)
-            } else if let tab = session.activeTab, TabClosing.confirm(closing: tab) {
-                session.closeTab(tab)
+            } else if let tab = session.activeTab {
+                if tab.isLocked {
+                    session.reportCloseRefused(tab)
+                } else if TabClosing.confirm(closing: tab) {
+                    session.closeTab(tab)
+                }
             }
         case "close-all-tabs-in-space":
             closeAllTabsInCurrentSpace(nil)
@@ -1017,8 +1760,12 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             let multiSelected = sidebar.selectedTabs
             if !multiSelected.isEmpty {
                 session.closeTabs(multiSelected)
-            } else if let tab = session.activeTab, TabClosing.confirm(closing: tab) {
-                session.closeTab(tab)
+            } else if let tab = session.activeTab {
+                if tab.isLocked {
+                    session.reportCloseRefused(tab)
+                } else if TabClosing.confirm(closing: tab) {
+                    session.closeTab(tab)
+                }
             }
         case "reload-selected-tabs":
             let multiSelected = sidebar.selectedTabs
@@ -1029,6 +1776,10 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             }
         case "reopen-closed-tab":
             _ = session.reopenClosedTab()
+        case "reopen-all-closed-tabs":
+            _ = session.reopenAllClosedTabs()
+        case "clear-recently-closed":
+            session.clearRecentlyClosed()
         case "duplicate-tab":
             duplicateActiveTab(nil)
         case "pin-tab":
@@ -1053,6 +1804,12 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             splitGrid(nil)
         case "unsplit":
             unsplit(nil)
+        case "toggle-sticky-pane":
+            toggleStickyPane(nil)
+        case "undo-split":
+            undoSplit(nil)
+        case "equalize-split":
+            equalizeSplitPanes(nil)
         case "reload-page":
             reloadPage(nil)
         case "stop-loading":
@@ -1063,8 +1820,16 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             goForward(nil)
         case "find-in-page":
             performFind(nil)
-        case "reader-mode":
-            togglePageReaderMode()
+        case "reader-mode", "toggle-reader-mode":
+            toggleReaderMode(nil)
+        case "always-use-reader-on-domain":
+            toggleDomainReaderMode(nil)
+        case "add-to-reading-list":
+            addToReadingList(nil)
+        case "show-reading-list", "reading-list":
+            toggleReadingListPopover(nil)
+        case "read-aloud":
+            readAloudCurrentPage(nil)
         case "zoom-in":
             stepZoom(by: 1)
         case "zoom-out":
@@ -1077,12 +1842,16 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             toggleCompactMode(nil)
         case "toggle-archive":
             toggleArchive(nil)
+        case "show-tab-overview":
+            toggleTabOverview(nil)
         case "full-screen":
             window?.toggleFullScreen(nil)
         case "downloads":
             DownloadManager.shared.showList()
         case "settings":
             (NSApp.delegate as? AppDelegate)?.showSettings(nil)
+        case "show-enterprise-policies":
+            showEnterprisePolicies(nil)
         case "sync-settings":
             (NSApp.delegate as? AppDelegate)?.showSyncSettings(nil)
         case "sync-now":
@@ -1095,12 +1864,54 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             (NSApp.delegate as? AppDelegate)?.importArcSidebar(nil)
         case "clear-history":
             session.clearHistory()
+        case "search-bookmarks", "bookmark-manager":
+            openBookmarkManager(nil)
+        case "search-history-full-text", "history-search":
+            openHistorySearch(nil)
+        case "cleanup-duplicate-bookmarks":
+            cleanupDuplicateBookmarks(nil)
         case "block-element":
             startElementPicker()
         case "toggle-content-blocking":
             toggleCurrentSiteContentBlocking()
         case "blocking-settings":
             showAdvancedBlockingSettings()
+        case "toggle-block-hostile-behaviour":
+            Settings.shared.blockHostilePageBehaviour.toggle()
+            let enabled = Settings.shared.blockHostilePageBehaviour
+            session.showToast?(Toast(
+                symbolName: enabled ? "hand.raised.slash.fill" : "hand.raised.slash",
+                message: enabled ? "Hostile behaviour protection enabled" : "Hostile behaviour protection disabled"
+            ))
+        case "open-icloud-inbox":
+            ICloudInboxCoordinator.shared.revealInboxInFinder()
+        case "export-iphone-shortcut":
+            let panel = NSSavePanel()
+            panel.title = "Export Apple Shortcut for iPhone / iPad"
+            panel.nameFieldStringValue = "Send to Kylmora.shortcut"
+            if let window {
+                panel.beginSheetModal(for: window) { response in
+                    guard response == .OK, let url = panel.url else { return }
+                    try? AppleShortcutHelper.exportShortcutBundle(to: url.deletingLastPathComponent())
+                }
+            }
+        case "process-icloud-inbox":
+            ICloudInboxCoordinator.shared.processInboxNow()
+            session.showToast?(Toast(symbolName: "arrow.clockwise.icloud", message: "Checked iCloud Inbox"))
+        case "toggle-web-panel":
+            toggleWebPanel(nil)
+        case "pop-out-web-panel":
+            popOutWebPanel(nil)
+        case "add-web-panel":
+            setWebPanelOpen(true, animated: true)
+            webPanel.showAddPanelPrompt()
+        case "toggle-always-on-top":
+            toggleAlwaysOnTop(nil)
+        case "open-floating-window":
+            openFloatingWindow(nil)
+        case "open-scratchpad":
+            WebPanelStore.shared.select(id: WebPanel.scratchpad.id)
+            setWebPanelOpen(true, animated: true)
         case "boost-site":
             openBoostEditor()
         case "toggle-dark-mode":
@@ -1111,6 +1922,26 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             installCurrentSiteAsWebApp(nil)
         case "open-standalone-app":
             openCurrentSiteAsStandaloneWebApp(nil)
+        case "translate-page":
+            toggleTranslationPopover(nil)
+        case "show-original-page":
+            restoreOriginalActivePage(nil)
+        case "toggle-zen-mode":
+            toggleZenMode(nil)
+        case "toggle-sidebar-position":
+            toggleSidebarPosition(nil)
+        case "sidebar-position-left":
+            setSidebarPosition(.leading)
+        case "sidebar-position-right":
+            setSidebarPosition(.trailing)
+        case "sidebar-mode-expanded":
+            setSidebarMode(.expanded)
+        case "sidebar-mode-icons-only":
+            setSidebarMode(.iconsOnly)
+        case "sidebar-mode-compact":
+            setSidebarMode(.compact)
+        case "toggle-icons-only":
+            toggleIconsOnlySidebar(nil)
         default:
             break
         }
@@ -1146,6 +1977,26 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     @objc func selectPreviousTab(_ sender: Any?) { session.selectTab(offsetBy: -1) }
     @objc func selectNextSpace(_ sender: Any?) { switchSpace(by: 1, wraps: Settings.shared.spaceSwitchWraps) }
     @objc func selectPreviousSpace(_ sender: Any?) { switchSpace(by: -1, wraps: Settings.shared.spaceSwitchWraps) }
+
+    @objc func showLinkHints(_ sender: Any?) {
+        LinkHintsCoordinator.shared.showHints(in: session.activeTab?.currentWebView, openInNewTab: false)
+    }
+
+    @objc func showLinkHintsNewTab(_ sender: Any?) {
+        LinkHintsCoordinator.shared.showHints(in: session.activeTab?.currentWebView, openInNewTab: true)
+    }
+
+    @objc func toggleVimBindings(_ sender: Any?) {
+        Settings.shared.vimBindingsEnabled.toggle()
+        let enabled = Settings.shared.vimBindingsEnabled
+        if enabled {
+            VimNavigationCoordinator.shared.enableBindings(in: session.activeTab?.currentWebView)
+        }
+        session.showToast?(Toast(
+            symbolName: enabled ? "keyboard.fill" : "keyboard",
+            message: enabled ? "Vim navigation enabled" : "Vim navigation disabled"
+        ))
+    }
 
     /// How many Little Arc windows are open. The quit warning counts them: a
     /// little window holds a page the user has not kept, and quitting discards
@@ -1257,12 +2108,148 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         session.clearHistory()
     }
 
+    @objc func openBookmarkManager(_ sender: Any?) {
+        if let pop = bookmarkManagerPopover, pop.isShown {
+            pop.performClose(nil)
+            bookmarkManagerPopover = nil
+            return
+        }
+        guard let anchor = bookmarkButton ?? content.topBar.actionButton(labelled: "Page Menu") ?? content.topBar.actionButton(labelled: "Site Settings") else { return }
+        let popover = BookmarkManagerPopover(session: session, initialMode: .bookmarks)
+        bookmarkManagerPopover = popover
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+    }
+
+    @objc func openHistorySearch(_ sender: Any?) {
+        if let pop = bookmarkManagerPopover, pop.isShown {
+            pop.performClose(nil)
+            bookmarkManagerPopover = nil
+            return
+        }
+        guard let anchor = content.topBar.actionButton(labelled: "Find in Page") ?? content.topBar.actionButton(labelled: "Page Menu") else { return }
+        let popover = BookmarkManagerPopover(session: session, initialMode: .historyFTS)
+        bookmarkManagerPopover = popover
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+    }
+
+    @objc func cleanupDuplicateBookmarks(_ sender: Any?) {
+        Task {
+            let removed = await session.cleanupDuplicateBookmarks()
+            if removed > 0 {
+                session.showToast?(Toast(
+                    symbolName: "sparkles",
+                    message: "Removed \(removed) duplicate bookmark\(removed == 1 ? "" : "s")",
+                    identity: "duplicate-bookmarks-cleanup"
+                ))
+            } else {
+                session.showToast?(Toast(
+                    symbolName: "checkmark",
+                    message: "No duplicate bookmarks found",
+                    identity: "no-duplicate-bookmarks"
+                ))
+            }
+        }
+    }
+
+    @objc func openTaskManager(_ sender: Any?) {
+        TaskManagerWindowController.show(session: session)
+    }
+
+    // MARK: - Web Panels & Floating Windows (F-36)
+
+    func setWebPanelOpen(_ open: Bool, animated: Bool = true) {
+        WebPanelStore.shared.isOpen = open
+        guard let item = webPanelSplitItem ?? splitViewController.splitViewItem(for: webPanel) else { return }
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                item.animator().isCollapsed = !open
+            }
+        } else {
+            item.isCollapsed = !open
+        }
+    }
+
+    @objc func toggleWebPanel(_ sender: Any?) {
+        setWebPanelOpen(!WebPanelStore.shared.isOpen, animated: true)
+    }
+
+    @objc func popOutWebPanel(_ sender: Any?) {
+        if let panel = WebPanelStore.shared.activePanel {
+            setWebPanelOpen(false, animated: true)
+            FloatingWindowManager.shared.openFloatingWindow(
+                webView: nil,
+                url: panel.url,
+                panel: panel
+            )
+        }
+    }
+
+    @objc func toggleAlwaysOnTop(_ sender: Any?) {
+        guard let window else { return }
+        let willFloat = window.level != .floating
+        window.level = willFloat ? .floating : .normal
+        session.showToast?(Toast(
+            symbolName: willFloat ? "pin.fill" : "pin.slash",
+            message: willFloat ? "Window: Always on Top" : "Window: Normal Level",
+            identity: "always-on-top"
+        ))
+    }
+
+    @objc func openFloatingWindow(_ sender: Any?) {
+        let targetURL = session.activeTab?.url ?? WebPanel.scratchpadURL
+        FloatingWindowManager.shared.openFloatingWindow(url: targetURL)
+    }
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if BrowserLockManager.shared.isLocked {
+            return false
+        }
         switch menuItem.action {
+        case #selector(toggleWebPanel(_:)):
+            menuItem.state = WebPanelStore.shared.isOpen ? .on : .off
+            return true
+        case #selector(toggleTabOverview(_:)):
+            menuItem.title = isTabOverviewOpen ? "Hide Tab Overview" : "Show Tab Overview"
+            return true
+        case #selector(popOutWebPanel(_:)):
+            return WebPanelStore.shared.activePanel != nil
+        case #selector(toggleAlwaysOnTop(_:)):
+            menuItem.state = (window?.level == .floating) ? .on : .off
+            return true
+        case #selector(openFloatingWindow(_:)):
+            return true
+        case #selector(showEnterprisePolicies(_:)):
+            return true
+        case #selector(showWebInspector(_:)),
+             #selector(showJavaScriptConsole(_:)),
+             #selector(inspectElement(_:)):
+            if EnterprisePolicyManager.shared.isDeveloperToolsDisabled {
+                return false
+            }
+            return session.activeTab != nil
         case #selector(goBack(_:)): return session.activeTab?.canGoBack ?? false
         case #selector(goForward(_:)): return session.activeTab?.canGoForward ?? false
-        case #selector(closeTab(_:)), #selector(reloadPage(_:)): return session.activeTab != nil
+        case #selector(closeTab(_:)), #selector(reloadPage(_:)),
+             #selector(captureVisibleArea(_:)), #selector(copyVisibleAreaToClipboard(_:)),
+             #selector(captureFullPage(_:)), #selector(copyFullPageToClipboard(_:)),
+             #selector(showLinkHints(_:)), #selector(showLinkHintsNewTab(_:)),
+             #selector(toggleReaderMode(_:)), #selector(toggleDomainReaderMode(_:)),
+             #selector(addToReadingList(_:)), #selector(readAloudCurrentPage(_:)):
+            return session.activeTab != nil
+        case #selector(toggleReadingListPopover(_:)),
+             #selector(openBookmarkManager(_:)),
+             #selector(openHistorySearch(_:)),
+             #selector(cleanupDuplicateBookmarks(_:)):
+            return true
+        case #selector(toggleVimBindings(_:)):
+            menuItem.state = Settings.shared.vimBindingsEnabled ? .on : .off
+            return true
         case #selector(reopenClosedTab(_:)): return session.canReopenClosedTab
+        case #selector(reopenClosedTabFromMenu(_:)), #selector(reopenClosedWindowFromMenu(_:)):
+            return true
+        case #selector(reopenAllClosedTabs(_:)), #selector(clearRecentlyClosed(_:)):
+            return session.canReopenClosedTab
         case #selector(openPinnedSiteByNumber(_:)):
             guard Settings.shared.favouriteShortcutsEnabled else { return false }
             return session.activeSpace.pinnedSites.indices.contains(menuItem.tag - 1)
@@ -1274,12 +2261,40 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         case #selector(splitSideBySide(_:)), #selector(splitStacked(_:)), #selector(splitGrid(_:)):
             return session.activeSpace.tabs.count > 1
         case #selector(unsplit(_:)): return session.activeSplit != nil
+        case #selector(toggleStickyPane(_:)):
+            if let activeTab = session.activeTab, session.isSticky(activeTab.id) {
+                menuItem.title = "Unstick Pane"
+            } else {
+                menuItem.title = "Stick Pane"
+            }
+            return session.activeSplit != nil
+        case #selector(undoSplit(_:)): return session.canUndoSplit
+        case #selector(equalizeSplitPanes(_:)): return session.activeSplit != nil
         case #selector(toggleKylmoraSidebar(_:)):
-            let collapsed = splitViewController.splitViewItems.first?.isCollapsed ?? false
+            let collapsed = splitViewController.splitViewItem(for: sidebar)?.isCollapsed ?? false
             menuItem.title = collapsed ? "Show Sidebar" : "Hide Sidebar"
             return true
         case #selector(toggleCompactMode(_:)):
             menuItem.state = compact.controller.state.isEnabled ? .on : .off
+            return true
+        case #selector(toggleIconsOnlySidebar(_:)):
+            menuItem.state = Settings.shared.sidebarMode == .iconsOnly ? .on : .off
+            return true
+        case #selector(toggleZenMode(_:)):
+            menuItem.state = isZenMode ? .on : .off
+            return true
+        case #selector(toggleSidebarPosition(_:)):
+            menuItem.title = Settings.shared.sidebarPosition == .leading ? "Move Sidebar to Right" : "Move Sidebar to Left"
+            return true
+        case #selector(setSidebarPositionFromMenu(_:)):
+            if let pos = menuItem.representedObject as? SidebarPosition {
+                menuItem.state = Settings.shared.sidebarPosition == pos ? .on : .off
+            }
+            return true
+        case #selector(setSidebarModeFromMenu(_:)):
+            if let mode = menuItem.representedObject as? SidebarMode {
+                menuItem.state = Settings.shared.sidebarMode == mode ? .on : .off
+            }
             return true
         case #selector(toggleCompactSidebarPin(_:)):
             return compact.controller.state.isEnabled
@@ -1385,14 +2400,23 @@ extension BrowserWindowController: CompactSidebarSlot {
     }
 
     func reattachSidebar(_ controller: NSViewController) {
+        let isTrailing = Settings.shared.sidebarPosition == .trailing
         let item = NSSplitViewItem(viewController: controller)
         item.minimumThickness = Style.Metrics.sidebarMinWidth
         item.maximumThickness = Style.Metrics.sidebarMaxWidth
         item.canCollapse = true
         item.holdingPriority = .defaultLow
-        splitViewController.insertSplitViewItem(item, at: 0)
+        let index = isTrailing ? splitViewController.splitViewItems.count : 0
+        splitViewController.insertSplitViewItem(item, at: index)
         // The autosaved position does not come back with a re-inserted item.
-        splitViewController.splitView.setPosition(lastSidebarWidth, ofDividerAt: 0)
+        if isTrailing {
+            let width = splitViewController.view.bounds.width
+            if width > lastSidebarWidth {
+                splitViewController.splitView.setPosition(width - lastSidebarWidth, ofDividerAt: 0)
+            }
+        } else {
+            splitViewController.splitView.setPosition(lastSidebarWidth, ofDividerAt: 0)
+        }
     }
 }
 
@@ -1426,5 +2450,14 @@ extension BrowserWindowController: SidebarSwipeDelegate {
 
     func swipe(switchBy offset: Int, wraps: Bool) {
         switchSpace(by: offset, wraps: wraps)
+    }
+}
+
+extension BrowserWindowController: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        let activeTabs = session.activeSpace.tabs.filter { !$0.isLocked }
+        if activeTabs.count > 1 && !session.activeSpace.isPrivate {
+            session.recordClosedWindow(title: "\(session.activeSpace.name) Window", tabs: activeTabs, in: session.activeSpace)
+        }
     }
 }

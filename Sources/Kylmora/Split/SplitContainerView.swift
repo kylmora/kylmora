@@ -20,12 +20,19 @@ final class SplitContainerView: NSView {
     var onFocusPane: ((Tab.ID) -> Void)?
     /// The pane's close button was pressed.
     var onClosePane: ((Tab.ID) -> Void)?
+    /// Toggles the sticky/pinned state of a pane.
+    var onToggleStickPane: ((Tab.ID) -> Void)?
+    /// Separates a pane into a standalone tab (unsplit).
+    var onUnsplitPane: ((Tab.ID) -> Void)?
+    /// Double-click on divider or command to equalize split panes.
+    var onEqualize: (([Int]) -> Void)?
     /// A divider was dragged. Carries the whole layout, because the proportions
     /// of one node are only meaningful inside the tree they belong to.
     var onLayoutChange: ((SplitLayout) -> Void)?
 
     private var splitLayout: SplitLayout?
     private var focusedTabID: Tab.ID?
+    private var isStickyChecker: ((Tab.ID) -> Bool)?
     private var panes: [Tab.ID: SplitPaneView] = [:]
     private var splitViews: [PaneSplitView] = []
     private var rootView: NSView?
@@ -58,11 +65,12 @@ final class SplitContainerView: NSView {
     /// Tabs missing from `tabs` are ignored rather than drawn empty: the only
     /// way that can happen is a model change racing a redraw, and an empty pane
     /// would be exactly the fake state that must never be shown.
-    func show(tabs: [Tab], layout: SplitLayout, focused: Tab.ID?) {
+    func show(tabs: [Tab], layout: SplitLayout, focused: Tab.ID?, isSticky: ((Tab.ID) -> Bool)? = nil) {
         let byID = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
         guard layout.tabIDs.allSatisfy({ byID[$0] != nil }) else { return }
 
         self.splitLayout = layout
+        self.isStickyChecker = isSticky
         let structure = Self.structure(of: layout.root)
         if structure != builtStructure {
             rebuild(layout: layout, tabs: byID)
@@ -76,6 +84,7 @@ final class SplitContainerView: NSView {
             guard let pane = panes[id], let tab = byID[id] else { continue }
             tab.markActive()
             pane.adopt(tab.webView())
+            pane.setSticky(isSticky?(id) ?? false)
         }
 
         setFocused(focused)
@@ -147,12 +156,15 @@ final class SplitContainerView: NSView {
             if let existing = panes[id] { return existing }
             let pane = SplitPaneView(tabID: id)
             pane.onClose = { [weak self] in self?.onClosePane?(id) }
+            pane.onToggleStick = { [weak self] in self?.onToggleStickPane?(id) }
+            pane.onUnsplit = { [weak self] in self?.onUnsplitPane?(id) }
             panes[id] = pane
             return pane
 
         case .split(let axis, let children, _):
             let splitView = PaneSplitView(axis: axis, path: path)
             splitView.delegate = self
+            splitView.onEqualize = { [weak self] path in self?.onEqualize?(path) }
             for (index, child) in children.enumerated() {
                 splitView.addArrangedSubview(makeView(for: child, path: path + [index]))
             }
@@ -269,6 +281,12 @@ extension SplitContainerView: NSSplitViewDelegate {
         ofSubviewAt dividerIndex: Int
     ) -> CGFloat {
         draggingSplitViews.insert(ObjectIdentifier(splitView))
+        // Smart snapping: Snap to exact 50/50 center when within 14pt threshold
+        let total = splitView.isVertical ? splitView.bounds.width : splitView.bounds.height
+        let center = total / 2.0
+        if abs(proposedPosition - center) < 14.0 {
+            return center
+        }
         return proposedPosition
     }
 
@@ -318,15 +336,11 @@ extension SplitContainerView: NSSplitViewDelegate {
 // MARK: - The split view itself
 
 /// An `NSSplitView` that knows which model node it renders and draws its
-/// divider as a plain gap.
-///
-/// The gap is the divider: there is no line, no groove and no dimple, because
-/// the chrome's one gutter already separates every other surface in the window,
-/// and a second visual language for "these two things are apart" would
-/// make the split look bolted on.
+/// divider with a subtle centered drag handle pill.
 private final class PaneSplitView: NSSplitView {
     let path: [Int]
     private let gap: CGFloat
+    var onEqualize: (([Int]) -> Void)?
 
     init(axis: SplitLayout.Axis, path: [Int]) {
         self.path = path
@@ -344,5 +358,43 @@ private final class PaneSplitView: NSSplitView {
 
     override var dividerThickness: CGFloat { gap }
 
-    override func drawDivider(in rect: NSRect) {}
+    override func drawDivider(in rect: NSRect) {
+        super.drawDivider(in: rect)
+
+        let pillColor = NSColor.separatorColor.withAlphaComponent(0.65)
+        pillColor.setFill()
+
+        let handleRect: NSRect
+        if isVertical {
+            let width: CGFloat = 3
+            let height: CGFloat = min(36, max(0, rect.height - 16))
+            guard height > 0 else { return }
+            handleRect = NSRect(
+                x: rect.midX - width / 2.0,
+                y: rect.midY - height / 2.0,
+                width: width,
+                height: height
+            )
+        } else {
+            let height: CGFloat = 3
+            let width: CGFloat = min(36, max(0, rect.width - 16))
+            guard width > 0 else { return }
+            handleRect = NSRect(
+                x: rect.midX - width / 2.0,
+                y: rect.midY - height / 2.0,
+                width: width,
+                height: height
+            )
+        }
+        let pillPath = NSBezierPath(roundedRect: handleRect, xRadius: 1.5, yRadius: 1.5)
+        pillPath.fill()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            onEqualize?(path)
+            return
+        }
+        super.mouseDown(with: event)
+    }
 }

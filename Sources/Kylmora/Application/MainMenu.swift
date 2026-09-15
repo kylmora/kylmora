@@ -20,6 +20,9 @@ enum MainMenu {
         root.addItem(fileMenuItem())
         root.addItem(editMenuItem())
         root.addItem(viewMenuItem(tabs: tabs, pinnedSites: pinnedSites, spaces: spaces))
+        if Settings.shared.showDevelopMenu {
+            root.addItem(developMenuItem())
+        }
         root.addItem(dynamicMenuItem(titled: "Bookmarks", delegate: bookmarks))
         root.addItem(dynamicMenuItem(titled: "History", delegate: history))
         root.addItem(windowMenuItem())
@@ -63,11 +66,28 @@ enum MainMenu {
         return item
     }
 
+    private static func representedItem(
+        _ title: String,
+        _ action: Selector?,
+        _ representedObject: Any?,
+        _ key: String = "",
+        modifiers: NSEvent.ModifierFlags = .command
+    ) -> NSMenuItem {
+        let it = item(title, action, key, modifiers: modifiers)
+        it.representedObject = representedObject
+        return it
+    }
+
     private static func appMenuItem() -> NSMenuItem {
         submenu(appName, [
             item("About \(appName)", #selector(AppDelegate.showAbout(_:))),
+            item("Check for Updates\u{2026}", #selector(AppDelegate.checkForUpdates(_:))),
+            item("Enterprise Policies\u{2026}", #selector(BrowserWindowController.showEnterprisePolicies(_:))),
             .separator(),
             item("Settings\u{2026}", #selector(AppDelegate.showSettings(_:)), ","),
+            .separator(),
+            item("Lock \(appName)", #selector(AppDelegate.lockBrowser(_:)), "l",
+                 modifiers: [.command, .option]),
             .separator(),
             item("Hide \(appName)", #selector(NSApplication.hide(_:)), "h"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h",
@@ -95,6 +115,18 @@ enum MainMenu {
             .separator(),
             item("Install Site as Web App\u{2026}", #selector(BrowserWindowController.installCurrentSiteAsWebApp(_:))),
             item("Open in Standalone Window", #selector(BrowserWindowController.openCurrentSiteAsStandaloneWebApp(_:))),
+            .separator(),
+            submenu("Capture Screenshot", [
+                item("Capture Visible Area", #selector(BrowserWindowController.captureVisibleArea(_:)), "3",
+                     modifiers: [.command, .shift, .option]),
+                item("Copy Visible Area to Clipboard", #selector(BrowserWindowController.copyVisibleAreaToClipboard(_:)), "3",
+                     modifiers: [.command, .shift, .control]),
+                .separator(),
+                item("Capture Full Page", #selector(BrowserWindowController.captureFullPage(_:)), "4",
+                     modifiers: [.command, .shift, .option]),
+                item("Copy Full Page to Clipboard", #selector(BrowserWindowController.copyFullPageToClipboard(_:)), "4",
+                     modifiers: [.command, .shift, .control])
+            ]),
             .separator(),
             item("Sync Now", #selector(AppDelegate.syncNow(_:)), "s", modifiers: [.command, .option]),
             item("Sync Settings\u{2026}", #selector(AppDelegate.showSyncSettings(_:))),
@@ -183,6 +215,12 @@ enum MainMenu {
             item("Back", #selector(BrowserWindowController.goBack(_:)), "["),
             item("Forward", #selector(BrowserWindowController.goForward(_:)), "]"),
             .separator(),
+            item("Show Link Hints", #selector(BrowserWindowController.showLinkHints(_:)), "f",
+                 modifiers: [.option]),
+            item("Show Link Hints in New Tab", #selector(BrowserWindowController.showLinkHintsNewTab(_:)), "f",
+                 modifiers: [.option, .shift]),
+            item("Vim Navigation Bindings", #selector(BrowserWindowController.toggleVimBindings(_:)), ""),
+            .separator(),
             item("Open Glance as a Tab", #selector(BrowserWindowController.promoteGlance(_:)), "o"),
             item("Close Glance", #selector(BrowserWindowController.closeGlance(_:)), "w",
                  modifiers: [.command, .option]),
@@ -218,12 +256,22 @@ enum MainMenu {
                  modifiers: [.command, .option]),
             item("Unsplit", #selector(BrowserWindowController.unsplit(_:)), "u",
                  modifiers: [.command, .option]),
+            item("Stick Pane", #selector(BrowserWindowController.toggleStickyPane(_:)), "s",
+                 modifiers: [.command, .option]),
+            item("Undo Split", #selector(BrowserWindowController.undoSplit(_:)), "z",
+                 modifiers: [.command, .option]),
+            item("Equalize Split Panes", #selector(BrowserWindowController.equalizeSplitPanes(_:)), "=",
+                 modifiers: [.command, .option]),
             .separator(),
+            item("Show Tab Overview", #selector(BrowserWindowController.toggleTabOverview(_:)), "\\",
+                 modifiers: [.command, .shift]),
             item("Downloads", #selector(AppDelegate.showDownloads(_:)), "l",
                  modifiers: [.command, .option]),
             item("Archive", #selector(BrowserWindowController.toggleArchive(_:)), "a",
                  modifiers: [.command, .option, .shift]),
             item("Hide Sidebar", #selector(BrowserWindowController.toggleKylmoraSidebar(_:)), "s",
+                 modifiers: [.command, .control]),
+            item("Icons-Only Sidebar", #selector(BrowserWindowController.toggleIconsOnlySidebar(_:)), "i",
                  modifiers: [.command, .control]),
             item("Compact Mode", #selector(BrowserWindowController.toggleCompactMode(_:)), "c",
                  modifiers: [.command, .control]),
@@ -231,6 +279,22 @@ enum MainMenu {
             item("Keep Sidebar Showing",
                  #selector(BrowserWindowController.toggleCompactSidebarPin(_:)), "s",
                  modifiers: [.command, .control, .option]),
+            item("Toggle Sidebar Position",
+                 #selector(BrowserWindowController.toggleSidebarPosition(_:)), "s",
+                 modifiers: [.command, .option]),
+            item("Zen Mode (Hide All UI)",
+                 #selector(BrowserWindowController.toggleZenMode(_:)), "z",
+                 modifiers: [.command, .control]),
+            submenu("Sidebar Mode", [
+                representedItem("Always Expanded", #selector(BrowserWindowController.setSidebarModeFromMenu(_:)), SidebarMode.expanded),
+                representedItem("Icons Only (Expand on Hover)", #selector(BrowserWindowController.setSidebarModeFromMenu(_:)), SidebarMode.iconsOnly),
+                representedItem("Compact (Slide in on Hover)", #selector(BrowserWindowController.setSidebarModeFromMenu(_:)), SidebarMode.compact),
+                representedItem("Hidden", #selector(BrowserWindowController.setSidebarModeFromMenu(_:)), SidebarMode.hidden)
+            ]),
+            submenu("Sidebar Position", [
+                representedItem("Left", #selector(BrowserWindowController.setSidebarPositionFromMenu(_:)), SidebarPosition.leading),
+                representedItem("Right", #selector(BrowserWindowController.setSidebarPositionFromMenu(_:)), SidebarPosition.trailing)
+            ]),
             item("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f",
                  modifiers: [.command, .control]),
             .separator(),
@@ -245,16 +309,76 @@ enum MainMenu {
                  modifiers: [.command, .option]),
             item("Toggle Universal Dark Mode",
                  #selector(BrowserWindowController.toggleDarkModeFromMenu(_:)), "d",
-                 modifiers: [.command, .option])
+                 modifiers: [.command, .option]),
+            .separator(),
+            item("Translate Page\u{2026}",
+                 #selector(BrowserWindowController.toggleTranslationPopover(_:)), "t",
+                 modifiers: [.command, .option]),
+            item("Show Original Page",
+                 #selector(BrowserWindowController.restoreOriginalActivePage(_:)), ""),
+            item("Picture in Picture",
+                 #selector(BrowserWindowController.togglePictureInPicture(_:)), "p",
+                 modifiers: [.command, .option]),
+            item("Mute Tab",
+                 #selector(BrowserWindowController.toggleMuteActiveTab(_:)), "m",
+                 modifiers: [.command, .option]),
+            .separator(),
+            item("Enter / Exit Reader Mode",
+                 #selector(BrowserWindowController.toggleReaderMode(_:)), "r",
+                 modifiers: [.command, .shift]),
+            item("Add to Reading List",
+                 #selector(BrowserWindowController.addToReadingList(_:)), "d",
+                 modifiers: [.command, .shift]),
+            item("Show Reading List\u{2026}",
+                 #selector(BrowserWindowController.toggleReadingListPopover(_:)), "l",
+                 modifiers: [.command, .shift, .option]),
+            item("Read Aloud",
+                 #selector(BrowserWindowController.readAloudCurrentPage(_:)), "s",
+                 modifiers: [.command, .option]),
+            .separator(),
+            item("Toggle Web Panel",
+                 #selector(BrowserWindowController.toggleWebPanel(_:)), "p",
+                 modifiers: [.command, .control]),
+            item("Pop Out Web Panel into Floating Window",
+                 #selector(BrowserWindowController.popOutWebPanel(_:)), "")
         ]
 
         return submenu("View", items)
     }
 
+    private static func developMenuItem() -> NSMenuItem {
+        let items: [NSMenuItem] = [
+            item("Show Web Inspector",
+                 #selector(BrowserWindowController.showWebInspector(_:)), "i",
+                 modifiers: [.command, .option]),
+            item("Show JavaScript Console",
+                 #selector(BrowserWindowController.showJavaScriptConsole(_:)), "c",
+                 modifiers: [.command, .option]),
+            item("Inspect Element",
+                 #selector(BrowserWindowController.inspectElement(_:)), ""),
+            .separator(),
+            item("Empty Caches\u{2026}",
+                 #selector(BrowserWindowController.emptyCaches(_:)), "e",
+                 modifiers: [.command, .option, .shift]),
+            .separator(),
+            item("Task Manager",
+                 #selector(BrowserWindowController.openTaskManager(_:)))
+        ]
+        return submenu("Develop", items)
+    }
+
     private static func windowMenuItem() -> NSMenuItem {
         let menuItem = submenu("Window", [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
-            item("Zoom", #selector(NSWindow.performZoom(_:)))
+            item("Zoom", #selector(NSWindow.performZoom(_:))),
+            .separator(),
+            item("Always on Top", #selector(BrowserWindowController.toggleAlwaysOnTop(_:)), "t",
+                 modifiers: [.command, .control]),
+            item("New Floating Web Window\u{2026}", #selector(BrowserWindowController.openFloatingWindow(_:)), "f",
+                 modifiers: [.command, .option, .shift]),
+            .separator(),
+            item("Task Manager", #selector(BrowserWindowController.openTaskManager(_:)), "u",
+                 modifiers: [.command, .option])
         ])
         NSApp.windowsMenu = menuItem.submenu
         return menuItem

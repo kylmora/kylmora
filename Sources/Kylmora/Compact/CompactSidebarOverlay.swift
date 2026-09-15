@@ -41,7 +41,7 @@ final class CompactSidebarOverlay: NSView {
     var onHoverEnded: ((_ isDrag: Bool) -> Void)?
 
     private let plate = NSVisualEffectView()
-    private let edge: CompactSidebarEdge
+    private var edge: CompactSidebarEdge
     private var edgeConstraint: NSLayoutConstraint?
     private var widthConstraint: NSLayoutConstraint?
     private var trackingArea: NSTrackingArea?
@@ -90,6 +90,23 @@ final class CompactSidebarOverlay: NSView {
         fatalError("CompactSidebarOverlay is created in code only")
     }
 
+    /// Updates the docked edge of the sidebar.
+    func setEdge(_ newEdge: CompactSidebarEdge) {
+        guard edge != newEdge else { return }
+        edge = newEdge
+        if let container = superview {
+            edgeConstraint?.isActive = false
+            let newConstraint: NSLayoutConstraint = switch newEdge {
+            case .leading: leadingAnchor.constraint(equalTo: container.leadingAnchor)
+            case .trailing: trailingAnchor.constraint(equalTo: container.trailingAnchor)
+            }
+            newConstraint.constant = newEdge == .leading ? -pushOut : pushOut
+            newConstraint.isActive = true
+            edgeConstraint = newConstraint
+            container.layoutSubtreeIfNeeded()
+        }
+    }
+
     /// Lays the plate over `container`, inset by the float on three edges.
     ///
     /// The float is applied here rather than by the caller because it is also
@@ -101,7 +118,7 @@ final class CompactSidebarOverlay: NSView {
 
         let edgeConstraint: NSLayoutConstraint = switch edge {
         case .leading: leadingAnchor.constraint(equalTo: container.leadingAnchor)
-        case .trailing: container.trailingAnchor.constraint(equalTo: trailingAnchor)
+        case .trailing: trailingAnchor.constraint(equalTo: container.trailingAnchor)
         }
         let widthConstraint = widthAnchor.constraint(equalToConstant: 0)
         self.edgeConstraint = edgeConstraint
@@ -145,10 +162,9 @@ final class CompactSidebarOverlay: NSView {
     func setPushOut(_ newPushOut: CGFloat, transition: CompactTransition) {
         let previous = pushOut
         pushOut = newPushOut
-        // Both edges take the same sign: the constraint is written leading-to-
-        // leading on one side and trailing-to-trailing on the other, so "push
-        // the plate out of the window" is a negative constant either way.
-        edgeConstraint?.constant = -newPushOut
+        // When docked on the leading edge, pushing out of the window means moving left (-newPushOut).
+        // When docked on the trailing edge, pushing out means moving right (+newPushOut).
+        edgeConstraint?.constant = edge == .leading ? -newPushOut : newPushOut
 
         guard transition != .immediate, previous != newPushOut, let layer else {
             superview?.layoutSubtreeIfNeeded()

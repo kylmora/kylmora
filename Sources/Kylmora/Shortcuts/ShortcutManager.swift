@@ -166,6 +166,22 @@ final class ShortcutManager {
             defaultKey: "]",
             defaultModifiers: [.command]
         ),
+        ShortcutDefinition(
+            id: "link-hints",
+            title: "Show Link Hints",
+            category: .navigation,
+            selector: #selector(BrowserWindowController.showLinkHints(_:)),
+            defaultKey: "f",
+            defaultModifiers: [.option]
+        ),
+        ShortcutDefinition(
+            id: "link-hints-new-tab",
+            title: "Show Link Hints (Open in New Tab)",
+            category: .navigation,
+            selector: #selector(BrowserWindowController.showLinkHintsNewTab(_:)),
+            defaultKey: "f",
+            defaultModifiers: [.option, .shift]
+        ),
 
         // Spaces
         ShortcutDefinition(
@@ -195,11 +211,35 @@ final class ShortcutManager {
             defaultModifiers: [.command, .control]
         ),
         ShortcutDefinition(
+            id: "toggle-icons-only",
+            title: "Icons-Only Sidebar",
+            category: .appearance,
+            selector: #selector(BrowserWindowController.toggleIconsOnlySidebar(_:)),
+            defaultKey: "i",
+            defaultModifiers: [.command, .control]
+        ),
+        ShortcutDefinition(
+            id: "toggle-sidebar-position",
+            title: "Toggle Sidebar Position",
+            category: .appearance,
+            selector: #selector(BrowserWindowController.toggleSidebarPosition(_:)),
+            defaultKey: "s",
+            defaultModifiers: [.command, .option]
+        ),
+        ShortcutDefinition(
             id: "toggle-compact",
             title: "Compact Mode",
             category: .appearance,
             selector: #selector(BrowserWindowController.toggleCompactMode(_:)),
             defaultKey: "c",
+            defaultModifiers: [.command, .control]
+        ),
+        ShortcutDefinition(
+            id: "toggle-zen-mode",
+            title: "Zen Mode (Hide All UI)",
+            category: .appearance,
+            selector: #selector(BrowserWindowController.toggleZenMode(_:)),
+            defaultKey: "z",
             defaultModifiers: [.command, .control]
         ),
         ShortcutDefinition(
@@ -258,6 +298,118 @@ final class ShortcutManager {
             category: .tools,
             selector: #selector(BrowserWindowController.startElementPickerFromMenu(_:)),
             defaultKey: "b",
+            defaultModifiers: [.command, .option]
+        ),
+        ShortcutDefinition(
+            id: "translate-page",
+            title: "Translate Page",
+            category: .tools,
+            selector: #selector(BrowserWindowController.toggleTranslationPopover(_:)),
+            defaultKey: "t",
+            defaultModifiers: [.command, .option]
+        ),
+        ShortcutDefinition(
+            id: "capture-visible-area",
+            title: "Capture Visible Area",
+            category: .tools,
+            selector: #selector(BrowserWindowController.captureVisibleArea(_:)),
+            defaultKey: "3",
+            defaultModifiers: [.command, .shift, .option]
+        ),
+        ShortcutDefinition(
+            id: "copy-visible-area",
+            title: "Copy Visible Area to Clipboard",
+            category: .tools,
+            selector: #selector(BrowserWindowController.copyVisibleAreaToClipboard(_:)),
+            defaultKey: "3",
+            defaultModifiers: [.command, .shift, .control]
+        ),
+        ShortcutDefinition(
+            id: "capture-full-page",
+            title: "Capture Full Page Screenshot",
+            category: .tools,
+            selector: #selector(BrowserWindowController.captureFullPage(_:)),
+            defaultKey: "4",
+            defaultModifiers: [.command, .shift, .option]
+        ),
+        ShortcutDefinition(
+            id: "copy-full-page",
+            title: "Copy Full Page to Clipboard",
+            category: .tools,
+            selector: #selector(BrowserWindowController.copyFullPageToClipboard(_:)),
+            defaultKey: "4",
+            defaultModifiers: [.command, .shift, .control]
+        ),
+        ShortcutDefinition(
+            id: "toggle-reader-mode",
+            title: "Enter / Exit Reader Mode",
+            category: .tools,
+            selector: #selector(BrowserWindowController.toggleReaderMode(_:)),
+            defaultKey: "r",
+            defaultModifiers: [.command, .shift]
+        ),
+        ShortcutDefinition(
+            id: "add-to-reading-list",
+            title: "Add to Reading List",
+            category: .tools,
+            selector: #selector(BrowserWindowController.addToReadingList(_:)),
+            defaultKey: "d",
+            defaultModifiers: [.command, .shift]
+        ),
+        ShortcutDefinition(
+            id: "show-reading-list",
+            title: "Show Reading List",
+            category: .tools,
+            selector: #selector(BrowserWindowController.toggleReadingListPopover(_:)),
+            defaultKey: "l",
+            defaultModifiers: [.command, .shift, .option]
+        ),
+        ShortcutDefinition(
+            id: "read-aloud",
+            title: "Read Aloud (Speech)",
+            category: .tools,
+            selector: #selector(BrowserWindowController.readAloudCurrentPage(_:)),
+            defaultKey: "s",
+            defaultModifiers: [.command, .option]
+        ),
+        ShortcutDefinition(
+            id: "search-bookmarks",
+            title: "Bookmark Manager & Search",
+            category: .tools,
+            selector: #selector(BrowserWindowController.openBookmarkManager(_:)),
+            defaultKey: "b",
+            defaultModifiers: [.command, .shift]
+        ),
+        ShortcutDefinition(
+            id: "search-history-full-text",
+            title: "Search History Full-Text",
+            category: .tools,
+            selector: #selector(BrowserWindowController.openHistorySearch(_:)),
+            defaultKey: "y",
+            defaultModifiers: [.command, .option]
+        ),
+        ShortcutDefinition(
+            id: "check-for-updates",
+            title: "Check for Updates…",
+            category: .tools,
+            selector: #selector(AppDelegate.checkForUpdates(_:)),
+            defaultKey: "",
+            defaultModifiers: []
+        ),
+        ShortcutDefinition(
+            id: "lock-browser",
+            title: "Lock Browser",
+            category: .tools,
+            selector: #selector(AppDelegate.lockBrowser(_:)),
+            defaultKey: "l",
+            defaultModifiers: [.command, .option]
+        ),
+        ShortcutDefinition(
+            id: "task-manager",
+            title: "Task Manager",
+            category: .tools,
+            selector: #selector(BrowserWindowController.openTaskManager(_:)),
+            defaultKey: "u",
             defaultModifiers: [.command, .option]
         )
     ]

@@ -43,9 +43,31 @@ final class SitePolicy: NSObject {
         }
     }
 
+    /// Calculates a deterministic seed for a given space identity.
+    func seed(for spaceIdentity: Space.Identity?) -> Int {
+        switch spaceIdentity {
+        case .standard, nil:
+            return 42069
+        case .isolated(let uuid):
+            return abs(uuid.hashValue)
+        case .ephemeral(let uuid):
+            return abs(uuid.hashValue)
+        }
+    }
+
     /// A page is about to load on `url`: give its scripts the site's values.
-    func apply(for url: URL?, to controller: WKUserContentController) {
-        let policy = settings.policy(for: url)
+    func apply(for url: URL?, to controller: WKUserContentController, spaceIdentity: Space.Identity? = nil) {
+        var policy: [String: Any] = settings.policy(for: url)
+        policy["spaceSeed"] = seed(for: spaceIdentity)
+        policy["canvasNoise"] = Settings.shared.canvasNoiseEnabled
+        policy["audioNoise"] = Settings.shared.audioNoiseEnabled
+        policy["hardwareMasking"] = Settings.shared.hardwareMaskingEnabled
+        if !Settings.shared.antiFingerprintingEnabled {
+            policy["antiFingerprinting"] = "off"
+        }
+        if !Settings.shared.blockHostilePageBehaviour {
+            policy["blockHostileBehaviour"] = "off"
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: policy) else { return }
         let source = Self.policyPrefix + String(decoding: data, as: UTF8.self) + ";"
         let others = controller.userScripts.filter { !$0.source.hasPrefix(Self.policyPrefix) }
@@ -104,6 +126,24 @@ extension SitePolicy: WKScriptMessageHandlerWithReply {
         case "pictureInPicture":
             if let webView = message.webView, let tab = tabResolver?(webView) {
                 tab.setPictureInPicture(body["active"] as? Bool ?? false)
+            }
+            return (true, nil)
+        case "mediaPlayback":
+            if let webView = message.webView, let tab = tabResolver?(webView) {
+                let isPlaying = body["isPlaying"] as? Bool ?? false
+                let hasAudio = body["hasAudio"] as? Bool ?? false
+                let hasVideo = body["hasVideo"] as? Bool ?? false
+                let isMuted = body["isMuted"] as? Bool ?? false
+                let title = body["title"] as? String ?? ""
+                let artist = body["artist"] as? String ?? ""
+                tab.setMediaState(
+                    isPlaying: isPlaying,
+                    hasAudio: hasAudio,
+                    hasVideo: hasVideo,
+                    isMuted: isMuted,
+                    title: title,
+                    artist: artist
+                )
             }
             return (true, nil)
         case "geolocation":

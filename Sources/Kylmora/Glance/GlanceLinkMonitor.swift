@@ -16,6 +16,8 @@ final class GlanceLinkMonitor: NSObject {
     var onOpenGlance: ((URL, GlanceOriginHint, GlanceSource) -> Void)?
     /// Opens the link in a Little Arc window directly.
     var onOpenLittleArc: ((URL) -> Void)?
+    /// Opens the link in a split view pane directly.
+    var onOpenSplit: ((URL) -> Void)?
 
     /// So the interceptor can stand aside while a glance is already up: a
     /// modifier-click inside a glance must navigate the glance rather than be

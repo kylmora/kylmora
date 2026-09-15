@@ -29,6 +29,16 @@ final class WebContentViewController: NSViewController {
             guard let self, let tab = self.session.activeSpace.tabs.first(where: { $0.id == id }) else { return }
             self.session.closeTab(tab)
         }
+        container.onToggleStickPane = { [weak self] id in
+            self?.session.toggleStickPane(id)
+        }
+        container.onUnsplitPane = { [weak self] id in
+            guard let self, let tab = self.session.activeSpace.tabs.first(where: { $0.id == id }) else { return }
+            self.session.removeFromSplit(tab)
+        }
+        container.onEqualize = { [weak self] _ in
+            self?.session.equalizeSplit()
+        }
         container.onLayoutChange = { [weak self] layout in
             self?.session.updateSplitLayout(layout)
         }
@@ -95,6 +105,11 @@ final class WebContentViewController: NSViewController {
     var topBarTopConstraint: NSLayoutConstraint { contentContainer.topBarTopConstraint }
 
 
+    var onPinchToOverview: (() -> Void)? {
+        get { contentContainer.onPinchToOverview }
+        set { contentContainer.onPinchToOverview = newValue }
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         container.onNewTab = { [weak self] in self?.session.newTab() }
@@ -121,6 +136,10 @@ final class WebContentViewController: NSViewController {
         GlanceLinkMonitor.shared.isPinnedSite = { [weak self] url in
             self?.session.isPinnedSite(url) ?? false
         }
+        GlanceLinkMonitor.shared.onOpenSplit = { [weak self] url in
+            guard let self, let activeTab = self.session.activeTab else { return }
+            self.session.openLinkInSplit(url, from: activeTab)
+        }
 
         session.changes
             .sink { [weak self] change in
@@ -136,8 +155,18 @@ final class WebContentViewController: NSViewController {
                 case .tab(let tab):
                     // A failure or a recovery on the visible tab changes what
                     // this pane shows; other tabs do not.
-                    if tab.id == self.session.activeTab?.id { self.showActiveTab() }
+                    if tab.id == self.session.activeTab?.id {
+                        self.showActiveTab()
+                        if !tab.isLoading, let webView = tab.currentWebView {
+                            Task { [weak self] in
+                                await PageTranslator.shared.detectLanguage(in: webView, for: tab.id)
+                                self?.updateTopBar()
+                                await TabSnapshotStore.shared.capture(tab: tab)
+                            }
+                        }
+                    }
                 case .bookmarks:
+
                     self.updateBookmarksBar()
                 case .structure:
                     // Splitting and unsplitting are announced here, and both
@@ -161,7 +190,15 @@ final class WebContentViewController: NSViewController {
         let space = session.activeSpace
         contentContainer.showsBookmarksBar = space.look.showsBookmarksBar
         guard space.look.showsBookmarksBar else { return }
-        contentContainer.bookmarksBar.show(session.bookmarks, style: space.look.bookmarksBarStyle, isPrivate: space.isPrivate)
+
+        let bookmarks: [Bookmark]
+        if let folder = space.bookmarkFolder?.trimmingCharacters(in: .whitespacesAndNewlines), !folder.isEmpty {
+            let filtered = session.bookmarks.filter { $0.folder.localizedCaseInsensitiveCompare(folder) == .orderedSame }
+            bookmarks = filtered.isEmpty ? session.bookmarks : filtered
+        } else {
+            bookmarks = session.bookmarks
+        }
+        contentContainer.bookmarksBar.show(bookmarks, style: space.look.bookmarksBarStyle, isPrivate: space.isPrivate)
     }
 
     /// Building the web view here is what makes tab creation lazy: a tab that is
@@ -181,7 +218,8 @@ final class WebContentViewController: NSViewController {
             splitContainer.show(
                 tabs: session.activeSpace.tabs,
                 layout: split,
-                focused: session.activeTab?.id
+                focused: session.activeTab?.id,
+                isSticky: { [weak self] id in self?.session.isSticky(id) ?? false }
             )
             return
         }
@@ -223,6 +261,23 @@ final class WebContentViewController: NSViewController {
             } else {
                 shieldButton.setSymbol("shield.slash.fill", label: "Shield")
                 shieldButton.contentTintColor = .secondaryLabelColor
+            }
+        }
+        if let transButton = topBar.actionButton(labelled: "Translate Page") as? IconButton {
+            if let tab = tab {
+                let transState = PageTranslator.shared.state(for: tab.id)
+                if transState.isTranslated {
+                    transButton.contentTintColor = .systemBlue
+                    transButton.toolTip = "Translated on-device to \(TranslationLanguages.displayName(for: transState.targetLanguage))"
+                } else if case .available(let src, _) = transState.status {
+                    transButton.contentTintColor = .systemOrange
+                    transButton.toolTip = "Page is in \(TranslationLanguages.displayName(for: src)) • Click to translate on-device"
+                } else {
+                    transButton.contentTintColor = .secondaryLabelColor
+                    transButton.toolTip = "Translate Page (On-Device)"
+                }
+            } else {
+                transButton.contentTintColor = .secondaryLabelColor
             }
         }
         let settings = Settings.shared

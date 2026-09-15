@@ -66,6 +66,18 @@ enum UpdateCheck {
         let version: String
         let url: URL?
         let notes: String?
+        let downloadUrl: URL?
+
+        init(version: String, url: URL? = nil, notes: String? = nil, downloadUrl: URL? = nil) {
+            self.version = version
+            self.url = url
+            self.notes = notes
+            self.downloadUrl = downloadUrl
+        }
+
+        var updatePackageURL: URL? {
+            downloadUrl ?? url
+        }
     }
 
     enum Outcome: Equatable {
@@ -75,6 +87,13 @@ enum UpdateCheck {
         case available(version: String, url: URL?, notes: String?)
         /// No answer, or one that could not be read. The text says why.
         case unreachable(String)
+
+        var release: Release? {
+            if case .available(let version, let url, let notes) = self {
+                return Release(version: version, url: url, notes: notes)
+            }
+            return nil
+        }
     }
 
     static func decode(_ data: Data) throws -> Release {

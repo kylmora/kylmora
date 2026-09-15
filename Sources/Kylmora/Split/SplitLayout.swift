@@ -247,6 +247,23 @@ struct SplitLayout: Equatable, Codable, Sendable {
         return .resized(SplitLayout(root: root, grid: grid))
     }
 
+    /// Replaces one tab with another, preserving the exact tree position, axis, and share.
+    func replacing(_ oldID: Tab.ID, with newID: Tab.ID) -> SplitLayout {
+        guard contains(oldID), !contains(newID) else { return self }
+        let newRoot = Self.replacing(oldID, with: newID, in: root)
+        return SplitLayout(root: newRoot, grid: grid)
+    }
+
+    private static func replacing(_ oldID: Tab.ID, with newID: Tab.ID, in node: Node) -> Node {
+        switch node {
+        case .pane(let id, let share):
+            return id == oldID ? .pane(id: newID, share: share) : node
+        case .split(let axis, let children, let share):
+            let newChildren = children.map { replacing(oldID, with: newID, in: $0) }
+            return .split(axis: axis, children: newChildren, share: share)
+        }
+    }
+
     /// Returns nil when the node itself was the pane being removed.
     private static func removing(_ id: Tab.ID, from node: Node) -> Node? {
         switch node {

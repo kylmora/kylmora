@@ -1,5 +1,6 @@
 import Testing
 import WebKit
+import AppKit
 @testable import Kylmora
 
 @Suite("Find state")
@@ -82,6 +83,68 @@ struct FindStateTests {
         #expect(state.canRepeat)
         #expect(state.statusMessage == nil)
     }
+
+    @Test("Toggling regex mode invalidates the previous search outcome")
+    func regexToggleInvalidates() {
+        var state = FindState()
+        state.setQuery("func.*\\(")
+        state.record(matchFound: true)
+        #expect(state.outcome == .found)
+
+        state.isRegex = true
+        #expect(state.outcome == .pending)
+        #expect(state.isRegex == true)
+    }
+
+    @Test("Invalid regex expression is reported with failing status")
+    func invalidRegexReporting() {
+        var state = FindState()
+        state.setQuery("[unclosed-bracket")
+        state.isRegex = true
+        state.recordInvalidRegex("Invalid regex")
+
+        #expect(state.outcome == .invalidRegex(message: "Invalid regex"))
+        #expect(state.isFailing == true)
+        #expect(state.statusMessage == "Invalid regex")
+    }
+
+    @Test("Match counts and active index stepping format cleanly")
+    func matchCountingAndStepping() {
+        var state = FindState()
+        state.setQuery("test")
+        state.record(matchFound: true, current: 1, total: 5, positions: [0.1, 0.3, 0.5, 0.7, 0.9])
+
+        #expect(state.currentMatchIndex == 1)
+        #expect(state.totalMatches == 5)
+        #expect(state.statusMessage == "1 of 5")
+        #expect(state.matchPositions.count == 5)
+
+        // Step forward
+        let next = state.stepMatch(direction: .forward)
+        #expect(next == 2)
+        #expect(state.statusMessage == "2 of 5")
+
+        // Step backward from 2 goes to 1
+        let prev = state.stepMatch(direction: .backward)
+        #expect(prev == 1)
+        #expect(state.statusMessage == "1 of 5")
+
+        // Step backward from 1 wraps to 5
+        let wrapped = state.stepMatch(direction: .backward)
+        #expect(wrapped == 5)
+        #expect(state.statusMessage == "5 of 5")
+    }
+
+    @Test("Zero matches with total count records not found")
+    func zeroMatchesWithCount() {
+        var state = FindState()
+        state.setQuery("missing")
+        state.record(matchFound: false, current: 0, total: 0, positions: [])
+
+        #expect(state.isFailing == true)
+        #expect(state.statusMessage == "Not found")
+        #expect(state.matchPositions.isEmpty)
+    }
 }
 
 @Suite("Find configuration")
@@ -113,11 +176,35 @@ struct FindConfigurationTests {
 
     @Test("WebKit's own defaults are the ones this design assumes")
     func webKitDefaults() {
-        // If a future WebKit changed these, the find bar would silently start
-        // behaving differently, so the assumption is pinned here.
         let configuration = WKFindConfiguration()
         #expect(configuration.backwards == false)
         #expect(configuration.caseSensitive == false)
         #expect(configuration.wraps == true)
+    }
+}
+
+@Suite("Scrollbar match highlights")
+@MainActor
+struct FindScrollbarMarksViewTests {
+    @Test("Initial state is hidden with no positions")
+    func initialState() {
+        let ruler = FindScrollbarMarksView(frame: NSRect(x: 0, y: 0, width: 12, height: 600))
+        #expect(ruler.positions.isEmpty)
+        #expect(ruler.activeIndex == 0)
+    }
+
+    @Test("Updating positions unhides and updates internal data")
+    func updatePositions() {
+        let ruler = FindScrollbarMarksView(frame: NSRect(x: 0, y: 0, width: 12, height: 600))
+        ruler.update(positions: [0.15, 0.45, 0.85], activeIndex: 2)
+
+        #expect(ruler.positions.count == 3)
+        #expect(ruler.activeIndex == 2)
+        #expect(ruler.isHidden == false)
+
+        ruler.clear()
+        #expect(ruler.positions.isEmpty)
+        #expect(ruler.activeIndex == 0)
+        #expect(ruler.isHidden == true)
     }
 }

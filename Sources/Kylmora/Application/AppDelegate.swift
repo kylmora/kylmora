@@ -67,6 +67,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // missing is fetched and applied to open pages as it arrives.
         ContentBlocker.shared.start()
         SiteSettings.shared.addChangeObserver { ContentBlocker.shared.siteSettingsChanged() }
+        NetworkConfigManager.shared.start()
+        RAMCacheManager.shared.applyCacheConfiguration()
         // The Privacy pane's schedules, honoured at launch: a crash
         // report from last time, cookies that were due to go, history past
         // its retention.
@@ -80,10 +82,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         SitePolicy.shared.tabResolver = { [weak session] webView in
             session?.allTabs.first { $0.currentWebView === webView }
         }
+        DownloadManager.shared.spaceResolver = { [weak session] download in
+            guard let session else { return nil }
+            if let webView = download.webView,
+               let tab = session.allTabs.first(where: { $0.currentWebView === webView }) {
+                return session.spaces.first(where: { $0.tabs.contains(where: { $0 === tab }) })
+            }
+            return session.activeSpace
+        }
         installEscapeGuard(session: session)
         // Extensions need the window to exist: the engine asks for it first.
         if #available(macOS 15.4, *) {
             ExtensionManager.shared.start(session: session, window: controller)
+        }
+        UpdateController.shared.startBackgroundChecking()
+        BrowserLockManager.shared.start()
+        TabResourceMonitor.shared.startBackgroundMonitoring(session: session)
+        ICloudInboxCoordinator.shared.start(session: session, windowController: controller)
+
+        NotificationCenter.default.addObserver(
+            forName: .developMenuSettingDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.rebuildMainMenu()
+            }
         }
 
         // Web Applications (SSBs)
@@ -98,6 +122,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         Metrics.reportLaunchIfRequested(stage: "window-shown")
     }
 
+    func rebuildMainMenu() {
+        guard let bookmarksMenu, let historyMenu, listMenus.count >= 3 else { return }
+        NSApp.mainMenu = MainMenu.build(
+            bookmarks: bookmarksMenu,
+            history: historyMenu,
+            tabs: listMenus[0],
+            pinnedSites: listMenus[1],
+            spaces: listMenus[2]
+        )
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
@@ -108,26 +143,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// window does not come back, so it is named too -- the warning would be a
     /// lie if it counted only tabs while quietly dropping a page the user had
     /// open.
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard Settings.shared.warnsBeforeQuitting,
-              let session,
-              let message = QuitWarning.message(
-                  tabs: session.allTabs.count,
-                  littleArcs: mainWindowController?.openLittleArcCount ?? 0
-              ) else { return .terminateNow }
+    private var isPerformingQuitCleanup = false
 
-        let alert = NSAlert()
-        alert.messageText = "Quit Kylmora?"
-        alert.informativeText = message
-        alert.addButton(withTitle: "Quit")
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if isPerformingQuitCleanup { return .terminateLater }
+
+        if Settings.shared.warnsBeforeQuitting,
+           let session,
+           let message = QuitWarning.message(
+               tabs: session.allTabs.count,
+               littleArcs: mainWindowController?.openLittleArcCount ?? 0
+           ) {
+            let alert = NSAlert()
+            alert.messageText = "Quit Kylmora?"
+            alert.informativeText = message
+            alert.addButton(withTitle: "Quit")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        }
+
+        if Settings.shared.clearWebsiteDataOnQuit {
+            isPerformingQuitCleanup = true
+            let identities = session?.storedIdentities ?? [.standard]
+            let allowlist = Settings.shared.websiteDataQuitAllowlist
+            Task {
+                await WebsiteData.clearDataOnQuit(allowlist: allowlist, for: identities)
+                NSApp.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
+        }
+
+        return .terminateNow
     }
 
     /// The debounced save would be lost on quit, so write synchronously here.
     func applicationWillTerminate(_ notification: Notification) {
         CrashReporter.markCleanExit()
         session?.saveNow()
+        if Settings.shared.clearDiskCacheOnQuit || RAMCacheManager.shared.isRAMOnly {
+            RAMCacheManager.shared.clearDiskCacheDirectory()
+        }
     }
 
     /// Also save when the browser goes to the background, which covers a crash
@@ -175,6 +230,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     /// logo and version too, and the update check besides.
     @objc func showAbout(_ sender: Any?) {
         showSettings(sender, on: .about)
+    }
+
+    /// Invokes the Sparkle-style updater flow.
+    @objc func checkForUpdates(_ sender: Any?) {
+        UpdateController.shared.checkForUpdates(userInitiated: true, in: mainWindowController?.window)
+    }
+
+    /// Displays the Enterprise Policies sheet.
+    @objc func showEnterprisePolicies(_ sender: Any?) {
+        if let window = mainWindowController?.window {
+            let controller = EnterprisePoliciesViewController()
+            let sheetWindow = NSWindow(contentViewController: controller)
+            sheetWindow.styleMask = [.titled, .closable]
+            sheetWindow.title = "Enterprise Policies"
+            window.beginSheet(sheetWindow) { _ in }
+        } else {
+            let controller = EnterprisePoliciesViewController()
+            let sheetWindow = NSWindow(contentViewController: controller)
+            sheetWindow.styleMask = [.titled, .closable]
+            sheetWindow.title = "Enterprise Policies"
+            sheetWindow.center()
+            sheetWindow.makeKeyAndOrderFront(sender)
+        }
     }
 
     @objc func showSpaceSettings(_ sender: Any?) {
@@ -288,6 +366,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             if WebAppManager.shared.handleURLScheme(url) {
                 continue
             }
+            if let link = IPhoneLink.parse(urlScheme: url) {
+                IPhoneLinkReceiver.shared.receive(link: link, session: session, windowController: mainWindowController)
+                continue
+            }
             if let controller = mainWindowController {
                 controller.openExternal(url)
             } else {
@@ -322,10 +404,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         return true
     }
 
+    @objc func lockBrowser(_ sender: Any?) {
+        BrowserLockManager.shared.lock(animated: true)
+    }
+
     /// The tick beside the selected appearance. `NSMenuItemValidation` reaches
     /// the delegate because the menu items have no explicit target and the
     /// delegate is in the responder chain.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(lockBrowser(_:)) {
+            return !BrowserLockManager.shared.isLocked
+        }
         guard menuItem.action == #selector(setAppearance(_:)),
               let preference = AppearancePreference.fromMenuTag(menuItem.tag) else {
             return true

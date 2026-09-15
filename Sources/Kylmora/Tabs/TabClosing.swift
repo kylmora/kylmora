@@ -16,3 +16,20 @@ enum TabClosing {
         return alert.runModal() == .alertFirstButtonReturn
     }
 }
+
+extension Toast {
+    /// Raised when a close the user aimed at one particular tab hit a lock.
+    ///
+    /// The button closes the tab as well as unlocking it, because that is what
+    /// the user was trying to do a second ago; an Unlock that left the tab
+    /// sitting there would need a second Cmd-W to finish the thought.
+    static func closeRefused(tab: String, unlock: @escaping () -> Void) -> Toast {
+        Toast(
+            symbolName: "lock.fill",
+            message: "\u{201c}\(tab)\u{201d} is locked",
+            action: Action(title: "Unlock and Close", handler: unlock),
+            duration: 6,
+            identity: "tab-locked"
+        )
+    }
+}

@@ -108,6 +108,20 @@ final class CompactChrome: CompactModeHost {
 
     func toggle() { setEnabled(!controller.state.isEnabled) }
 
+    /// Sets the configuration and updates the overlay edge if needed.
+    func setConfiguration(_ configuration: CompactModeConfiguration) {
+        overlay.setEdge(configuration.sidebarEdge)
+        controller.setConfiguration(configuration)
+    }
+
+    /// Updates the sidebar docking edge on the overlay and controller.
+    func updateSidebarEdge(_ edge: CompactSidebarEdge) {
+        overlay.setEdge(edge)
+        var configuration = controller.state.configuration
+        configuration.sidebarEdge = edge
+        controller.setConfiguration(configuration)
+    }
+
     // MARK: - CompactModeHost
 
     func compactMode(

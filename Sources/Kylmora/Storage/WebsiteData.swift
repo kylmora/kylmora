@@ -60,6 +60,68 @@ enum WebsiteData {
         }
     }
 
+    /// Whether a target host matches an allow-listed entry (exact match, subdomains, or apex domains).
+    static func isHostAllowed(_ host: String, in allowlist: [String]) -> Bool {
+        let normHost = SiteSettingsState.normalise(host)
+        guard !normHost.isEmpty else { return false }
+        for allowed in allowlist {
+            let normAllowed = SiteSettingsState.normalise(allowed)
+            guard !normAllowed.isEmpty else { continue }
+            if normHost == normAllowed || normHost.hasSuffix("." + normAllowed) || normAllowed.hasSuffix("." + normHost) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Whether a target host matches a WebKit data record's displayName.
+    static func matches(host: String, displayName: String) -> Bool {
+        let h = SiteSettingsState.normalise(host)
+        let d = SiteSettingsState.normalise(displayName)
+        guard !h.isEmpty && !d.isEmpty else { return false }
+        if h == d { return true }
+        if h.hasSuffix("." + d) || d.hasSuffix("." + h) { return true }
+        return false
+    }
+
+    /// Removes website data on quit, preserving records that match the allowlist.
+    /// If allowlist is empty, clears all website data across all identities.
+    static func clearDataOnQuit(allowlist: [String], for identities: [Space.Identity]) async {
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        if allowlist.isEmpty {
+            await removeAll(types: types, for: identities)
+            return
+        }
+        for (_, store) in stores(for: identities) {
+            let records = await store.dataRecords(ofTypes: types)
+            let toRemove = records.filter { record in
+                !isHostAllowed(record.displayName, in: allowlist)
+            }
+            if !toRemove.isEmpty {
+                await store.removeData(ofTypes: types, for: toRemove)
+            }
+        }
+    }
+
+    /// Removes website data (cookies, storage, cache, databases) for a specific host from the given spaces.
+    static func removeData(forHost host: String, in identities: [Space.Identity]) async {
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        for (_, store) in stores(for: identities) {
+            let records = await store.dataRecords(ofTypes: types)
+            let matching = records.filter { matches(host: host, displayName: $0.displayName) }
+            if !matching.isEmpty {
+                await store.removeData(ofTypes: types, for: matching)
+            }
+        }
+    }
+
+    /// Clears all website data (cookies, storage, cache, databases) for a single space identity.
+    static func clearSpaceData(for identity: Space.Identity) async {
+        let types = WKWebsiteDataStore.allWebsiteDataTypes()
+        let store = WebEnvironment.shared.dataStore(for: identity)
+        await store.removeData(ofTypes: types, modifiedSince: .distantPast)
+    }
+
     /// What a record's types are, in words, for the list.
     static func describe(_ types: Set<String>) -> String {
         var parts: [String] = []

@@ -128,13 +128,61 @@ final class Space: Identifiable {
     /// Setting to 0 disables auto-archiving for this space.
     var archiveHours: Int?
 
+    /// Per-space downloads directory override path (e.g. "~/Downloads/Work"), or nil for global Downloads.
+    var downloadsDirectoryPath: String?
+
+    /// Dedicated bookmarks folder shown on this space's bookmarks bar, or nil for all bookmarks.
+    var bookmarkFolder: String?
+
+    /// Set of extension IDs enabled in this space. If nil, all globally enabled extensions run.
+    var enabledExtensionIDs: Set<UUID>?
+
+    /// Account or vault name used by password managers/extensions for this space (e.g. "Work", "Personal").
+    var passwordVaultAccount: String?
+
+    /// Space-specific network proxy override. When nil or disabled, browser global proxy settings apply.
+    var customProxy: ProxySettings?
+
+    /// Effective proxy settings for this space: space-specific if enabled, otherwise global.
+    var effectiveProxy: ProxySettings? {
+        if let custom = customProxy, custom.enabled {
+            return custom
+        }
+        let global = Settings.shared.proxySettings
+        return global.enabled ? global : nil
+    }
+
+    var effectiveDownloadsDirectory: URL {
+        if let path = downloadsDirectoryPath, !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let expanded = (path as NSString).expandingTildeInPath
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir) && isDir.boolValue {
+                return URL(fileURLWithPath: expanded)
+            }
+            if (try? FileManager.default.createDirectory(atPath: expanded, withIntermediateDirectories: true)) != nil {
+                return URL(fileURLWithPath: expanded)
+            }
+        }
+        return DownloadDestination.downloadsDirectory() ?? URL(fileURLWithPath: NSHomeDirectory()).appending(path: "Downloads")
+    }
+
+    var effectivePasswordAccount: String {
+        let trimmed = passwordVaultAccount?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? name : trimmed
+    }
+
     init(
         name: String,
         identity: Identity,
         theme: SpaceTheme = .default,
         border: WindowBorder = .none,
         look: SpaceLook = SpaceLook(),
-        archiveHours: Int? = nil
+        archiveHours: Int? = nil,
+        downloadsDirectoryPath: String? = nil,
+        bookmarkFolder: String? = nil,
+        enabledExtensionIDs: Set<UUID>? = nil,
+        passwordVaultAccount: String? = nil,
+        customProxy: ProxySettings? = nil
     ) {
         self.name = name
         self.identity = identity
@@ -142,6 +190,11 @@ final class Space: Identifiable {
         self.border = border
         self.look = look
         self.archiveHours = archiveHours
+        self.downloadsDirectoryPath = downloadsDirectoryPath
+        self.bookmarkFolder = bookmarkFolder
+        self.enabledExtensionIDs = enabledExtensionIDs
+        self.passwordVaultAccount = passwordVaultAccount
+        self.customProxy = customProxy
     }
 
     var activeTab: Tab? {

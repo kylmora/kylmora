@@ -89,7 +89,7 @@ final class WindowListMenu: NSObject, NSMenuDelegate {
     /// Command-1 through 9 belong to the tabs.
     private func spaceItems() -> [NSMenuItem] {
         let active = session.activeSpaceID
-        return session.spaces.enumerated().map { index, space in
+        var items = session.spaces.enumerated().map { index, space in
             let item = NSMenuItem(
                 title: space.name,
                 action: #selector(BrowserWindowController.selectSpaceByNumber(_:)),
@@ -103,6 +103,14 @@ final class WindowListMenu: NSObject, NSMenuDelegate {
                 : space.dotImage()
             return item
         }
+        items.append(.separator())
+        let clearItem = NSMenuItem(
+            title: "Clear This Space's Data\u{2026}",
+            action: #selector(BrowserWindowController.clearCurrentSpaceData(_:)),
+            keyEquivalent: ""
+        )
+        items.append(clearItem)
+        return items
     }
 
     /// The digit for a position, or none past the ninth. With `lastIsNine`

@@ -22,21 +22,15 @@ final class GlanceWebView: WKWebView {
     override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
         super.willOpenMenu(menu, with: event)
 
-        guard let record = GlanceLinkMonitor.shared.contextMenuLink(for: event, in: self) else {
-            pendingLink = nil
-            return
-        }
-        pendingLink = record.url
+        let link = GlanceLinkMonitor.shared.contextMenuLink(for: event, in: self)?.url
+        pendingLink = link
 
-        let item = NSMenuItem(title: "Open Link in Glance", action: #selector(openLinkInGlance), keyEquivalent: "")
-        item.target = self
-        // Directly under WebKit's own "Open Link in New Window", which is where
-        // the eye looks for a third way to open the same link.
-        menu.insertItem(item, at: min(2, menu.numberOfItems))
-
-        let littleArcItem = NSMenuItem(title: "Open Link in Little Arc", action: #selector(openLinkInLittleArc), keyEquivalent: "")
-        littleArcItem.target = self
-        menu.insertItem(littleArcItem, at: min(3, menu.numberOfItems))
+        ContextMenuManager.shared.customize(
+            menu: menu,
+            for: self,
+            event: event,
+            pendingLink: link
+        )
     }
 
     @objc private func openLinkInGlance() {
@@ -49,5 +43,25 @@ final class GlanceWebView: WKWebView {
     @objc private func openLinkInLittleArc() {
         guard let url = pendingLink else { return }
         GlanceLinkMonitor.shared.onOpenLittleArc?(url)
+    }
+
+    @objc private func openLinkInSplit() {
+        guard let url = pendingLink else { return }
+        GlanceLinkMonitor.shared.onOpenSplit?(url)
+    }
+
+    @objc func inspectElementFromMenu() {
+        if #available(macOS 13.3, *) {
+            isInspectable = true
+        }
+        if responds(to: Selector(("_showInspector:"))) {
+            perform(Selector(("_showInspector:")), with: nil)
+        } else if let inspector = (self as AnyObject).value(forKey: "_inspector") as? AnyObject {
+            if inspector.responds(to: Selector(("show"))) {
+                inspector.perform(Selector(("show")))
+            }
+        } else {
+            NSApp.sendAction(Selector(("showWebInspector:")), to: self, from: nil)
+        }
     }
 }

@@ -2,12 +2,13 @@ import AppKit
 import Combine
 import WebKit
 
-/// Find-in-page, driven by WebKit's own search.
+/// Find-in-page, driven by WebKit search and enhanced with regex, match counting,
+/// and scrollbar match highlights.
 ///
-/// The controller owns the bar, the state and the one web view the search
-/// applies to. It listens to `BrowserSession` rather than being told about tab
-/// changes, so installing it costs the content pane three lines and no ongoing
-/// bookkeeping.
+/// The controller owns the bar, the scrollbar marks ruler, the state and the one
+/// web view the search applies to. It listens to `BrowserSession` rather than being
+/// told about tab changes, so installing it costs the content pane three lines and
+/// no ongoing bookkeeping.
 @MainActor
 final class FindController: FindBarViewDelegate {
     /// Long enough that holding a key down does not queue a search per
@@ -16,6 +17,7 @@ final class FindController: FindBarViewDelegate {
 
     private let session: BrowserSession
     private let bar = FindBarView()
+    private let scrollbarMarks = FindScrollbarMarksView()
     private var state = FindState()
 
     private weak var webView: WKWebView?
@@ -35,19 +37,31 @@ final class FindController: FindBarViewDelegate {
         self.session = session
     }
 
-    /// Adds the bar to the content pane. Called once, after the pane's view
-    /// exists; the bar stays hidden until Cmd-F.
+    /// Adds the bar and the scrollbar marks ruler to the content container.
     func install(in host: NSView) {
         bar.delegate = self
         bar.isHidden = true
         bar.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(bar)
 
+        scrollbarMarks.translatesAutoresizingMaskIntoConstraints = false
+        scrollbarMarks.isHidden = true
+        host.addSubview(scrollbarMarks)
+
         NSLayoutConstraint.activate([
             bar.topAnchor.constraint(equalTo: host.topAnchor, constant: 12),
-            bar.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -12),
-            bar.leadingAnchor.constraint(greaterThanOrEqualTo: host.leadingAnchor, constant: 12)
+            bar.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -16),
+            bar.leadingAnchor.constraint(greaterThanOrEqualTo: host.leadingAnchor, constant: 12),
+
+            scrollbarMarks.topAnchor.constraint(equalTo: host.topAnchor),
+            scrollbarMarks.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            scrollbarMarks.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            scrollbarMarks.widthAnchor.constraint(equalToConstant: 12)
         ])
+
+        scrollbarMarks.onSelectRatio = { [weak self] ratio in
+            self?.jumpToMatchClosestTo(ratio: ratio)
+        }
 
         sessionCancellable = session.changes
             .sink { [weak self] change in
@@ -55,17 +69,9 @@ final class FindController: FindBarViewDelegate {
                 case .activeTab, .spaces, .tabs:
                     self?.syncWebView()
                 case .tab(let tab):
-                    // A tab builds its web view the first time it is shown, and
-                    // that is a `.tab` event, not an `.activeTab` one. Watching
-                    // for it means the bar picks up the page whichever order
-                    // the content pane and this controller were wired in.
                     guard let self, tab.id == self.session.activeTab?.id else { return }
                     self.syncWebView()
-                case .structure:
-                    // Filing a tab into a group does not change which page is
-                    // showing, so the find bar keeps its target.
-                    break
-                case .bookmarks:
+                case .structure, .bookmarks:
                     break
                 }
             }
@@ -95,61 +101,161 @@ final class FindController: FindBarViewDelegate {
         bar.isHidden = true
         state.clearOutcome()
         bar.update(with: state)
+        scrollbarMarks.clear()
         clearSelection()
-        // Hand the keyboard back to the page rather than to whatever AppKit
-        // would pick after the field disappears.
         if let webView { webView.window?.makeFirstResponder(webView) }
     }
 
     private func repeatSearch(_ direction: FindDirection) {
         guard canRepeat else { return }
-        // Cmd-G with the bar closed searches without opening it, matching
-        // Safari. The bar is a way to type a term, not a precondition.
         search(direction, fromCurrentMatch: false)
     }
 
     // MARK: - Searching
 
-    /// - Parameter fromCurrentMatch: collapse the page selection first, so the
-    ///   search resumes at the current match instead of stepping past it. This
-    ///   is what makes find-as-you-type stay on one match as the term grows.
     private func search(_ direction: FindDirection, fromCurrentMatch: Bool, afterTyping: Bool = false) {
         searchTask?.cancel()
         guard let webView, !state.query.isEmpty else { return }
 
         let query = state.query
-        let configuration = state.configuration(for: direction)
+        let isRegex = state.isRegex
+        let matchesCase = state.matchesCase
+
+        if isRegex {
+            do {
+                _ = try NSRegularExpression(pattern: query, options: matchesCase ? [] : [.caseInsensitive])
+            } catch {
+                state.recordInvalidRegex()
+                bar.update(with: state)
+                scrollbarMarks.clear()
+                return
+            }
+        }
+
         searchTask = Task { [weak self] in
             if afterTyping {
                 try? await Task.sleep(for: Self.typingDelay)
                 guard !Task.isCancelled else { return }
             }
-            if fromCurrentMatch {
-                await Self.runSelectionScript("window.getSelection().collapseToStart()", in: webView)
-                guard !Task.isCancelled else { return }
+
+            guard let self, self.state.query == query else { return }
+
+            if isRegex {
+                let targetIndex: Int
+                if fromCurrentMatch {
+                    targetIndex = 0
+                } else {
+                    targetIndex = (self.state.stepMatch(direction: direction) ?? 1) - 1
+                }
+
+                let result = await Self.runScanScript(
+                    query: query,
+                    matchesCase: matchesCase,
+                    isRegex: true,
+                    targetIndex: targetIndex,
+                    in: webView
+                )
+
+                guard !Task.isCancelled, self.state.query == query else { return }
+
+                if result.count > 0 {
+                    let activeIndex = targetIndex + 1
+                    self.state.record(
+                        matchFound: true,
+                        current: activeIndex,
+                        total: result.count,
+                        positions: result.positions
+                    )
+                    self.bar.update(with: self.state)
+                    self.scrollbarMarks.update(positions: result.positions, activeIndex: activeIndex)
+                } else {
+                    self.state.record(matchFound: false, current: 0, total: 0, positions: [])
+                    self.bar.update(with: self.state)
+                    self.scrollbarMarks.clear()
+                }
+            } else {
+                if fromCurrentMatch {
+                    await Self.runSelectionScript("window.getSelection().collapseToStart()", in: webView)
+                    guard !Task.isCancelled else { return }
+                }
+
+                let configuration = self.state.configuration(for: direction)
+                let findResult = try? await webView.find(query, configuration: configuration)
+                guard !Task.isCancelled, self.state.query == query else { return }
+
+                let matchFound = findResult?.matchFound ?? false
+
+                let scan = await Self.runScanScript(
+                    query: query,
+                    matchesCase: matchesCase,
+                    isRegex: false,
+                    targetIndex: nil,
+                    in: webView
+                )
+
+                guard !Task.isCancelled, self.state.query == query else { return }
+
+                if matchFound && scan.count > 0 {
+                    if fromCurrentMatch {
+                        self.state.setCurrentMatchIndex(1)
+                    } else {
+                        self.state.stepMatch(direction: direction)
+                    }
+                    self.state.record(
+                        matchFound: true,
+                        current: self.state.currentMatchIndex,
+                        total: scan.count,
+                        positions: scan.positions
+                    )
+                    self.bar.update(with: self.state)
+                    self.scrollbarMarks.update(positions: scan.positions, activeIndex: self.state.currentMatchIndex)
+                } else if matchFound {
+                    self.state.record(matchFound: true)
+                    self.bar.update(with: self.state)
+                    self.scrollbarMarks.clear()
+                } else {
+                    self.state.record(matchFound: false, current: 0, total: 0, positions: [])
+                    self.bar.update(with: self.state)
+                    self.scrollbarMarks.clear()
+                }
             }
-            // Throws only when the web view has been suspended out from under
-            // us, which means there is no page left to report an answer about.
-            guard let result = try? await webView.find(query, configuration: configuration) else { return }
-            guard !Task.isCancelled, let self, self.state.query == query else { return }
-            self.state.record(matchFound: result.matchFound)
-            self.bar.update(with: self.state)
         }
     }
 
-    /// Drops the page selection, which is the whole of what a completed find
-    /// leaves behind: the public `findString` API asks WebKit for no overlay
-    /// and no highlight, only a selection scrolled into view.
+    private func jumpToMatchClosestTo(ratio: Double) {
+        guard let webView, !state.matchPositions.isEmpty else { return }
+        let positions = state.matchPositions
+        var bestIdx = 0
+        var bestDist = Double.greatestFiniteMagnitude
+        for (idx, pos) in positions.enumerated() {
+            let dist = abs(pos - ratio)
+            if dist < bestDist {
+                bestDist = dist
+                bestIdx = idx
+            }
+        }
+
+        let activeIndex = bestIdx + 1
+        state.setCurrentMatchIndex(activeIndex)
+        bar.update(with: state)
+        scrollbarMarks.update(positions: positions, activeIndex: activeIndex)
+
+        Task {
+            _ = await Self.runScanScript(
+                query: state.query,
+                matchesCase: state.matchesCase,
+                isRegex: state.isRegex,
+                targetIndex: bestIdx,
+                in: webView
+            )
+        }
+    }
+
     private func clearSelection() {
         guard let webView else { return }
         Task { await Self.runSelectionScript("window.getSelection().removeAllRanges()", in: webView) }
     }
 
-    /// Runs in `WKContentWorld.defaultClient`, an isolated world that shares the
-    /// document but not the page's JavaScript globals, so a page cannot see or
-    /// shadow this and its own CSP does not apply. Errors are ignored on
-    /// purpose: a PDF or an `about:` document has no selection to clear, and
-    /// that is not a failure worth reporting.
     private static func runSelectionScript(_ source: String, in webView: WKWebView) async {
         _ = try? await webView.callAsyncJavaScript(
             source,
@@ -163,13 +269,9 @@ final class FindController: FindBarViewDelegate {
 
     private func syncWebView() {
         let tab = session.activeTab
-        // Asking an unloaded tab for its web view would build one, which is
-        // exactly what lazy tabs exist to avoid.
         let next = tab?.isLoaded == true ? tab?.webView() : nil
         guard next !== webView else { return }
 
-        // The bar belongs to the page it was opened on: a match highlighted in
-        // one tab means nothing in another.
         dismiss()
         webView = next
         observeNavigation(next)
@@ -184,15 +286,12 @@ final class FindController: FindBarViewDelegate {
             .sink { [weak self] _ in self?.pageDidNavigate() }
     }
 
-    /// A new document has no selection and no matches, so the last answer is
-    /// stale. The term stays in the field — the user asked for it — but nothing
-    /// is searched until they ask again, because a page that scrolled itself on
-    /// load would be a surprise.
     private func pageDidNavigate() {
         searchTask?.cancel()
         searchTask = nil
         state.clearOutcome()
         bar.update(with: state)
+        scrollbarMarks.clear()
     }
 
     // MARK: - FindBarViewDelegate
@@ -201,6 +300,7 @@ final class FindController: FindBarViewDelegate {
         guard state.setQuery(query) else {
             if state.query.isEmpty {
                 bar.update(with: state)
+                scrollbarMarks.clear()
                 clearSelection()
             }
             return
@@ -211,6 +311,7 @@ final class FindController: FindBarViewDelegate {
 
     func findBarDidChangeOptions(_ bar: FindBarView) {
         state.matchesCase = bar.matchesCaseIsOn
+        state.isRegex = bar.isRegexOn
         bar.update(with: state)
         search(.forward, fromCurrentMatch: true)
     }
@@ -218,4 +319,173 @@ final class FindController: FindBarViewDelegate {
     func findBarWantsNextMatch(_ bar: FindBarView) { findNext() }
     func findBarWantsPreviousMatch(_ bar: FindBarView) { findPrevious() }
     func findBarWantsDismissal(_ bar: FindBarView) { dismiss() }
+
+    // MARK: - DOM Script Scanning
+
+    private struct ScanResult {
+        let count: Int
+        let positions: [Double]
+        let currentIndex: Int
+        let isValid: Bool
+    }
+
+    private static let domScanScript = """
+    (function() {
+        const q = (typeof query !== 'undefined') ? query : (typeof arguments !== 'undefined' && arguments[0] ? arguments[0].query : "");
+        const mc = (typeof matchesCase !== 'undefined') ? matchesCase : (typeof arguments !== 'undefined' && arguments[0] ? arguments[0].matchesCase : false);
+        const re = (typeof isRegex !== 'undefined') ? isRegex : (typeof arguments !== 'undefined' && arguments[0] ? arguments[0].isRegex : false);
+        const target = (typeof targetIndex !== 'undefined') ? targetIndex : (typeof arguments !== 'undefined' && arguments[0] ? arguments[0].targetIndex : null);
+
+        if (!q || q.length === 0) {
+            return { count: 0, positions: [], currentIndex: 0, valid: true };
+        }
+
+        let regex;
+        if (re) {
+            try {
+                regex = new RegExp(q, mc ? 'g' : 'gi');
+            } catch(e) {
+                return { count: 0, positions: [], currentIndex: 0, valid: false };
+            }
+        }
+
+        const docHeight = Math.max(
+            document.documentElement.scrollHeight,
+            document.body ? document.body.scrollHeight : 0,
+            window.innerHeight,
+            1
+        );
+
+        const matches = [];
+        const maxMatches = 1000;
+
+        const walker = document.createTreeWalker(
+            document.body || document.documentElement,
+            NodeFilter.SHOW_TEXT,
+            {
+                acceptNode: function(node) {
+                    if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+                    const parent = node.parentElement;
+                    if (!parent) return NodeFilter.FILTER_REJECT;
+                    const tag = parent.tagName.toLowerCase();
+                    if (tag === 'script' || tag === 'style' || tag === 'noscript' || tag === 'textarea' || tag === 'input') {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    const style = window.getComputedStyle(parent);
+                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            }
+        );
+
+        let node;
+        const needle = mc ? q : q.toLowerCase();
+
+        while ((node = walker.nextNode()) && matches.length < maxMatches) {
+            const text = node.nodeValue;
+            if (re) {
+                regex.lastIndex = 0;
+                let m;
+                while ((m = regex.exec(text)) !== null && matches.length < maxMatches) {
+                    if (m[0].length === 0) {
+                        regex.lastIndex++;
+                        continue;
+                    }
+                    try {
+                        const range = document.createRange();
+                        range.setStart(node, m.index);
+                        range.setEnd(node, m.index + m[0].length);
+                        const rect = range.getBoundingClientRect();
+                        const top = rect.top + window.scrollY;
+                        matches.push({
+                            range: range,
+                            top: top,
+                            ratio: Math.max(0, Math.min(top / docHeight, 1.0))
+                        });
+                    } catch(err) {}
+                }
+            } else {
+                const haystack = mc ? text : text.toLowerCase();
+                let pos = 0;
+                while ((pos = haystack.indexOf(needle, pos)) !== -1 && matches.length < maxMatches) {
+                    try {
+                        const range = document.createRange();
+                        range.setStart(node, pos);
+                        range.setEnd(node, pos + needle.length);
+                        const rect = range.getBoundingClientRect();
+                        const top = rect.top + window.scrollY;
+                        matches.push({
+                            range: range,
+                            top: top,
+                            ratio: Math.max(0, Math.min(top / docHeight, 1.0))
+                        });
+                    } catch(err) {}
+                    pos += needle.length;
+                }
+            }
+        }
+
+        const positions = matches.map(m => m.ratio);
+        const count = matches.length;
+        let current = 0;
+
+        if (count > 0 && typeof target === 'number' && target >= 0 && target < count) {
+            current = target + 1;
+            const chosen = matches[target];
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(chosen.range);
+            if (chosen.range.startContainer.parentElement) {
+                chosen.range.startContainer.parentElement.scrollIntoView({
+                    behavior: 'auto',
+                    block: 'center',
+                    inline: 'nearest'
+                });
+            }
+        }
+
+        return {
+            count: count,
+            positions: positions,
+            currentIndex: current,
+            valid: true
+        };
+    })()
+    """
+
+    private static func runScanScript(
+        query: String,
+        matchesCase: Bool,
+        isRegex: Bool,
+        targetIndex: Int?,
+        in webView: WKWebView
+    ) async -> ScanResult {
+        var args: [String: Any] = [
+            "query": query,
+            "matchesCase": matchesCase,
+            "isRegex": isRegex
+        ]
+        if let targetIndex {
+            args["targetIndex"] = targetIndex
+        }
+
+        let raw = try? await webView.callAsyncJavaScript(
+            domScanScript,
+            arguments: args,
+            in: nil,
+            contentWorld: .defaultClient
+        )
+
+        guard let dict = raw as? [String: Any] else {
+            return ScanResult(count: 0, positions: [], currentIndex: 0, isValid: true)
+        }
+
+        let count = dict["count"] as? Int ?? 0
+        let positions = (dict["positions"] as? [NSNumber])?.map { $0.doubleValue } ?? []
+        let currentIndex = dict["currentIndex"] as? Int ?? 0
+        let valid = dict["valid"] as? Bool ?? true
+        return ScanResult(count: count, positions: positions, currentIndex: currentIndex, isValid: valid)
+    }
 }

@@ -54,6 +54,16 @@ final class BrowserSession {
     /// The split shown in each space, if it has one. Keyed by space because a
     /// split is a property of a set of tabs, and tabs belong to a space.
     private var splitsBySpace: [Space.ID: SplitLayout] = [:]
+    /// Pinned/sticky pane in the split, per space. When sticky, selecting other tabs in the sidebar
+    /// replaces the unsticky pane instead of dissolving or hiding the split.
+    private var stickyPanesBySpace: [Space.ID: Tab.ID] = [:]
+
+    private struct SplitUndoState: Sendable {
+        let spaceID: Space.ID
+        let layout: SplitLayout?
+        let activeTabID: Tab.ID?
+    }
+    private var lastSplitUndoState: SplitUndoState?
     private var saveTask: Task<Void, Never>?
 
     /// Writing on every keystroke of a page title would be wasteful; a short
@@ -99,6 +109,10 @@ final class BrowserSession {
 
         liveFolders.delegate = self
         loadBookmarks()
+
+        NetworkConfigManager.shared.spaceProxyResolver = { [weak self] identity in
+            self?.spaces.first(where: { $0.identity == identity })?.customProxy
+        }
     }
 
     // MARK: - Spaces
@@ -211,6 +225,42 @@ final class BrowserSession {
         scheduleSave()
     }
 
+    func setDownloadsDirectoryPath(_ path: String?, for space: Space) {
+        guard path != space.downloadsDirectoryPath else { return }
+        space.downloadsDirectoryPath = path
+        changes.send(.spaces)
+        scheduleSave()
+    }
+
+    func setBookmarkFolder(_ folder: String?, for space: Space) {
+        guard folder != space.bookmarkFolder else { return }
+        space.bookmarkFolder = folder
+        changes.send(.spaces)
+        scheduleSave()
+    }
+
+    func setEnabledExtensionIDs(_ ids: Set<UUID>?, for space: Space) {
+        guard ids != space.enabledExtensionIDs else { return }
+        space.enabledExtensionIDs = ids
+        changes.send(.spaces)
+        scheduleSave()
+    }
+
+    func setPasswordVaultAccount(_ account: String?, for space: Space) {
+        guard account != space.passwordVaultAccount else { return }
+        space.passwordVaultAccount = account
+        changes.send(.spaces)
+        scheduleSave()
+    }
+
+    func setCustomProxy(_ proxy: ProxySettings?, for space: Space) {
+        guard proxy != space.customProxy else { return }
+        space.customProxy = proxy
+        changes.send(.spaces)
+        scheduleSave()
+        NetworkConfigManager.shared.applyToAllStores()
+    }
+
     /// Closing a space tears down its tabs and erases its website data: the
     /// space was the identity, and an identity with no space is nothing the
     /// user can see or sign out of. The last space cannot be removed.
@@ -238,6 +288,14 @@ final class BrowserSession {
 
     func selectSpace(_ space: Space) {
         guard space.id != activeSpaceID, spaces.contains(where: { $0.id == space.id }) else { return }
+        if settings.autoPictureInPicture {
+            if let prevTab = activeSpace.activeTab, prevTab.hasPlayingVideo, !prevTab.isInPictureInPicture {
+                prevTab.requestPictureInPicture(autoTriggered: true)
+            }
+            if let nextTab = space.activeTab, nextTab.wasAutoPictureInPicture, nextTab.isInPictureInPicture {
+                nextTab.exitPictureInPicture()
+            }
+        }
         activeSpaceID = space.id
         changes.send(.spaces)
         changes.send(.tabs)
@@ -363,14 +421,54 @@ final class BrowserSession {
         activeSpace.pinnedSites.contains { $0.matches(url) }
     }
 
-    func closeTab(_ tab: Tab) {
-        guard let space = spaces.first(where: { $0.index(of: tab) != nil }) else { return }
+    /// Closes a tab, unless it is locked.
+    ///
+    /// The one door every close goes through -- the cross on the row, Cmd-W,
+    /// the context menu, "Close Other Tabs", an extension -- which is what
+    /// makes one `guard` enough to keep the promise the lock made. Returns
+    /// false when the lock refused, so a close the user aimed at a single tab
+    /// can say so while a sweep over many simply steps around it.
+    @discardableResult
+    func closeTab(_ tab: Tab) -> Bool {
+        guard !tab.isLocked else { return false }
+        guard let space = spaces.first(where: { $0.index(of: tab) != nil }) else { return false }
         remember(closing: tab, in: space)
         // A live folder must not offer the item again on its next poll.
         if let groupID = tab.groupID {
             liveFolders.tabWasRemoved(tab.id, fromFolder: groupID)
         }
+        let tabURL = tab.url
         detach(tab, from: space)
+        forgetDataIfNeeded(for: tabURL, in: space)
+        return true
+    }
+
+    /// Tells the user a lock stopped a close they asked for, and offers to lift
+    /// it. Silence would read as a broken close button; an alert would be a
+    /// heavier interruption than the mis-hit Cmd-W that usually causes this.
+    func reportCloseRefused(_ tab: Tab) {
+        showToast?(.closeRefused(tab: tab.displayTitle, unlock: { [weak tab] in
+            guard let tab else { return }
+            tab.setLocked(false)
+            self.closeTab(tab)
+        }))
+    }
+
+    private func forgetDataIfNeeded(for url: URL, in space: Space) {
+        guard let host = url.host(), !host.isEmpty else { return }
+        guard SiteSettings.shared.forgetsWhenClosed(for: url) else { return }
+        let normHost = SiteSettingsState.normalise(host)
+        guard !normHost.isEmpty else { return }
+        let hasOtherTab = allTabs.contains { other in
+            guard let otherHost = other.url.host() else { return false }
+            return SiteSettingsState.normalise(otherHost) == normHost
+        }
+        if !hasOtherTab {
+            let identities: [Space.Identity] = [space.identity, .standard]
+            Task {
+                await WebsiteData.removeData(forHost: normHost, in: identities)
+            }
+        }
     }
 
     /// Every tab in the space but this one.
@@ -387,6 +485,12 @@ final class BrowserSession {
 
     /// Closes a collection of tabs in batch.
     func closeTabs(_ tabsToClose: [Tab]) {
+        let unlockeds = tabsToClose.filter { !$0.isLocked }
+        if unlockeds.count > 1, let first = unlockeds.first,
+           let space = spaces.first(where: { $0.index(of: first) != nil }),
+           !space.isPrivate {
+            recordClosedWindow(title: "Window", tabs: unlockeds, in: space)
+        }
         for tab in tabsToClose {
             closeTab(tab)
         }
@@ -394,8 +498,11 @@ final class BrowserSession {
 
     /// Closes all unpinned tabs in the given space.
     func closeAllTabs(in space: Space) {
-        let tabs = space.tabs
-        for tab in tabs {
+        let unlockeds = space.tabs.filter { !$0.isLocked }
+        if unlockeds.count > 1 && !space.isPrivate {
+            recordClosedWindow(title: "\(space.name) Window", tabs: unlockeds, in: space)
+        }
+        for tab in space.tabs {
             closeTab(tab)
         }
     }
@@ -455,6 +562,9 @@ final class BrowserSession {
             let neighbour = space.tabs.indices.contains(index) ? space.tabs[index]
                 : space.tabs.indices.contains(index - 1) ? space.tabs[index - 1]
                 : nil
+            if let neighbour, neighbour.wasAutoPictureInPicture, neighbour.isInPictureInPicture {
+                neighbour.exitPictureInPicture()
+            }
             space.setActiveTabID(neighbour?.id)
         }
 
@@ -536,20 +646,88 @@ final class BrowserSession {
         scheduleSave()
     }
 
-    // MARK: - Closed tabs
+    // MARK: - Closed tabs and windows
 
     /// A closed tab, kept so it can come back: what it held and where it was.
-    struct ClosedTab {
+    struct ClosedTab: Identifiable, Sendable {
+        let id: UUID
         let snapshot: SessionSnapshot.Tab
         let spaceID: Space.ID
+        let closedAt: Date
+
+        init(id: UUID = UUID(), snapshot: SessionSnapshot.Tab, spaceID: Space.ID, closedAt: Date = Date()) {
+            self.id = id
+            self.snapshot = snapshot
+            self.spaceID = spaceID
+            self.closedAt = closedAt
+        }
+
+        var title: String {
+            if let custom = snapshot.customName, !custom.isEmpty { return custom }
+            if let title = snapshot.title, !title.isEmpty { return title }
+            if let host = snapshot.url.host(), !host.isEmpty { return host }
+            return snapshot.url.absoluteString
+        }
+
+        var url: URL { snapshot.url }
+    }
+
+    /// A closed window snapshot, kept so an entire closed window or batch of tabs can be restored.
+    struct ClosedWindow: Identifiable, Sendable {
+        let id: UUID
+        let title: String
+        let spaceID: Space.ID
+        let tabs: [SessionSnapshot.Tab]
+        let closedAt: Date
+
+        init(
+            id: UUID = UUID(),
+            title: String = "Window",
+            spaceID: Space.ID,
+            tabs: [SessionSnapshot.Tab],
+            closedAt: Date = Date()
+        ) {
+            self.id = id
+            self.title = title
+            self.spaceID = spaceID
+            self.tabs = tabs
+            self.closedAt = closedAt
+        }
+
+        var tabCount: Int { tabs.count }
+
+        var summaryTitle: String {
+            let countStr = "\(tabs.count) tab\(tabs.count == 1 ? "" : "s")"
+            let names = tabs.prefix(3).compactMap { tab -> String? in
+                if let custom = tab.customName, !custom.isEmpty { return custom }
+                if let title = tab.title, !title.isEmpty { return title }
+                return tab.url.host() ?? tab.url.absoluteString
+            }
+            if names.isEmpty {
+                return "\(title) (\(countStr))"
+            }
+            return "\(title) (\(countStr)) \u{2014} " + names.joined(separator: ", ")
+        }
     }
 
     /// Most recent last. In memory only: the list is gone at quit, which is
     /// what makes it safe to keep at all.
     private(set) var closedTabs: [ClosedTab] = []
-    private static let closedTabLimit = 25
+    private(set) var closedWindows: [ClosedWindow] = []
+    static let closedTabLimit = 25
+    static let closedWindowLimit = 15
 
-    var canReopenClosedTab: Bool { !closedTabs.isEmpty }
+    var canReopenClosedTab: Bool { !closedTabs.isEmpty || !closedWindows.isEmpty }
+
+    /// Returns recently closed tabs in most-recent-first order for display in menus.
+    var recentClosedTabs: [ClosedTab] {
+        Array(closedTabs.reversed())
+    }
+
+    /// Returns recently closed windows in most-recent-first order for display in menus.
+    var recentClosedWindows: [ClosedWindow] {
+        Array(closedWindows.reversed())
+    }
 
     /// Photographs a tab before it goes. A private space keeps nothing, not
     /// even this: reopening would bring back a page whose logins are gone,
@@ -562,11 +740,55 @@ final class BrowserSession {
         }
     }
 
+    /// Records a batch of tabs or an entire window being closed.
+    func recordClosedWindow(title: String = "Window", tabs: [Tab], in space: Space) {
+        guard !space.isPrivate, !tabs.isEmpty else { return }
+        let snapshots = tabs.map { $0.snapshot() }
+        closedWindows.append(ClosedWindow(title: title, spaceID: space.id, tabs: snapshots))
+        if closedWindows.count > Self.closedWindowLimit {
+            closedWindows.removeFirst(closedWindows.count - Self.closedWindowLimit)
+        }
+    }
+
+    /// Records a closed tab from a Little Arc window.
+    func recordClosedLittleArcTab(url: URL, title: String?, spaceID: Space.ID) {
+        guard let space = spaces.first(where: { $0.id == spaceID }), !space.isPrivate else { return }
+        var snapshot = SessionSnapshot.Tab(url: url)
+        snapshot.title = title
+        closedTabs.append(ClosedTab(snapshot: snapshot, spaceID: spaceID))
+        if closedTabs.count > Self.closedTabLimit {
+            closedTabs.removeFirst(closedTabs.count - Self.closedTabLimit)
+        }
+    }
+
     /// Brings the most recently closed tab back into the space it was closed
     /// from, or the active space if that one has gone, and selects it.
     @discardableResult
     func reopenClosedTab() -> Tab? {
-        guard let closed = closedTabs.popLast() else { return nil }
+        guard !closedTabs.isEmpty else {
+            if !closedWindows.isEmpty {
+                return reopenClosedWindow().last
+            }
+            return nil
+        }
+        return restore(closedTab: closedTabs.removeLast())
+    }
+
+    /// Reopens a specific closed tab by ID.
+    @discardableResult
+    func reopenClosedTab(id: UUID) -> Tab? {
+        guard let index = closedTabs.firstIndex(where: { $0.id == id }) else { return nil }
+        return restore(closedTab: closedTabs.remove(at: index))
+    }
+
+    /// Reopens a specific closed tab by index in the closedTabs array.
+    @discardableResult
+    func reopenClosedTab(at index: Int) -> Tab? {
+        guard index >= 0 && index < closedTabs.count else { return nil }
+        return restore(closedTab: closedTabs.remove(at: index))
+    }
+
+    private func restore(closedTab closed: ClosedTab) -> Tab {
         let space = spaces.first { $0.id == closed.spaceID } ?? activeSpace
         var snapshot = closed.snapshot
         // Its folder may have been deleted in the meantime; a tab pointing at
@@ -579,6 +801,67 @@ final class BrowserSession {
         if space.id != activeSpaceID { selectSpace(space) }
         insert(tab, into: space, at: space.tabs.count, select: true)
         return tab
+    }
+
+    /// Reopens the most recently closed window, restoring all its tabs.
+    @discardableResult
+    func reopenClosedWindow() -> [Tab] {
+        guard let closed = closedWindows.popLast() else { return [] }
+        return restore(closedWindow: closed)
+    }
+
+    /// Reopens a specific closed window by ID.
+    @discardableResult
+    func reopenClosedWindow(id: UUID) -> [Tab] {
+        guard let index = closedWindows.firstIndex(where: { $0.id == id }) else { return [] }
+        return restore(closedWindow: closedWindows.remove(at: index))
+    }
+
+    /// Reopens a specific closed window by index in closedWindows array.
+    @discardableResult
+    func reopenClosedWindow(at index: Int) -> [Tab] {
+        guard index >= 0 && index < closedWindows.count else { return [] }
+        return restore(closedWindow: closedWindows.remove(at: index))
+    }
+
+    private func restore(closedWindow closed: ClosedWindow) -> [Tab] {
+        let space = spaces.first { $0.id == closed.spaceID } ?? activeSpace
+        if space.id != activeSpaceID { selectSpace(space) }
+        var restoredTabs: [Tab] = []
+        for var snapshot in closed.tabs {
+            if let groupID = snapshot.groupID, space.group(withID: groupID) == nil {
+                snapshot.groupID = nil
+            }
+            snapshot.pinnedSiteID = nil
+            let tab = Tab(restoring: snapshot, identity: space.identity)
+            insert(tab, into: space, at: space.tabs.count, select: false)
+            restoredTabs.append(tab)
+        }
+        if let lastTab = restoredTabs.last {
+            selectTab(lastTab)
+        }
+        return restoredTabs
+    }
+
+    /// Reopens all recently closed tabs and windows.
+    @discardableResult
+    func reopenAllClosedTabs() -> [Tab] {
+        var restored: [Tab] = []
+        while !closedWindows.isEmpty {
+            restored.append(contentsOf: reopenClosedWindow())
+        }
+        while !closedTabs.isEmpty {
+            if let tab = reopenClosedTab() {
+                restored.append(tab)
+            }
+        }
+        return restored
+    }
+
+    /// Clears both closed tabs and closed windows history.
+    func clearRecentlyClosed() {
+        closedTabs.removeAll()
+        closedWindows.removeAll()
     }
 
     // MARK: - Archived tabs
@@ -714,6 +997,30 @@ final class BrowserSession {
     func selectTab(_ tab: Tab) {
         let space = activeSpace
         guard space.index(of: tab) != nil, space.activeTabID != tab.id else { return }
+
+        // If the space has an active split with a sticky pane, replace the unsticky pane
+        // so the user can browse tabs while keeping the stuck pane pinned on screen.
+        if let layout = splitsBySpace[space.id],
+           let stickyID = stickyPanesBySpace[space.id],
+           layout.contains(stickyID),
+           tab.id != stickyID,
+           !layout.contains(tab.id) {
+            let toReplace = layout.tabIDs.first(where: { $0 == space.activeTabID && $0 != stickyID })
+                ?? layout.tabIDs.first(where: { $0 != stickyID })
+            if let toReplace {
+                recordSplitUndoState()
+                splitsBySpace[space.id] = layout.replacing(toReplace, with: tab.id)
+            }
+        }
+
+        if settings.autoPictureInPicture {
+            if let prevTab = space.activeTab, prevTab.hasPlayingVideo, !prevTab.isInPictureInPicture {
+                prevTab.requestPictureInPicture(autoTriggered: true)
+            }
+            if tab.wasAutoPictureInPicture && tab.isInPictureInPicture {
+                tab.exitPictureInPicture()
+            }
+        }
         space.setActiveTabID(tab.id)
         changes.send(.activeTab)
         scheduleSave()
@@ -818,13 +1125,23 @@ final class BrowserSession {
     /// Deleting a group frees its tabs rather than closing them.
     /// Removes a group. Its tabs move to the main list by default (they are
     /// only ungrouped); with `closingTabs` they are closed along with the group.
-    func removeGroup(_ group: TabGroup, closingTabs: Bool = false) {
+    @discardableResult
+    func removeGroup(_ group: TabGroup, closingTabs: Bool = false) -> Bool {
+        guard !group.isLocked else { return false }
         if closingTabs {
             for tab in activeSpace.tabs.filter({ $0.groupID == group.id }) {
                 closeTab(tab)
             }
         }
         activeSpace.removeGroup(group)
+        changes.send(.structure)
+        scheduleSave()
+        return true
+    }
+
+    func setLocked(_ locked: Bool, for group: TabGroup) {
+        guard locked != group.isLocked else { return }
+        group.isLocked = locked
         changes.send(.structure)
         scheduleSave()
     }
@@ -956,12 +1273,97 @@ final class BrowserSession {
 
     func split(_ space: Space) -> SplitLayout? { splitsBySpace[space.id] }
 
+    private func recordSplitUndoState() {
+        lastSplitUndoState = SplitUndoState(
+            spaceID: activeSpaceID,
+            layout: splitsBySpace[activeSpaceID],
+            activeTabID: activeSpace.activeTabID
+        )
+    }
+
+    /// Whether there is a split layout change that can be undone in the active space.
+    var canUndoSplit: Bool {
+        lastSplitUndoState?.spaceID == activeSpaceID
+    }
+
+    /// Reverts the most recent split or unsplit action in the active space.
+    func undoSplit() {
+        guard let undo = lastSplitUndoState, undo.spaceID == activeSpaceID else {
+            unsplit()
+            return
+        }
+        let currentLayout = splitsBySpace[activeSpaceID]
+        let currentActive = activeSpace.activeTabID
+        splitsBySpace[activeSpaceID] = undo.layout
+        if let tabID = undo.activeTabID, let tab = activeSpace.tabs.first(where: { $0.id == tabID }) {
+            selectTab(tab)
+        }
+        lastSplitUndoState = SplitUndoState(
+            spaceID: activeSpaceID,
+            layout: currentLayout,
+            activeTabID: currentActive
+        )
+        changes.send(.structure)
+        changes.send(.activeTab)
+        scheduleSave()
+    }
+
+    /// Pinned/sticky state of a tab in the active space's split.
+    func isSticky(_ tabID: Tab.ID) -> Bool {
+        stickyPanesBySpace[activeSpaceID] == tabID
+    }
+
+    /// Toggles the sticky state of a pane in the active split.
+    func toggleStickPane(_ tabID: Tab.ID) {
+        if stickyPanesBySpace[activeSpaceID] == tabID {
+            stickyPanesBySpace[activeSpaceID] = nil
+        } else {
+            stickyPanesBySpace[activeSpaceID] = tabID
+        }
+        changes.send(.structure)
+        changes.send(.activeTab)
+    }
+
+    /// Locks or unlocks the currently focused pane in the active split.
+    func stickActivePane() {
+        guard let activeTab, let split = activeSplit, split.contains(activeTab.id) else { return }
+        toggleStickPane(activeTab.id)
+    }
+
+    /// Resets all panes in the active split to equal fractions.
+    func equalizeSplit() {
+        guard let layout = splitsBySpace[activeSpaceID] else { return }
+        recordSplitUndoState()
+        splitsBySpace[activeSpaceID] = layout.relaid(as: layout.grid)
+        changes.send(.structure)
+        changes.send(.activeTab)
+        scheduleSave()
+    }
+
+    /// Opens a link in the other pane of an existing split, or splits side-by-side with a new tab.
+    func openLinkInSplit(_ url: URL, from sourceTab: Tab) {
+        recordSplitUndoState()
+        let space = activeSpace
+        if let split = activeSplit, split.contains(sourceTab.id) {
+            let otherIDs = split.tabIDs.filter { $0 != sourceTab.id }
+            if let otherID = otherIDs.first, let otherTab = space.tabs.first(where: { $0.id == otherID }) {
+                otherTab.load(url)
+                selectTab(otherTab)
+                return
+            }
+        }
+        let newTab = newTab(url: url, select: false)
+        splitTabs([sourceTab, newTab], grid: .sideBySide)
+        selectTab(newTab)
+    }
+
     /// Puts these tabs on screen together, extending the active space's split if
     /// one of them is already in it.
     @discardableResult
     func splitTabs(_ tabs: [Tab], grid: SplitLayout.Grid = .grid) -> Bool {
         let ids = tabs.map(\.id)
         guard let first = tabs.first else { return false }
+        recordSplitUndoState()
 
         if var layout = splitsBySpace[activeSpaceID], ids.contains(where: layout.contains) {
             for id in ids where !layout.contains(id) {
@@ -985,6 +1387,7 @@ final class BrowserSession {
     /// Rebuilds the active split in a different arrangement.
     func relaySplit(as grid: SplitLayout.Grid) {
         guard let layout = splitsBySpace[activeSpaceID] else { return }
+        recordSplitUndoState()
         splitsBySpace[activeSpaceID] = layout.relaid(as: grid)
         changes.send(.activeTab)
         scheduleSave()
@@ -1002,6 +1405,11 @@ final class BrowserSession {
     func removeFromSplit(_ tab: Tab) {
         guard let spaceID = splitsBySpace.first(where: { $0.value.contains(tab.id) })?.key,
               let removal = splitsBySpace[spaceID]?.removing(tab.id) else { return }
+
+        recordSplitUndoState()
+        if stickyPanesBySpace[spaceID] == tab.id {
+            stickyPanesBySpace[spaceID] = nil
+        }
 
         switch removal {
         case .dissolved(let remaining):
@@ -1025,6 +1433,8 @@ final class BrowserSession {
     /// Dissolves the active split without closing anything.
     func unsplit() {
         guard splitsBySpace[activeSpaceID] != nil else { return }
+        recordSplitUndoState()
+        stickyPanesBySpace[activeSpaceID] = nil
         splitsBySpace[activeSpaceID] = nil
         changes.send(.structure)
         changes.send(.activeTab)
@@ -1119,6 +1529,21 @@ final class BrowserSession {
         await WebsiteData.removeAll(for: storedIdentities)
         settings.lastCookieDeletion = .now
         for tab in allTabs where tab.isLoaded { tab.reload() }
+    }
+
+    /// Clears cookies, cache, databases and website data for the given space,
+    /// and reloads any open tabs in that space.
+    func clearSpaceData(for space: Space) async {
+        await WebsiteData.clearSpaceData(for: space.identity)
+        for tab in space.tabs where tab.isLoaded {
+            tab.reload()
+        }
+        changes.send(.tabs)
+    }
+
+    /// Clears data for the currently active space.
+    func clearActiveSpaceData() async {
+        await clearSpaceData(for: activeSpace)
     }
 
     /// Adds bookmarks read from another browser's file, keeping the folders
@@ -1255,6 +1680,54 @@ final class BrowserSession {
         }
     }
 
+    func searchBookmarks(query: String, tag: String? = nil) async -> [Bookmark] {
+        guard let database else { return [] }
+        return (try? await database.searchBookmarks(query: query, tag: tag)) ?? []
+    }
+
+    func allBookmarkTags() async -> [String] {
+        guard let database else { return [] }
+        return (try? await database.allBookmarkTags()) ?? []
+    }
+
+    func setBookmarkTags(_ tags: [String], for url: URL) async {
+        guard let database else { return }
+        try? await database.setBookmarkTags(tags, for: url)
+        loadBookmarks()
+    }
+
+    func addBookmarkTag(_ tag: String, to url: URL) async {
+        guard let database else { return }
+        try? await database.addBookmarkTag(tag, to: url)
+        loadBookmarks()
+    }
+
+    func removeBookmarkTag(_ tag: String, from url: URL) async {
+        guard let database else { return }
+        try? await database.removeBookmarkTag(tag, from: url)
+        loadBookmarks()
+    }
+
+    func findDuplicateBookmarks() async -> [[Bookmark]] {
+        guard let database else { return [] }
+        return (try? await database.findDuplicateBookmarks()) ?? []
+    }
+
+    @discardableResult
+    func cleanupDuplicateBookmarks() async -> Int {
+        guard let database else { return 0 }
+        let count = (try? await database.cleanupDuplicateBookmarks()) ?? 0
+        if count > 0 {
+            loadBookmarks()
+        }
+        return count
+    }
+
+    func searchHistoryFullText(query: String, limit: Int = 50) async -> [FullTextHistoryResult] {
+        guard let database else { return [] }
+        return (try? await database.searchHistoryFullText(query: query, limit: limit)) ?? []
+    }
+
     // MARK: - Persistence
 
     /// Writes the session after a short delay, collapsing bursts of changes.
@@ -1298,7 +1771,8 @@ final class BrowserSession {
                             isCollapsed: $0.isCollapsed,
                             parentID: $0.parentID,
                             symbolName: $0.symbolName,
-                            isLive: $0.isLive ? true : nil
+                            isLive: $0.isLive ? true : nil,
+                            isLocked: $0.isLocked ? true : nil
                         )
                     },
                     pinnedSites: space.pinnedSites.map {
@@ -1310,7 +1784,12 @@ final class BrowserSession {
                     // out, in `archivedTabs(in:)`.
                     archivedTabs: space.isPrivate ? nil : archivedTabs
                         .filter { $0.spaceID == space.id }
-                        .map { SessionSnapshot.Archived(tab: $0.snapshot, archivedAt: $0.archivedAt) }
+                        .map { SessionSnapshot.Archived(tab: $0.snapshot, archivedAt: $0.archivedAt) },
+                    downloadsDirectoryPath: space.downloadsDirectoryPath,
+                    bookmarkFolder: space.bookmarkFolder,
+                    enabledExtensionIDs: space.enabledExtensionIDs.map(Array.init),
+                    passwordVaultAccount: space.passwordVaultAccount,
+                    customProxy: space.customProxy
                 )
             },
             activeSpaceIndex: spaces.firstIndex { $0.id == activeSpaceID } ?? 0
@@ -1348,7 +1827,12 @@ final class BrowserSession {
                 theme: SpaceTheme(storedValue: stored.theme ?? legacyTheme),
                 border: stored.border ?? .none,
                 look: stored.look ?? SpaceLook(),
-                archiveHours: stored.archiveHours
+                archiveHours: stored.archiveHours,
+                downloadsDirectoryPath: stored.downloadsDirectoryPath,
+                bookmarkFolder: stored.bookmarkFolder,
+                enabledExtensionIDs: stored.enabledExtensionIDs.map(Set.init),
+                passwordVaultAccount: stored.passwordVaultAccount,
+                customProxy: stored.customProxy
             )
             WebEnvironment.shared.setFonts(space.look.fonts, for: space.identity)
             let groups = (stored.groups ?? []).map {
@@ -1361,7 +1845,8 @@ final class BrowserSession {
                     isCollapsed: $0.isCollapsed,
                     parentID: $0.parentID,
                     symbolName: $0.symbolName,
-                    isLive: $0.isLive ?? false
+                    isLive: $0.isLive ?? false,
+                    isLocked: $0.isLocked ?? false
                 )
             }
             space.restore(
@@ -1507,6 +1992,9 @@ final class BrowserSession {
     /// Releases everything a tab holds: its WebKit content process first, then
     /// our subscription to it.
     private func forget(_ tab: Tab) {
+        if tab.isInPictureInPicture {
+            tab.exitPictureInPicture()
+        }
         tab.unload()
         tab.delegate = nil
         tabSubscriptions[tab.id] = nil
@@ -1528,6 +2016,15 @@ extension BrowserSession: TabDelegate {
     func tab(_ tab: Tab, didRetitle url: URL, to title: String) {
         guard let database, !settings.historyDisabled, !tab.isPrivate else { return }
         Task { try? await database.updateLatestVisitTitle(url: url, title: title) }
+    }
+
+    func tab(_ tab: Tab, requestsOpenInSplit url: URL) {
+        openLinkInSplit(url, from: tab)
+    }
+
+    func tab(_ tab: Tab, didExtractContent content: String, for url: URL, title: String) {
+        guard let database, !settings.historyDisabled, !tab.isPrivate else { return }
+        Task { try? await database.indexVisitContent(url: url, title: title, content: content) }
     }
 }
 

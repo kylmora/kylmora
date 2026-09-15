@@ -16,6 +16,17 @@ protocol TabDelegate: AnyObject {
     /// Titles routinely arrive after `didFinish`, and a visit written at that
     /// moment carries the host as its title until this corrects it.
     func tab(_ tab: Tab, didRetitle url: URL, to title: String)
+
+    /// A link was modifier-clicked (Option-Shift or Option-Command) to open in split view.
+    func tab(_ tab: Tab, requestsOpenInSplit url: URL)
+
+    /// A page finished loading and its plain-text content was extracted for local full-text search indexing.
+    func tab(_ tab: Tab, didExtractContent content: String, for url: URL, title: String)
+}
+
+extension TabDelegate {
+    func tab(_ tab: Tab, requestsOpenInSplit url: URL) {}
+    func tab(_ tab: Tab, didExtractContent content: String, for url: URL, title: String) {}
 }
 
 /// One browsable page.
@@ -48,8 +59,242 @@ final class Tab: Identifiable {
     /// Reported by the page; closing the tab would take it away.
     private(set) var isInPictureInPicture = false
 
+    /// Whether any audio or video media is currently playing in this tab.
+    private(set) var isPlayingMedia = false
+    /// Whether audio is actively playing in this tab.
+    private(set) var isPlayingAudio = false
+    /// Whether a video element is actively playing in this tab.
+    private(set) var hasPlayingVideo = false
+    /// Whether audio output from this tab has been muted by the user.
+    private(set) var isMuted = false
+    /// Media title reported by page or MediaSession.
+    private(set) var mediaTitle: String = ""
+    /// Media artist/creator reported by page or MediaSession.
+    private(set) var mediaArtist: String = ""
+    /// Tracks if Picture-in-Picture was automatically activated on tab/space switch,
+    /// so switching back automatically restores it to the page.
+    var wasAutoPictureInPicture = false
+
+    func setMediaState(isPlaying: Bool, hasAudio: Bool, hasVideo: Bool, isMuted: Bool, title: String, artist: String) {
+        let changed = (isPlayingMedia != isPlaying) || (isPlayingAudio != hasAudio) || (hasPlayingVideo != hasVideo) || (self.isMuted != isMuted) || (mediaTitle != title) || (mediaArtist != artist)
+        isPlayingMedia = isPlaying
+        isPlayingAudio = hasAudio
+        hasPlayingVideo = hasVideo
+        self.isMuted = isMuted
+        mediaTitle = title
+        mediaArtist = artist
+        if changed {
+            NotificationCenter.default.post(name: .tabMediaStateDidChange, object: self)
+        }
+    }
+
     func setPictureInPicture(_ active: Bool) {
+        let changed = isInPictureInPicture != active
         isInPictureInPicture = active
+        if changed {
+            NotificationCenter.default.post(name: .tabMediaStateDidChange, object: self)
+        }
+    }
+
+    func requestPictureInPicture(autoTriggered: Bool = false) {
+        if autoTriggered {
+            wasAutoPictureInPicture = true
+        }
+        guard let webView = currentWebView else { return }
+        let script = """
+        (function() {
+          if (window.__kylmoraMedia && window.__kylmoraMedia.requestPiP) {
+            return window.__kylmoraMedia.requestPiP();
+          }
+          var v = document.querySelector('video');
+          if (v) {
+            if (v.requestPictureInPicture) { v.requestPictureInPicture().catch(function(){}); return true; }
+            if (v.webkitSetPresentationMode) { v.webkitSetPresentationMode('picture-in-picture'); return true; }
+          }
+          return false;
+        })();
+        """
+        webView.evaluateJavaScript(script) { _, _ in }
+    }
+
+    func exitPictureInPicture() {
+        wasAutoPictureInPicture = false
+        guard let webView = currentWebView else { return }
+        let script = """
+        (function() {
+          if (document.pictureInPictureElement && document.exitPictureInPicture) {
+            document.exitPictureInPicture().catch(function(){});
+          }
+          var v = document.querySelector('video');
+          if (v && v.webkitSetPresentationMode) {
+            v.webkitSetPresentationMode('inline');
+          }
+        })();
+        """
+        webView.evaluateJavaScript(script) { _, _ in }
+    }
+
+    func toggleMute() {
+        setMuted(!isMuted)
+    }
+
+    func setMuted(_ muted: Bool) {
+        isMuted = muted
+        NotificationCenter.default.post(name: .tabMediaStateDidChange, object: self)
+        guard let webView = currentWebView else { return }
+        let script = """
+        (function() {
+          if (window.__kylmoraMedia && window.__kylmoraMedia.setMuted) {
+            window.__kylmoraMedia.setMuted(\(muted ? "true" : "false"));
+          } else {
+            document.querySelectorAll('audio, video').forEach(function(el) { el.muted = \(muted ? "true" : "false"); });
+          }
+        })();
+        """
+        webView.evaluateJavaScript(script) { _, _ in }
+    }
+
+    func togglePlayPause() {
+        guard let webView = currentWebView else { return }
+        let script = """
+        (function() {
+          if (window.__kylmoraMedia && window.__kylmoraMedia.togglePlayPause) {
+            window.__kylmoraMedia.togglePlayPause();
+          } else {
+            var anyPlaying = false;
+            document.querySelectorAll('audio, video').forEach(function(el) {
+              if (!el.paused && !el.ended) { anyPlaying = true; el.pause(); }
+            });
+            if (!anyPlaying) {
+              var first = document.querySelector('audio, video');
+              if (first) { first.play().catch(function(){}); }
+            }
+          }
+        })();
+        """
+        webView.evaluateJavaScript(script) { _, _ in }
+    }
+
+    /// Opens the Web Inspector developer tools for this tab.
+    func showWebInspector() {
+        guard !EnterprisePolicyManager.shared.isDeveloperToolsDisabled else {
+            NSSound.beep()
+            return
+        }
+        let wv = webView()
+        if #available(macOS 13.3, *) {
+            wv.isInspectable = true
+        }
+        if wv.responds(to: Selector(("_showInspector:"))) {
+            wv.perform(Selector(("_showInspector:")), with: nil)
+        } else if let inspector = (wv as AnyObject).value(forKey: "_inspector") as? AnyObject {
+            if inspector.responds(to: Selector(("show"))) {
+                _ = inspector.perform(Selector(("show")))
+            }
+        } else {
+            NSApp.sendAction(Selector(("showWebInspector:")), to: wv, from: nil)
+        }
+    }
+
+    /// Opens the JavaScript developer console for this tab.
+    func showJavaScriptConsole() {
+        guard !EnterprisePolicyManager.shared.isDeveloperToolsDisabled else {
+            NSSound.beep()
+            return
+        }
+        let wv = webView()
+        if #available(macOS 13.3, *) {
+            wv.isInspectable = true
+        }
+        if let inspector = (wv as AnyObject).value(forKey: "_inspector") as? AnyObject {
+            if inspector.responds(to: Selector(("showConsole"))) {
+                _ = inspector.perform(Selector(("showConsole")))
+                return
+            }
+        }
+        showWebInspector()
+    }
+
+    /// Renders an enterprise-blocked interstitial when a URL is restricted by corporate policy.
+    func showBlockedByPolicy(url: URL) {
+        let wv = webView()
+        let org = EnterprisePolicyManager.shared.organizationName
+        let escapedURL = url.absoluteString
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+        let html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Blocked by Organization Policy</title>
+        <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #1c1c1e;
+            color: #f2f2f7;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        @media (prefers-color-scheme: light) {
+            body { background-color: #f2f2f7; color: #1c1c1e; }
+            .card { background-color: #ffffff !important; border-color: #d1d1d6 !important; box-shadow: 0 4px 20px rgba(0,0,0,0.08) !important; }
+            .url-box { background-color: #e5e5ea !important; color: #d70015 !important; }
+        }
+        .card {
+            background-color: #2c2c2e;
+            border: 1px solid #3a3a3c;
+            border-radius: 16px;
+            padding: 40px;
+            max-width: 500px;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        }
+        .icon { font-size: 48px; margin-bottom: 16px; }
+        h1 { font-size: 20px; margin: 0 0 12px; font-weight: 600; }
+        p { font-size: 14px; color: #8e8e93; line-height: 1.5; margin: 0 0 20px; }
+        .url-box {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 12px;
+            background-color: #1c1c1e;
+            padding: 8px 14px;
+            border-radius: 8px;
+            color: #ff453a;
+            word-break: break-all;
+            margin-bottom: 24px;
+            display: inline-block;
+        }
+        .footer { font-size: 12px; color: #636366; margin: 0; }
+        </style>
+        </head>
+        <body>
+        <div class="card">
+        <div class="icon">🛡️</div>
+        <h1>Website Blocked by Policy</h1>
+        <p>Your organization (\(org)) has restricted access to this website in accordance with corporate security and acceptable use policies.</p>
+        <div class="url-box">\(escapedURL)</div>
+        <p class="footer">If you need access to this resource for business purposes, please contact your IT administrator.</p>
+        </div>
+        </body>
+        </html>
+        """
+        wv.loadHTMLString(html, baseURL: url)
+        self.url = url
+        self.pageTitle = "Blocked by Policy"
+    }
+
+    /// Captures a screenshot of this tab.
+    func captureScreenshot(scope: ScreenshotScope) async throws -> NSImage {
+        let wv = webView()
+        return try await ScreenshotService.capture(webView: wv, scope: scope)
     }
     private(set) var isLoading = false
     private(set) var estimatedProgress: Double = 0
@@ -82,8 +327,21 @@ final class Tab: Identifiable {
     /// costs the user nothing -- but it does not leave the sidebar.
     private var explicitlyKeepsInSidebar = false
     var keepsInSidebar: Bool {
-        explicitlyKeepsInSidebar || !SiteSettings.shared.allowsSuspension(for: url)
+        explicitlyKeepsInSidebar || isLocked || !SiteSettings.shared.allowsSuspension(for: url)
     }
+
+    /// Refuses to close. The user's answer to the mistyped Cmd-W, the stray
+    /// click on the cross, and "Close Other Tabs" reaching one tab too far.
+    ///
+    /// Deliberately stronger than the other two switches, which only overrule
+    /// policy the browser applies on its own. This one stands against the
+    /// user's own hand, so every path that closes a tab has to go through
+    /// `BrowserSession.closeTab` and be told no.
+    ///
+    /// It implies `keepsInSidebar`: a tab that may not be closed is not
+    /// quietly filed into the archive either. Not the reverse -- keeping a tab
+    /// out of the archive says nothing about whether you meant to close it.
+    private(set) var isLocked = false
 
     /// Set when the current navigation failed, cleared when a new one starts.
     private(set) var failure: NavigationFailure?
@@ -225,6 +483,14 @@ final class Tab: Identifiable {
         didChange.send()
     }
 
+    /// Set from the sidebar's menu, the row's context menu and the close
+    /// refusal's own Unlock button.
+    func setLocked(_ locked: Bool) {
+        guard locked != isLocked else { return }
+        isLocked = locked
+        didChange.send()
+    }
+
     var canGoBack: Bool { loadedWebView?.canGoBack ?? false }
     var canGoForward: Bool { loadedWebView?.canGoForward ?? false }
 
@@ -282,6 +548,7 @@ final class Tab: Identifiable {
         self.lastActiveAt = snapshot.lastActiveAt ?? .now
         self.explicitlyKeepsAwake = snapshot.keepsAwake ?? false
         self.explicitlyKeepsInSidebar = snapshot.keepsInSidebar ?? false
+        self.isLocked = snapshot.isLocked ?? false
         TabNameStore.shared.restore(snapshot.customName, for: id)
     }
 
@@ -298,7 +565,8 @@ final class Tab: Identifiable {
             // Written only when set, so a session file does not grow a pair of
             // `false`s on every tab the user never touched.
             keepsAwake: explicitlyKeepsAwake ? true : nil,
-            keepsInSidebar: explicitlyKeepsInSidebar ? true : nil
+            keepsInSidebar: explicitlyKeepsInSidebar ? true : nil,
+            isLocked: isLocked ? true : nil
         )
     }
 
@@ -498,7 +766,16 @@ final class Tab: Identifiable {
         // Only real web pages belong in history; `about:` and `data:` do not.
         guard let scheme = url.scheme, scheme == "http" || scheme == "https" else { return }
         reportedVisitURL = url
-        delegate?.tab(self, didVisit: url, title: displayTitle)
+        let title = displayTitle
+        delegate?.tab(self, didVisit: url, title: title)
+
+        if !isPrivate {
+            let script = "(function() { return (document.body && (document.body.innerText || document.body.textContent)) || ''; })()"
+            currentWebView?.evaluateJavaScript(script) { [weak self, weak delegate] result, _ in
+                guard let self, let text = result as? String, !text.isEmpty else { return }
+                delegate?.tab(self, didExtractContent: text, for: url, title: title)
+            }
+        }
     }
 }
 
@@ -572,7 +849,11 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
         tab?.navigationFailed(error)
     }
 
-    // MARK: - Downloads
+    private static func isSplitLinkChord(_ flags: NSEvent.ModifierFlags) -> Bool {
+        let considered: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+        let masked = flags.intersection(considered)
+        return masked == [.option, .shift] || masked == [.option, .command] || masked == [.control, .option]
+    }
 
     /// `<a download>` and anything else WebKit marks as a download before the
     /// navigation starts.
@@ -583,6 +864,19 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
         preferences: WKWebpagePreferences,
         decisionHandler: @escaping @MainActor (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
     ) {
+        // Modifier-click (Option-Shift or Option-Command) opens the link in the other split pane,
+        // or splits the tab side-by-side if not already in a split.
+        if navigationAction.navigationType == .linkActivated,
+           let url = navigationAction.request.url,
+           Self.isSplitLinkChord(navigationAction.modifierFlags),
+           GlanceInvocation.isPermittedTarget(url) {
+            decisionHandler(.cancel, preferences)
+            if let tab {
+                tab.delegate?.tab(tab, requestsOpenInSplit: url)
+            }
+            return
+        }
+
         // Option-click on a link opens a glance instead of navigating. Decided
         // here because this is the only place that sees the modifier flags and
         // the destination before anything is loaded.
@@ -597,6 +891,14 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
         if let url, let scheme = url.scheme?.lowercased(), !Self.webSchemes.contains(scheme) {
             handOff(url, from: webView.url)
             decisionHandler(.cancel, preferences)
+            return
+        }
+        // Enterprise corporate policy URL filtering
+        if let url,
+           navigationAction.targetFrame?.isMainFrame ?? true,
+           EnterprisePolicyManager.shared.isURLBlocked(url) {
+            decisionHandler(.cancel, preferences)
+            tab?.showBlockedByPolicy(url: url)
             return
         }
         if navigationAction.targetFrame?.isMainFrame ?? true,
@@ -615,7 +917,7 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
             preferences.preferredContentMode = sites.prefersMobile(for: url) ? .mobile : .desktop
             webView.customUserAgent = sites.userAgent(for: url)
             ContentBlocker.shared.applySiteChoice(for: url, to: webView.configuration.userContentController)
-            SitePolicy.shared.apply(for: url, to: webView.configuration.userContentController)
+            SitePolicy.shared.apply(for: url, to: webView.configuration.userContentController, spaceIdentity: tab?.identity)
             BoostCoordinator.shared.apply(for: url, to: webView.configuration.userContentController)
         }
         if navigationAction.shouldPerformDownload {
@@ -738,3 +1040,8 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
         DownloadManager.shared.adopt(download)
     }
 }
+
+extension Notification.Name {
+    static let tabMediaStateDidChange = Notification.Name("tabMediaStateDidChange")
+}
+

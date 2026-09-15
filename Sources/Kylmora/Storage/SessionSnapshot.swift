@@ -33,6 +33,10 @@ struct SessionSnapshot: Codable, Equatable {
         /// before the locks existed.
         var keepsAwake: Bool?
         var keepsInSidebar: Bool?
+        /// The tab refuses to close. Absent for the ordinary tab, and for
+        /// sessions written before the lock existed -- which restore unlocked,
+        /// the only safe direction: a lock nobody set is a tab nobody can shut.
+        var isLocked: Bool?
     }
 
     struct Space: Codable, Equatable {
@@ -69,6 +73,53 @@ struct SessionSnapshot: Codable, Equatable {
         /// position, so anything filed by space id would not survive a reorder.
         /// Absent in sessions written before archiving existed.
         var archivedTabs: [Archived]?
+        var downloadsDirectoryPath: String?
+        var bookmarkFolder: String?
+        var enabledExtensionIDs: [UUID]?
+        var passwordVaultAccount: String?
+        var customProxy: ProxySettings?
+
+        init(
+            name: String,
+            symbolName: String? = nil,
+            tint: String? = nil,
+            tabs: [Tab] = [],
+            activeTabIndex: Int? = nil,
+            profileID: UUID? = nil,
+            identity: Kylmora.Space.Identity? = nil,
+            theme: String? = nil,
+            border: WindowBorder? = nil,
+            look: SpaceLook? = nil,
+            groups: [Group]? = nil,
+            pinnedSites: [Pinned]? = nil,
+            archiveHours: Int? = nil,
+            archivedTabs: [Archived]? = nil,
+            downloadsDirectoryPath: String? = nil,
+            bookmarkFolder: String? = nil,
+            enabledExtensionIDs: [UUID]? = nil,
+            passwordVaultAccount: String? = nil,
+            customProxy: ProxySettings? = nil
+        ) {
+            self.name = name
+            self.symbolName = symbolName
+            self.tint = tint
+            self.tabs = tabs
+            self.activeTabIndex = activeTabIndex
+            self.profileID = profileID
+            self.identity = identity
+            self.theme = theme
+            self.border = border
+            self.look = look
+            self.groups = groups
+            self.pinnedSites = pinnedSites
+            self.archiveHours = archiveHours
+            self.archivedTabs = archivedTabs
+            self.downloadsDirectoryPath = downloadsDirectoryPath
+            self.bookmarkFolder = bookmarkFolder
+            self.enabledExtensionIDs = enabledExtensionIDs
+            self.passwordVaultAccount = passwordVaultAccount
+            self.customProxy = customProxy
+        }
     }
 
     /// A tab that left the sidebar on its own. Kept whole, so restoring it
@@ -96,6 +147,9 @@ struct SessionSnapshot: Codable, Equatable {
         /// Whether a provider maintains this folder's contents. The provider
         /// itself lives in `live-folders.json`, keyed by this group's id.
         var isLive: Bool?
+        /// The folder refuses to be deleted. Absent for the ordinary folder and
+        /// for sessions written before the lock existed.
+        var isLocked: Bool?
     }
 
     struct Pinned: Codable, Equatable {

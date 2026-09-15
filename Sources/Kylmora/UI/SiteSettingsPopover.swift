@@ -20,8 +20,12 @@ final class SiteSettingsPopover: NSViewController {
     /// means "checked".
     private let checkboxes: [(category: SiteSettingCategory, onID: String, label: String)] = [
         (.contentBlockers, "on", "Enable Content Blockers"),
+        (.antiFingerprinting, "on", "Anti-Fingerprinting Protection"),
+        (.blockHostileBehaviour, "on", "Block Hostile Page Behaviour"),
+        (.nativeVideoPlayer, "on", "Native Video Player (PiP, Background)"),
         (.javaScript, "on", "Enable JavaScript"),
         (.cookies, "allow", "Enable Cookies"),
+        (.forgetWhenClosed, "on", "Forget Data When Closed"),
         (.webFonts, "allow", "Enable Web Fonts"),
         (.readerMode, "on", "Enable Reader Mode"),
         (.sslCheck, "on", "Check SSL Certificate")
