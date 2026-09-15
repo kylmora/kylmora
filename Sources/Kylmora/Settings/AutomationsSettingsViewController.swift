@@ -342,7 +342,7 @@ final class AutomationEditorViewController: NSViewController {
     private let shortcutButton = NSButton(title: "Record Shortcut", target: nil, action: nil)
     private let shortcutClear = NSButton(title: "Clear", target: nil, action: nil)
     private var shortcutRow: SettingsFormRow?
-    private var shortcutMonitor: Any?
+    private let recorder = KeyStrokeRecorder()
 
     static let idleChoices = [5, 15, 30, 60, 120, 240, 480]
 
@@ -492,35 +492,21 @@ final class AutomationEditorViewController: NSViewController {
 
     /// The next stroke becomes the command's shortcut; Escape leaves it.
     @objc private func recordShortcut() {
-        stopRecordingShortcut()
         shortcutButton.title = "Press keys\u{2026}"
-        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            let keyCode = event.keyCode
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            let chars = event.charactersIgnoringModifiers ?? ""
-            // A `Bool` crosses the isolation check; the event itself stays put.
-            let swallow = MainActor.assumeIsolated { () -> Bool in
-                guard let self else { return false }
-                if keyCode == 53 {
-                    self.stopRecordingShortcut()
-                    self.updateShortcutTitle()
-                    return true
-                }
-                guard !chars.isEmpty, !flags.isEmpty else { return true }
-                let key = chars.lowercased()
-                if let taken = ShortcutManager.shared.findConflict(key: key, modifiers: flags) {
-                    ShortcutManager.shared.clearShortcut(id: taken.id)
-                }
-                if let other = ShortcutManager.shared.conflictingCommand(key: key, modifiers: flags, excluding: self.shortcutID) {
-                    ShortcutManager.shared.clearShortcut(id: other)
-                }
-                ShortcutManager.shared.setShortcut(id: self.shortcutID, key: key, modifiers: flags)
-                self.stopRecordingShortcut()
-                self.updateShortcutTitle()
-                return true
+        recorder.start(onStroke: { [weak self] stroke in
+            guard let self, KeyStrokeRecorder.isBindable(stroke) else { return false }
+            if let taken = ShortcutManager.shared.findConflict(key: stroke.key, modifiers: stroke.modifiers) {
+                ShortcutManager.shared.clearShortcut(id: taken.id)
             }
-            return swallow ? nil : event
-        }
+            if let other = ShortcutManager.shared.conflictingCommand(key: stroke.key, modifiers: stroke.modifiers, excluding: self.shortcutID) {
+                ShortcutManager.shared.clearShortcut(id: other)
+            }
+            ShortcutManager.shared.setShortcut(id: self.shortcutID, key: stroke.key, modifiers: stroke.modifiers)
+            self.updateShortcutTitle()
+            return true
+        }, onCancel: { [weak self] in
+            self?.updateShortcutTitle()
+        })
     }
 
     @objc private func clearShortcut() {
@@ -528,10 +514,6 @@ final class AutomationEditorViewController: NSViewController {
         updateShortcutTitle()
     }
 
-    private func stopRecordingShortcut() {
-        if let shortcutMonitor { NSEvent.removeMonitor(shortcutMonitor) }
-        shortcutMonitor = nil
-    }
 
     @objc private func triggerChanged() { updateTriggerRows() }
     @objc private func actionToggled() { updateActionControls() }
@@ -577,11 +559,5 @@ final class AutomationEditorViewController: NSViewController {
 
     @objc private func cancel() { dismissSheet() }
 
-    private func dismissSheet() {
-        if presentingViewController != nil {
-            presentingViewController?.dismiss(self)
-        } else if let window = view.window, let parent = window.sheetParent {
-            parent.endSheet(window)
-        }
-    }
+    private func dismissSheet() { endSheetOrDismiss() }
 }

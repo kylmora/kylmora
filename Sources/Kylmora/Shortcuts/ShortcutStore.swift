@@ -5,30 +5,21 @@ import Foundation
 final class ShortcutStore {
     static let shared = ShortcutStore()
 
-    private let fileURL: URL
+    private let file: JSONFile<[String: CustomShortcut]>
     private(set) var customShortcuts: [String: CustomShortcut] = [:]
     var onChange: (() -> Void)?
 
     init(fileURL: URL = AppPaths.supportDirectory.appending(path: "shortcuts.json")) {
-        self.fileURL = fileURL
+        file = JSONFile(fileURL)
         load()
     }
 
     func load() {
-        guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)),
-              let data = try? Data(contentsOf: fileURL),
-              let loaded = try? JSONDecoder().decode([String: CustomShortcut].self, from: data) else {
-            return
-        }
-        self.customShortcuts = loaded
+        if let loaded = file.load() { customShortcuts = loaded }
     }
 
     func save() {
-        AppPaths.ensureSupportDirectory()
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(customShortcuts) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        try? file.save(customShortcuts)
         onChange?()
     }
 

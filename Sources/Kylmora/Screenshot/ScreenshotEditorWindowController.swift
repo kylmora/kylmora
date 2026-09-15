@@ -291,17 +291,7 @@ final class AnnotationCanvas: NSView {
     }
 
     private func promptForText(at point: CGPoint) {
-        let alert = NSAlert()
-        alert.messageText = "Add text"
-        alert.addButton(withTitle: "Add")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        field.placeholderString = "Text"
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let text = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !text.isEmpty else { return }
+        guard let text = TextPrompt.ask(title: "Add text", message: "", placeholder: "Text", confirm: "Add"), !text.isEmpty else { return }
         add(.text(text, at: point, color: color, size: 22))
     }
 }

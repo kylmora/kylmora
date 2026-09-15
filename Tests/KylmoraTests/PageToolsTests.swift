@@ -4,8 +4,6 @@ import Testing
 import WebKit
 @testable import Kylmora
 
-private final class MenuDelegateStub: NSObject, NSMenuDelegate {}
-
 @Suite("Print, export, view source, copy as text")
 @MainActor
 struct PageToolsTests {

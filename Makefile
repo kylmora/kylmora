@@ -36,8 +36,16 @@ TESTING_PLUGINS := $(shell xcode-select -p)/usr/lib/swift/host/plugins/testing
 
 all: bundle
 
+# Release builds are optimised for size and dead code is dropped at link:
+# the app is a shell over WebKit, so its own code is rarely the hot path.
+ifeq ($(CONFIG),release)
+SWIFT_FLAGS := -Xswiftc -Osize -Xlinker -dead_strip
+else
+SWIFT_FLAGS :=
+endif
+
 build:
-	swift build -c $(CONFIG)
+	swift build -c $(CONFIG) $(SWIFT_FLAGS)
 
 # The app icon is generated from the K mark; see Tools/make-icon.py.
 icon: $(ICON)
@@ -52,6 +60,10 @@ bundle: build $(ICON)
 	@cp "$(ICON)" "$(APP_BUNDLE)/Contents/Resources/"
 	@printf 'APPL????' > "$(APP_BUNDLE)/Contents/PkgInfo"
 	@cp "$(BIN)" "$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)"
+ifeq ($(CONFIG),release)
+	@# The symbol table is not needed to run: stripping it halves the binary.
+	@strip -x -S "$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)"
+endif
 	@# Not "kylmora": the file system is case-insensitive and that is the app binary.
 	@cp Tools/kylmora "$(APP_BUNDLE)/Contents/MacOS/kylmora-cli" && chmod +x "$(APP_BUNDLE)/Contents/MacOS/kylmora-cli"
 ifeq ($(strip $(DEV_ID)),)

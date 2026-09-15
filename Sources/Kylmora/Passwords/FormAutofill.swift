@@ -164,16 +164,12 @@ final class AutofillStore {
     }
 
     private(set) var contents: Contents
-    private let fileURL: URL
+    private let file: JSONFile<Contents>
     var onChange: (() -> Void)?
 
     init(fileURL: URL = AppPaths.supportDirectory.appending(path: "autofill.json")) {
-        self.fileURL = fileURL
-        if let data = try? Data(contentsOf: fileURL), let loaded = try? JSONDecoder().decode(Contents.self, from: data) {
-            contents = loaded
-        } else {
-            contents = Contents()
-        }
+        file = JSONFile(fileURL)
+        contents = file.load() ?? Contents()
     }
 
     var identities: [AutofillIdentity] { contents.identities }
@@ -216,12 +212,7 @@ final class AutofillStore {
     }
 
     private func persist() {
-        AppPaths.ensureSupportDirectory()
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        if let data = try? encoder.encode(contents) {
-            try? data.write(to: fileURL, options: .atomic)
-        }
+        try? file.save(contents)
         onChange?()
     }
 }

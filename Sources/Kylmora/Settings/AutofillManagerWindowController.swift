@@ -234,10 +234,7 @@ final class IdentityEditorViewController: NSViewController {
 
     @objc private func cancel() { dismissSheet() }
 
-    private func dismissSheet() {
-        guard let window = view.window else { return }
-        window.sheetParent?.endSheet(window)
-    }
+    private func dismissSheet() { endSheetOrDismiss() }
 }
 
 /// A form for one new card. The number goes straight to the Keychain.
@@ -311,8 +308,5 @@ final class CardEditorViewController: NSViewController {
 
     @objc private func cancel() { dismissSheet() }
 
-    private func dismissSheet() {
-        guard let window = view.window else { return }
-        window.sheetParent?.endSheet(window)
-    }
+    private func dismissSheet() { endSheetOrDismiss() }
 }

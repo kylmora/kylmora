@@ -161,14 +161,7 @@ final class ContentTopBar: NSView {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
+        trackingArea = installHoverTracking(replacing: trackingArea)
     }
 
     override func mouseEntered(with event: NSEvent) { onHoverChanged?(true) }

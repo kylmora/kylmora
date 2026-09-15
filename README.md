@@ -8,7 +8,7 @@
 **A lightweight, native macOS browser.** An AppKit shell over the system WebKit,
 one window with Spaces inside it, and no bundled engine or third-party
 dependencies. The whole app is a few hundred Swift files linking only Apple's
-frameworks, and the release bundle is about 11 MB.
+frameworks, and the release bundle is about 5 MB.
 
 <p align="center">
   <img src="assets/screenshot.png" alt="Kylmora's vertical sidebar with Spaces, pinned sites and tab groups" width="440">
@@ -356,7 +356,7 @@ What is not built yet is in [docs/roadmap.md](docs/roadmap.md).
 
 ## Performance
 
-The release bundle is about 11 MB with no bundled frameworks and no package
+The release bundle is about 5 MB with no bundled frameworks and no package
 dependencies. Earlier figures from `make measure` on Apple silicon, before
 most of the features above: launch to window in about half a second, a
 footprint of a few tens of megabytes for the browser process, and one WebKit

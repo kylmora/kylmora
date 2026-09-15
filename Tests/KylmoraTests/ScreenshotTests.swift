@@ -3,8 +3,6 @@ import AppKit
 import WebKit
 @testable import Kylmora
 
-private final class MockMenuDelegate: NSObject, NSMenuDelegate {}
-
 @Suite("Screenshots and Page Capture (F-18)")
 @MainActor
 struct ScreenshotTests {
@@ -119,7 +117,7 @@ struct ScreenshotTests {
 
     @Test("MainMenu contains Capture Screenshot submenu under File menu")
     func testMainMenuSubmenu() {
-        let mock = MockMenuDelegate()
+        let mock = MenuDelegateStub()
         let menu = MainMenu.build(
             bookmarks: mock,
             history: mock,

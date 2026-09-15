@@ -232,18 +232,12 @@ final class WebsitesSettingsViewController: NSViewController, SettingsWidePane {
     @objc private func addSite() {
         let category = category
         let suggested = currentPageURL?()?.host().map(SiteSettingsState.normalise) ?? ""
-        let alert = NSAlert()
-        alert.messageText = "Add a website"
-        alert.informativeText = "Its own \(category.title.lowercased()) setting will start as the default."
-        alert.addButton(withTitle: "Add")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        field.stringValue = suggested
-        field.placeholderString = "example.com"
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let host = SiteSettingsState.normalise(field.stringValue)
+        guard let typed = TextPrompt.ask(
+            title: "Add a website",
+            message: "Its own \(category.title.lowercased()) setting will start as the default.",
+            initial: suggested, placeholder: "example.com", confirm: "Add"
+        ) else { return }
+        let host = SiteSettingsState.normalise(typed)
         guard !host.isEmpty else { return }
         let option = SiteSettings.shared.state.defaultOption(for: category)
         SiteSettings.shared.update { $0.set(option, for: host, in: category) }

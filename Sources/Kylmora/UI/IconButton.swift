@@ -104,14 +104,7 @@ final class IconButton: NSButton {
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        if let trackingArea { removeTrackingArea(trackingArea) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(area)
-        trackingArea = area
+        trackingArea = installHoverTracking(replacing: trackingArea)
         // Re-registered on every move or resize, which is also when a stale
         // hover from a missed exit is most likely; resync it from the pointer.
         isHovered = isPointerInside

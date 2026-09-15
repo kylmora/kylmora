@@ -3,7 +3,6 @@ import Foundation
 import Testing
 @testable import Kylmora
 
-private final class FakeMenuDelegate: NSObject, NSMenuDelegate {}
 
 @Suite("Safari-Style Tab Overview Grid (F-37)")
 @MainActor
@@ -233,7 +232,7 @@ struct TabOverviewTests {
         #expect(cmd?.title == "Show Tab Overview")
         #expect(cmd?.shortcut == "⇧⌘\\")
 
-        let delegate = FakeMenuDelegate()
+        let delegate = MenuDelegateStub()
         let menu = MainMenu.build(bookmarks: delegate, history: delegate, tabs: delegate, pinnedSites: delegate, spaces: delegate)
         let viewMenu = menu.items.first { $0.title == "View" }?.submenu
         let overviewItem = viewMenu?.items.first { $0.action == #selector(BrowserWindowController.toggleTabOverview(_:)) }

@@ -3,8 +3,6 @@ import Foundation
 import Testing
 @testable import Kylmora
 
-private final class MenuStub: NSObject, NSMenuDelegate {}
-
 @Suite("Tab housekeeping, auto reload, notes, Quick Look and What's New")
 @MainActor
 struct SmallFeaturesTests {
@@ -96,7 +94,7 @@ struct SmallFeaturesTests {
 
     @Test("The File menu carries Close Duplicate Tabs and Sort Tabs By, and the palette knows them")
     func menus() {
-        let stub = MenuStub()
+        let stub = MenuDelegateStub()
         let menu = MainMenu.build(bookmarks: stub, history: stub, tabs: stub, pinnedSites: stub, spaces: stub)
         let file = menu.items.first { $0.title == "File" }?.submenu
         #expect(file?.items.contains { $0.title == "Close Duplicate Tabs" } == true)

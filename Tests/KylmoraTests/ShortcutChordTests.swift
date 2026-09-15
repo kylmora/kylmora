@@ -3,8 +3,6 @@ import Foundation
 import Testing
 @testable import Kylmora
 
-private final class MenuStub: NSObject, NSMenuDelegate {}
-
 @Suite("Chords, custom-command keys and the cheat sheet")
 @MainActor
 struct ShortcutChordTests {
@@ -105,7 +103,7 @@ struct ShortcutChordTests {
 
     @Test("Help ▸ Keyboard Shortcuts is on ⌘/ and the palette knows it")
     func menu() {
-        let stub = MenuStub()
+        let stub = MenuDelegateStub()
         let menu = MainMenu.build(bookmarks: stub, history: stub, tabs: stub, pinnedSites: stub, spaces: stub)
         let help = menu.items.last
         #expect(help?.title == "Help")
@@ -122,8 +120,7 @@ struct MenuKeyUniquenessTests {
     @Test("No two menu items claim the same key with the same modifiers")
     func unique() {
         let stub = NSObject()
-        final class Stub: NSObject, NSMenuDelegate {}
-        let delegate = Stub()
+        let delegate = MenuDelegateStub()
         _ = stub
         let menu = MainMenu.build(bookmarks: delegate, history: delegate, tabs: delegate, pinnedSites: delegate, spaces: delegate)
         var seen: [String: String] = [:]

@@ -35,7 +35,7 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane,
 
     private var filteredDefinitions: [ShortcutDefinition] = []
     private var recordingDefinitionID: String?
-    private var keyMonitor: Any?
+    private let recorder = KeyStrokeRecorder()
     /// A stroke just recorded, waiting a moment for a chord's second key.
     private var pendingStroke: (key: String, modifiers: NSEvent.ModifierFlags)?
     private var chordTimer: Timer?
@@ -351,43 +351,30 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane,
         recordingDefinitionID = id
         tableView.reloadData()
 
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, let targetID = self.recordingDefinitionID else { return event }
-
-            // Escape cancels recording
-            if event.keyCode == 53 {
-                self.stopRecording()
-                return nil
-            }
+        recorder.start(onStroke: { [weak self] stroke in
+            guard let self, let targetID = self.recordingDefinitionID else { return true }
 
             // Backspace / Delete resets shortcut to default
-            if event.keyCode == 51 || event.keyCode == 117 {
+            if stroke.keyCode == 51 || stroke.keyCode == 117 {
                 self.manager.resetShortcut(id: targetID)
                 self.stopRecording()
-                return nil
+                return true
             }
-
-            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            guard let chars = event.charactersIgnoringModifiers, !chars.isEmpty else { return nil }
 
             // A plain key right after a recorded stroke makes it a chord:
             // "⌘K, then T".
-            if let pending = self.pendingStroke, flags.isEmpty, chars.count == 1, chars.first!.isLetter || chars.first!.isNumber {
+            if let pending = self.pendingStroke, stroke.modifiers.isEmpty, stroke.key.count == 1,
+               stroke.key.first!.isLetter || stroke.key.first!.isNumber {
                 self.chordTimer?.invalidate()
                 self.pendingStroke = nil
-                self.manager.setChord(id: targetID, key: pending.key, modifiers: pending.modifiers, secondKey: chars.lowercased())
+                self.manager.setChord(id: targetID, key: pending.key, modifiers: pending.modifiers, secondKey: stroke.key)
                 self.stopRecording()
-                return nil
+                return true
             }
 
-            // Require at least one modifier flag, unless the key itself is a
-            // function/special key (arrows, F-keys live in U+F700-U+F8FF and
-            // arrive with no device-independent flags set).
-            guard !flags.isEmpty || chars.unicodeScalars.contains(where: { (0xF700...0xF8FF).contains($0.value) }) else {
-                return nil
-            }
-
-            let key = chars.lowercased()
+            guard KeyStrokeRecorder.isBindable(stroke) else { return false }
+            let key = stroke.key
+            let flags = stroke.modifiers
 
             // Conflict detection
             if let conflict = self.manager.findConflict(key: key, modifiers: flags, excluding: targetID) {
@@ -397,7 +384,6 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane,
                 alert.informativeText = "The shortcut \"\(keyStr)\" is already assigned to \"\(conflict.title)\". Do you want to reassign it?"
                 alert.addButton(withTitle: "Reassign")
                 alert.addButton(withTitle: "Cancel")
-
                 if alert.runModal() == .alertFirstButtonReturn {
                     self.manager.clearShortcut(id: conflict.id)
                     self.manager.setShortcut(id: targetID, key: key, modifiers: flags)
@@ -413,15 +399,14 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane,
             self.chordTimer = Timer.scheduledTimer(withTimeInterval: ShortcutDispatcher.chordWindow, repeats: false) { [weak self] _ in
                 MainActor.assumeIsolated { self?.stopRecording() }
             }
-            return nil
-        }
+            return false
+        }, onCancel: { [weak self] in
+            self?.stopRecording()
+        })
     }
 
     private func stopRecording() {
-        if let monitor = keyMonitor {
-            NSEvent.removeMonitor(monitor)
-            keyMonitor = nil
-        }
+        recorder.stop()
         chordTimer?.invalidate()
         chordTimer = nil
         pendingStroke = nil

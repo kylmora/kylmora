@@ -3,8 +3,6 @@ import Foundation
 import Testing
 @testable import Kylmora
 
-private final class MenuStub: NSObject, NSMenuDelegate {}
-
 @Suite("Screenshot annotation")
 @MainActor
 struct ScreenshotAnnotationTests {
@@ -105,7 +103,7 @@ struct ScreenshotAnnotationTests {
 
     @Test("The editor is reachable from the menu, the palette and the shortcut list")
     func wiring() {
-        let stub = MenuStub()
+        let stub = MenuDelegateStub()
         let menu = MainMenu.build(bookmarks: stub, history: stub, tabs: stub, pinnedSites: stub, spaces: stub)
         let file = menu.items.first { $0.title == "File" }?.submenu
         let capture = file?.items.first { $0.title == "Capture Screenshot" }?.submenu

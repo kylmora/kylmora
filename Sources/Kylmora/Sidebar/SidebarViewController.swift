@@ -1738,34 +1738,22 @@ final class SidebarViewController: NSViewController {
 
     @objc private func editEmojiFromMenu(_ sender: Any?) {
         guard let tab = tab(from: sender) else { return }
-        let alert = NSAlert()
-        alert.messageText = "Emoji for This Tab"
-        alert.informativeText = "Shown in place of the favicon. Leave it empty to go back to the favicon."
-        alert.addButton(withTitle: "Set")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
-        field.stringValue = tab.emoji ?? ""
-        field.placeholderString = "🚀"
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        tab.setEmoji(field.stringValue)
+        guard let emoji = TextPrompt.ask(
+            title: "Emoji for This Tab",
+            message: "Shown in place of the favicon. Leave it empty to go back to the favicon.",
+            initial: tab.emoji ?? "", placeholder: "🚀", confirm: "Set", width: 120
+        ) else { return }
+        tab.setEmoji(emoji)
     }
 
     @objc private func editNoteFromMenu(_ sender: Any?) {
         guard let tab = tab(from: sender) else { return }
-        let alert = NSAlert()
-        alert.messageText = tab.note == nil ? "Add a Note" : "Edit the Note"
-        alert.informativeText = "Shown when you hover the tab. Leave it empty to remove the note."
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        field.stringValue = tab.note ?? ""
-        field.placeholderString = "Why this tab is open"
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        tab.setNote(field.stringValue)
+        guard let note = TextPrompt.ask(
+            title: tab.note == nil ? "Add a Note" : "Edit the Note",
+            message: "Shown when you hover the tab. Leave it empty to remove the note.",
+            initial: tab.note ?? "", placeholder: "Why this tab is open", confirm: "Save", width: 280
+        ) else { return }
+        tab.setNote(note)
     }
 
     @objc private func setTabColorFromMenu(_ sender: Any?) {
@@ -1780,18 +1768,12 @@ final class SidebarViewController: NSViewController {
         // The current custom name, or nothing: clearing the field puts the
         // page's own title back, so the prompt must not seed it with
         // a title the user never typed.
-        let alert = NSAlert()
-        alert.messageText = "Rename Tab"
-        alert.informativeText = "Leave it empty to go back to the page's own title."
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
-        field.stringValue = tab.customName ?? ""
-        field.placeholderString = tab.displayTitle
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        session.rename(tab, to: field.stringValue)
+        guard let name = TextPrompt.ask(
+            title: "Rename Tab",
+            message: "Leave it empty to go back to the page's own title.",
+            initial: tab.customName ?? "", placeholder: tab.displayTitle, width: 220
+        ) else { return }
+        session.rename(tab, to: name)
     }
 
     /// The deliberate, single-tab close. Refusal is reported here rather than
@@ -1974,20 +1956,8 @@ final class SidebarViewController: NSViewController {
     /// Small modal text prompt. AppKit has no stock one-field input sheet, so an
     /// alert with an accessory field is the shortest honest version.
     private func prompt(title: String, message: String, initial: String) -> String? {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
-        field.stringValue = initial
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? nil : name
+        guard let name = TextPrompt.ask(title: title, message: message, initial: initial, width: 220), !name.isEmpty else { return nil }
+        return name
     }
 }
 

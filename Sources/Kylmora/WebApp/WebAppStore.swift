@@ -15,20 +15,14 @@ final class WebAppStore {
     }
 
     func load() {
-        guard FileManager.default.fileExists(atPath: fileURL.path(percentEncoded: false)),
-              let data = try? Data(contentsOf: fileURL),
-              let loaded = try? JSONDecoder().decode([InstalledWebApp].self, from: data) else {
+        guard let loaded = JSONFile<[InstalledWebApp]>(fileURL).load() else {
             return
         }
         self.apps = loaded
     }
 
     func save() {
-        AppPaths.ensureSupportDirectory()
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(apps) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        try? JSONFile<[InstalledWebApp]>(fileURL).save(apps)
         onChange?()
     }
 

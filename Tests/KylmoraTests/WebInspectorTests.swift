@@ -8,8 +8,6 @@ private final class Box<T>: @unchecked Sendable {
     init(_ value: T) { self.value = value }
 }
 
-private final class MockMenuDelegate: NSObject, NSMenuDelegate {}
-
 @Suite("Web Inspector & Develop Menu (F-16)")
 @MainActor
 struct WebInspectorTests {
@@ -45,7 +43,7 @@ struct WebInspectorTests {
         let initial = Settings.shared.showDevelopMenu
         defer { Settings.shared.showDevelopMenu = initial }
 
-        let mock = MockMenuDelegate()
+        let mock = MenuDelegateStub()
         Settings.shared.showDevelopMenu = true
         let menuWithDevelop = MainMenu.build(
             bookmarks: mock,

@@ -3,8 +3,6 @@ import Foundation
 import Testing
 @testable import Kylmora
 
-private final class MenuStub: NSObject, NSMenuDelegate {}
-
 @Suite("Tab bar above the page")
 @MainActor
 struct TabStripTests {
@@ -63,7 +61,7 @@ struct TabStripTests {
         settings.showsTabStrip = !before
         #expect(notified == 1)
 
-        let stub = MenuStub()
+        let stub = MenuDelegateStub()
         let menu = MainMenu.build(bookmarks: stub, history: stub, tabs: stub, pinnedSites: stub, spaces: stub)
         var found: NSMenuItem?
         func walk(_ menu: NSMenu) {
