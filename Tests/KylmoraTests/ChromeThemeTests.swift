@@ -253,3 +253,60 @@ struct ChromeThemeTests {
     }
 }
 
+
+
+/// The toolbar-button list in Settings > Browsing.
+@Suite("The toolbar button list lines up")
+@MainActor
+struct ToolbarSettingsListTests {
+    private func laidOutPane() -> NSView {
+        let pane = BrowsingSettingsViewController(settings: .shared)
+        pane.loadViewIfNeeded()
+        pane.view.frame = NSRect(x: 0, y: 0, width: 760, height: 3000)
+        pane.view.layoutSubtreeIfNeeded()
+        return pane.view
+    }
+
+    /// Every control in the list, by the name it carries in its identifier.
+    private func controls(in root: NSView) -> (checks: [NSButton], arrows: [NSButton]) {
+        let names = Set(ToolbarLayout.catalog.map(\.label))
+        let buttons = UITestSupport.buttons(in: root).filter {
+            names.contains($0.identifier?.rawValue ?? "")
+        }
+        let checks = buttons.filter { $0.isCheckboxLike }
+        let arrows = buttons.filter { !$0.isCheckboxLike }
+        return (checks, arrows)
+    }
+
+    @Test("Every row's checkbox starts in the same column")
+    func checkboxesAlign() throws {
+        // Each row used to be its own horizontal stack, and an NSImageView
+        // sizes itself to its symbol. SF Symbols are not all the same width,
+        // so the checkbox, its label and the two arrows each began at a
+        // different x on every row -- the whole list read as broken.
+        let root = laidOutPane()
+        let (checks, arrows) = controls(in: root)
+        #expect(checks.count == ToolbarLayout.catalog.count)
+        #expect(arrows.count == ToolbarLayout.catalog.count * 2)
+
+        let columns = Set(checks.map { ($0.convert($0.bounds, to: root).minX * 100).rounded() })
+        #expect(columns.count == 1, "checkboxes start at \(columns.count) different x positions")
+    }
+
+    @Test("Both arrows keep their own column too")
+    func arrowsAlign() throws {
+        let root = laidOutPane()
+        let (_, arrows) = controls(in: root)
+        let columns = Set(arrows.map { ($0.convert($0.bounds, to: root).minX * 100).rounded() })
+        // Two: one for the up arrow, one for the down arrow.
+        #expect(columns.count == 2, "arrows sit in \(columns.count) columns, not 2")
+    }
+
+    @Test("The first row cannot move up and the last cannot move down")
+    func endsOfTheListCannotMoveFurther() throws {
+        let root = laidOutPane()
+        let (_, arrows) = controls(in: root)
+        let disabled = arrows.filter { !$0.isEnabled }
+        #expect(disabled.count == 2, "only the first up arrow and the last down arrow")
+    }
+}

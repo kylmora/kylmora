@@ -2149,6 +2149,24 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        // A click that lands on nothing selectable -- the empty space below the
+        // list, a folder header, the New Tab row -- makes `NSTableView` clear
+        // its selection. The tab in front has not changed, so the sidebar must
+        // not stop saying which tab that is: the pill would vanish while the
+        // page it names is still on screen, and nothing in the window would
+        // answer "which of these am I looking at?".
+        //
+        // The table's selection is put back on the active tab rather than the
+        // pill being drawn from somewhere else, so that the selection the rest
+        // of this file reads -- the multi-tab menu, the keyboard, the drag --
+        // stays the truth. Re-selecting posts this notification again, and the
+        // second pass takes the ordinary path.
+        if tableView.selectedRowIndexes.isEmpty,
+           let active = shownSpace.activeTab, let index = row(of: active) {
+            tableView.selectRowIndexes([index], byExtendingSelection: false)
+            return
+        }
+
         let selectedIndexes = tableView.selectedRowIndexes
         for index in rows.indices {
             let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? TabRowView

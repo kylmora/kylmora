@@ -5,7 +5,15 @@ import AppKit
 final class BrowsingSettingsViewController: NSViewController {
     private let densityPopUp = NSPopUpButton()
     private let tabStripCheckbox = NSButton(checkboxWithTitle: "Show a tab bar above the page", target: nil, action: nil)
-    private let toolbarStack = NSStackView()
+    /// The toolbar-button list.
+    ///
+    /// A grid, not a stack of rows. Each row used to be its own horizontal
+    /// stack, so nothing lined up with anything: an `NSImageView` sizes itself
+    /// to its symbol, and SF Symbols are not all the same width, so the
+    /// checkbox, the label and the two arrows each started at a different x on
+    /// every row. A grid gives the four columns one width apiece, which is the
+    /// whole job.
+    private let toolbarGrid = NSGridView()
     private let settings: Settings
     private let session: BrowserSession?
     private let https = NSButton(checkboxWithTitle: "Automatic HTTPS upgrade", target: nil, action: nil)
@@ -108,10 +116,9 @@ final class BrowsingSettingsViewController: NSViewController {
         form.addRow("", compactButtons)
 
         form.addSection("Toolbar buttons")
-        toolbarStack.orientation = .vertical
-        toolbarStack.alignment = .leading
-        toolbarStack.spacing = 4
-        form.addRow("", toolbarStack)
+        toolbarGrid.rowSpacing = 6
+        toolbarGrid.columnSpacing = 10
+        form.addRow("", toolbarGrid)
         let resetToolbar = NSButton(title: "Restore Default Toolbar", target: self, action: #selector(resetToolbar))
         resetToolbar.bezelStyle = .rounded
         form.addContinuation(resetToolbar)
@@ -205,31 +212,79 @@ final class BrowsingSettingsViewController: NSViewController {
         webPanelAlwaysOnTop.isEnabled = settings.webPanelEnabled
     }
 
+    /// The column a symbol is centred in. Fixed, because the symbols are not
+    /// all the same width and the checkbox beside them has to start in the
+    /// same place on every row.
+    private static let toolbarSymbolColumn: CGFloat = 20
+    /// And the column each arrow is centred in.
+    private static let toolbarArrowColumn: CGFloat = 22
+
     /// One row per button: a checkbox for shown, arrows for order.
     private func rebuildToolbarRows() {
-        toolbarStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for index in stride(from: toolbarGrid.numberOfRows - 1, through: 0, by: -1) {
+            let row = toolbarGrid.row(at: index)
+            // A removed row leaves its views behind, so they are taken out by
+            // hand rather than accumulating one set per rebuild.
+            for cell in 0..<row.numberOfCells {
+                row.cell(at: cell).contentView?.removeFromSuperview()
+            }
+            toolbarGrid.removeRow(at: index)
+        }
+
         let layout = settings.toolbarLayout
         let names = layout.fullOrder()
         for (index, name) in names.enumerated() {
             let check = NSButton(checkboxWithTitle: name, target: self, action: #selector(toolbarVisibilityChanged(_:)))
             check.state = layout.hidden.contains(name) ? .off : .on
             check.identifier = NSUserInterfaceItemIdentifier(name)
-            check.widthAnchor.constraint(equalToConstant: 180).isActive = true
-            let symbol = NSImageView(image: NSImage(systemSymbolName: ToolbarLayout.catalog.first { $0.label == name }?.symbolName ?? "questionmark", accessibilityDescription: nil)!)
+
+            let symbolName = ToolbarLayout.catalog.first { $0.label == name }?.symbolName ?? "questionmark"
+            let symbol = NSImageView(
+                image: NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)!
+            )
+            // Template and tinted, so a multicolour symbol does not arrive in
+            // its own colours next to nine grey ones.
+            symbol.image?.isTemplate = true
             symbol.contentTintColor = .secondaryLabelColor
-            let up = NSButton(image: NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "Move \(name) up")!, target: self, action: #selector(toolbarMoveUp(_:)))
-            up.isBordered = false
-            up.identifier = NSUserInterfaceItemIdentifier(name)
+            symbol.imageScaling = .scaleProportionallyDown
+            symbol.setAccessibilityElement(false)
+            symbol.translatesAutoresizingMaskIntoConstraints = false
+            symbol.widthAnchor.constraint(equalToConstant: Self.toolbarSymbolColumn).isActive = true
+
+            let up = arrowButton("chevron.up", label: "Move \(name) up", name: name,
+                                 action: #selector(toolbarMoveUp(_:)))
             up.isEnabled = index > 0
-            let down = NSButton(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Move \(name) down")!, target: self, action: #selector(toolbarMoveDown(_:)))
-            down.isBordered = false
-            down.identifier = NSUserInterfaceItemIdentifier(name)
+            let down = arrowButton("chevron.down", label: "Move \(name) down", name: name,
+                                   action: #selector(toolbarMoveDown(_:)))
             down.isEnabled = index < names.count - 1
-            let row = NSStackView(views: [symbol, check, up, down])
-            row.orientation = .horizontal
-            row.spacing = 6
-            toolbarStack.addArrangedSubview(row)
+
+            toolbarGrid.addRow(with: [symbol, check, up, down])
         }
+
+        // Columns exist only once there are rows in them.
+        guard toolbarGrid.numberOfRows > 0 else { return }
+        toolbarGrid.column(at: 0).xPlacement = .center
+        // The checkbox column takes the width of the longest name, so every
+        // arrow pair sits in the same place however long the names are.
+        toolbarGrid.column(at: 1).xPlacement = .leading
+        for index in 2...3 { toolbarGrid.column(at: index).xPlacement = .center }
+        for index in 0..<toolbarGrid.numberOfRows {
+            toolbarGrid.row(at: index).yPlacement = .center
+        }
+    }
+
+    private func arrowButton(_ symbol: String, label: String, name: String, action: Selector) -> NSButton {
+        let button = NSButton(
+            image: NSImage(systemSymbolName: symbol, accessibilityDescription: label)!,
+            target: self,
+            action: action
+        )
+        button.isBordered = false
+        button.identifier = NSUserInterfaceItemIdentifier(name)
+        button.setAccessibilityLabel(label)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: Self.toolbarArrowColumn).isActive = true
+        return button
     }
 
     @objc private func toolbarVisibilityChanged(_ sender: NSButton) {

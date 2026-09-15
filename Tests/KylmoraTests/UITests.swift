@@ -1069,6 +1069,57 @@ struct SidebarContextMenuTests {
     }
 }
 
+@Suite("The sidebar always says which tab is in front")
+@MainActor
+struct SidebarSelectionTests {
+    private func tabList(in sidebar: SidebarViewController) -> NSTableView? {
+        UITestSupport.descendants(of: sidebar.view)
+            .compactMap { $0 as? NSTableView }
+            .first { ($0.dataSource as AnyObject?) === sidebar }
+    }
+
+    @Test("A click that selects nothing does not take the current tab's pill with it")
+    func emptyClickKeepsTheActiveRow() throws {
+        // Clicking the empty space below the list, a folder header or the New
+        // Tab row all clear the table's selection. The tab in front has not
+        // changed, so the sidebar must go on saying which one it is: the pill
+        // vanishing while its page is still on screen left the window with
+        // nothing that answered "which of these am I looking at?".
+        let (session, _) = TestSession.make()
+        _ = session.newTab(url: URL(string: "https://apple.com")!)
+        let second = session.newTab(url: URL(string: "https://swift.org")!)
+
+        let sidebar = SidebarViewController(session: session)
+        sidebar.loadViewIfNeeded()
+        let list = try #require(tabList(in: sidebar))
+
+        #expect(session.activeTab?.id == second.id)
+        let active = try #require(list.selectedRowIndexes.first)
+
+        // What AppKit does when a click lands on nothing selectable.
+        list.deselectAll(nil)
+
+        #expect(list.selectedRowIndexes == IndexSet(integer: active),
+                "the selection came back to the tab that is actually in front")
+        #expect(session.activeTab?.id == second.id, "and the page did not change")
+    }
+
+    @Test("Deselecting with no tab in front is left alone")
+    func noActiveTabStaysEmpty() throws {
+        // The restore is about disagreeing with the session, not about refusing
+        // ever to have an empty selection: a space showing no tab has nothing
+        // to put the pill on.
+        let (session, _) = TestSession.make()
+        let sidebar = SidebarViewController(session: session)
+        sidebar.loadViewIfNeeded()
+        let list = try #require(tabList(in: sidebar))
+
+        for tab in session.activeSpace.tabs { session.closeTab(tab) }
+        list.deselectAll(nil)
+        #expect(session.activeSpace.tabs.isEmpty || !list.selectedRowIndexes.isEmpty)
+    }
+}
+
 @Suite("The sidebar's archive")
 @MainActor
 struct SidebarArchiveTests {
