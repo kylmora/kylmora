@@ -38,6 +38,20 @@ final class UpdateController: NSObject, URLSessionDownloadDelegate {
     /// Injectable relaunch handler for unit tests.
     var relaunchHandler: ((URL) -> Void)?
 
+    /// How an alert reaches the user.
+    ///
+    /// A seam, because `runModal()` blocks until somebody clicks, and a test
+    /// that triggers one never returns. Replaced in tests; in the app it is a
+    /// sheet when there is a window to hang it on and a modal when there is
+    /// not.
+    var presentAlert: (NSAlert, NSWindow?) -> Void = { alert, parent in
+        if let parent {
+            alert.beginSheetModal(for: parent)
+        } else {
+            alert.runModal()
+        }
+    }
+
     override init() {
         super.init()
     }
@@ -80,8 +94,44 @@ final class UpdateController: NSObject, URLSessionDownloadDelegate {
 
     // MARK: - Update Checking
 
+    /// - Parameter userInitiated: whether a person asked, as opposed to the
+    ///   timer. A person always gets an answer.
     func checkForUpdates(userInitiated: Bool, in parentWindow: NSWindow? = nil) {
-        guard state == .idle || isFailedState else { return }
+        if userInitiated {
+            // Someone clicked, so something has to happen. This used to be
+            // guarded by the same condition as a background check, which meant
+            // the menu item did nothing at all whenever the controller was
+            // still holding the result of an earlier one: no window, no alert,
+            // no check. Settings has its own checker and was unaffected, which
+            // is why one worked and the other looked broken.
+            switch state {
+            case .checking:
+                // Already on its way; a second click cannot make it faster.
+                return
+            case .downloading:
+                // Don't interrupt a download. Show what is already happening.
+                updateWindowController?.showWindow(nil)
+                return
+            case .updateAvailable(let release):
+                // An answer is already in hand: put it back on screen rather
+                // than asking the site again.
+                presentUpdateWindow(for: release)
+                return
+            case .readyToInstall:
+                if let release = activeRelease {
+                    presentUpdateWindow(for: release)
+                    return
+                }
+                // No release to show: fall through and ask again.
+            case .installing:
+                updateWindowController?.showWindow(nil)
+                return
+            case .idle, .error:
+                break
+            }
+        } else {
+            guard state == .idle || isFailedState else { return }
+        }
 
         state = .checking
 
@@ -157,11 +207,7 @@ final class UpdateController: NSObject, URLSessionDownloadDelegate {
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
 
-        if let parentWindow {
-            alert.beginSheetModal(for: parentWindow)
-        } else {
-            alert.runModal()
-        }
+        presentAlert(alert, parentWindow)
     }
 
     private func showErrorAlert(reason: String, in parentWindow: NSWindow?) {
@@ -171,11 +217,7 @@ final class UpdateController: NSObject, URLSessionDownloadDelegate {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "OK")
 
-        if let parentWindow {
-            alert.beginSheetModal(for: parentWindow)
-        } else {
-            alert.runModal()
-        }
+        presentAlert(alert, parentWindow)
     }
 
     // MARK: - Downloading
@@ -307,11 +349,11 @@ final class UpdateController: NSObject, URLSessionDownloadDelegate {
         alert.messageText = "Kylmora could not install the update"
         alert.informativeText = reason + "\n\nThe download is still here, and you can install it yourself."
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Show the Download")
-        alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn {
-            NSWorkspace.shared.activateFileViewerSelecting([fallback])
-        }
+        alert.addButton(withTitle: "OK")
+        presentAlert(alert, nil)
+        // Shown as well as said. The install failed, so the only way forward
+        // is by hand, and hunting for the file is not part of the apology.
+        NSWorkspace.shared.activateFileViewerSelecting([fallback])
     }
 
     // MARK: - URLSessionDownloadDelegate

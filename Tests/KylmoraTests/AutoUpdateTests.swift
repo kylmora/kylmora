@@ -164,4 +164,60 @@ struct AutoUpdateTests {
         #expect(pane.isAutoCheckEnabled == Settings.shared.automaticallyCheckForUpdates)
         #expect(pane.isAutoDownloadEnabled == Settings.shared.automaticallyDownloadUpdates)
     }
+
+    @Test("A check the user asked for always does something")
+    @MainActor
+    func userInitiatedCheckIsNeverSwallowed() async {
+        // The menu item and the Settings button take different routes to the
+        // same check, and only one of them was guarded by the controller's
+        // state. So after any check that found an update, the menu item did
+        // nothing at all: no window, no alert, no request. Settings kept
+        // working, which is what made it look like the menu was broken.
+        let controller = UpdateController()
+        // No modal: `runModal()` waits for a click that never comes in a test.
+        controller.presentAlert = { _, _ in }
+        var checks = 0
+        controller.checkOutcomeProvider = { current in
+            checks += 1
+            return .upToDate(current: current)
+        }
+
+        controller.checkForUpdates(userInitiated: true)
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(checks == 1)
+
+        // Ask again from a resting state: it asks the site again.
+        controller.checkForUpdates(userInitiated: true)
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(checks == 2, "a second click has to reach the site too")
+    }
+
+    @Test("Holding an update already found, a second click shows it rather than nothing")
+    @MainActor
+    func secondClickShowsTheUpdateItAlreadyFound() async {
+        let release = UpdateCheck.Release(
+            version: "99.0.0",
+            url: URL(string: "https://example.com/Kylmora.dmg"),
+            notes: "Notes"
+        )
+        let controller = UpdateController()
+        controller.presentAlert = { _, _ in }
+        var checks = 0
+        controller.checkOutcomeProvider = { _ in
+            checks += 1
+            return .available(release)
+        }
+
+        controller.checkForUpdates(userInitiated: true)
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(checks == 1)
+        #expect(controller.state == .updateAvailable(release))
+
+        // The controller is now holding the answer. Clicking again must put
+        // that answer back on screen, not fall through a guard and return.
+        controller.checkForUpdates(userInitiated: true)
+        try? await Task.sleep(for: .milliseconds(120))
+        #expect(checks == 1, "it already knows; no second request")
+        #expect(controller.state == .updateAvailable(release), "and it is still showing it")
+    }
 }
