@@ -3,11 +3,15 @@ BUNDLE_ID   := com.kylmora.Kylmora
 CONFIG      ?= release
 BUILD_DIR   := build
 APP_BUNDLE  := $(BUILD_DIR)/$(APP_NAME).app
-ifeq ($(CONFIG),release)
-BIN ?= .build/out/Products/Release/$(APP_NAME)
-else
-BIN ?= .build/out/Products/Debug/$(APP_NAME)
-endif
+# Where SwiftPM actually put the binary.
+#
+# Asked, not assumed. The layout depends on which build system the toolchain
+# defaults to: a newer Swift writes .build/out/Products/<Config>, an older one
+# .build/<config>. A hardcoded path built fine on the machine that wrote it and
+# failed on the runner at the copy, after a successful compile and link -- and
+# because the release job is the only thing that packages the app, it failed at
+# a tag rather than at a push. Expanded lazily, so this runs after the build.
+BIN ?= $(shell swift build -c $(CONFIG) --show-bin-path)/$(APP_NAME)
 ENTITLEMENTS := Resources/Kylmora.entitlements
 ICON         := Resources/Kylmora.icns
 ICON_MARK    := Resources/Icon/kylmora-mark.png

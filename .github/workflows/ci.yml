@@ -24,3 +24,21 @@ jobs:
 
       - name: Build and run tests
         run: make test
+
+      # Packaging is the half of the build the tests never touch: the release
+      # job was the only thing that ran it, so a break there surfaced at a tag,
+      # after a version had been cut. Ad-hoc signed, which needs no secrets and
+      # still exercises every step up to the real signing.
+      - name: Build the app bundle
+        run: make bundle
+
+      - name: Check the bundle is complete
+        run: |
+          set -e
+          app=build/Kylmora.app
+          test -x "$app/Contents/MacOS/Kylmora"
+          test -f "$app/Contents/Info.plist"
+          test -f "$app/Contents/Resources/Kylmora.icns"
+          test -x "$app/Contents/Resources/kylmora-cli"
+          codesign --verify --deep --strict "$app"
+          echo "bundle ok: $(du -sh "$app" | cut -f1)"
