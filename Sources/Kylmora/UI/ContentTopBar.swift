@@ -98,13 +98,22 @@ final class ContentTopBar: NSView {
             navigationLeading,
             navigation.centerYAnchor.constraint(equalTo: centerYAnchor),
 
+            // The address is centred in the bar and capped in width rather
+            // than stretched between the two clusters. Stretched, it ran the
+            // full width of the window with its text pinned to the left end,
+            // so the address sat nowhere in particular and a thousand points of
+            // empty field followed it. Centred and capped it is a field: it has
+            // a size, it has a place, and both stay put as the window resizes.
             addressField.leadingAnchor.constraint(
-                equalTo: navigation.trailingAnchor,
+                greaterThanOrEqualTo: navigation.trailingAnchor,
                 constant: Style.Metrics.breadcrumbLeadingGap
             ),
             addressField.trailingAnchor.constraint(
-                equalTo: zoomControl.leadingAnchor,
+                lessThanOrEqualTo: zoomControl.leadingAnchor,
                 constant: -Style.Metrics.iconButtonSpacing
+            ),
+            addressField.widthAnchor.constraint(
+                lessThanOrEqualToConstant: Style.Metrics.addressFieldMaxWidth
             ),
             addressField.centerYAnchor.constraint(equalTo: centerYAnchor),
 
@@ -120,6 +129,21 @@ final class ContentTopBar: NSView {
             ),
             actionStack.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
+
+        // Centred, but yielding: in a window too narrow for a centred field to
+        // clear both clusters, the hard bounds above win and the field slides
+        // off centre rather than overlapping a button.
+        let centred = addressField.centerXAnchor.constraint(equalTo: centerXAnchor)
+        centred.priority = .defaultHigh
+        centred.isActive = true
+
+        // Grow to the cap, and no further. At the lowest priority so every
+        // other constraint here settles the width first.
+        let grow = addressField.widthAnchor.constraint(
+            equalToConstant: Style.Metrics.addressFieldMaxWidth
+        )
+        grow.priority = .defaultLow
+        grow.isActive = true
     }
 
     required init?(coder: NSCoder) {

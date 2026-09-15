@@ -13,14 +13,19 @@ final class ActionRowView: NSView {
     private let glyph = NSImageView()
     private let titleLabel = NSTextField(labelWithString: "")
     private var trackingArea: NSTrackingArea?
+    private var highlight: RowHighlight?
     private var isHovered = false {
-        didSet { if isHovered != oldValue { needsDisplay = true } }
+        didSet {
+            guard isHovered != oldValue else { return }
+            highlight?.apply(isHovered ? .hover : .rest, appearance: effectiveAppearance)
+        }
     }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
+        if let layer { highlight = RowHighlight(in: layer, depth: .flat) }
 
         glyph.imageScaling = .scaleProportionallyDown
         glyph.contentTintColor = Style.Colors.secondaryText
@@ -35,18 +40,26 @@ final class ActionRowView: NSView {
 
         let stack = NSStackView(views: [glyph, titleLabel])
         stack.orientation = .horizontal
-        stack.spacing = 6
+        stack.spacing = Style.Metrics.rowContentSpacing
         stack.alignment = .centerY
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
 
+        // Laid out on exactly the grid a tab row uses: the glyph occupies a
+        // favicon-sized slot starting at the pill's content inset, and the
+        // title follows it at the row's own content spacing. Before this the
+        // row had its own numbers, so "New Tab" sat five points left of every
+        // title above it -- one of those misalignments nobody can name but
+        // everybody sees.
+        let contentInset = (Style.Metrics.rowHeight - Style.Metrics.rowPillHeight) / 2
+            + Style.Metrics.rowContentInset
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: Style.Metrics.groupHeaderHeight),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: contentInset),
             stack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -6),
-            glyph.widthAnchor.constraint(equalToConstant: Style.Metrics.smallGlyphSide),
-            glyph.heightAnchor.constraint(equalToConstant: Style.Metrics.smallGlyphSide)
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -contentInset),
+            glyph.widthAnchor.constraint(equalToConstant: Style.Metrics.faviconSide),
+            glyph.heightAnchor.constraint(equalToConstant: Style.Metrics.faviconSide)
         ])
 
         setAccessibilityRole(.button)
@@ -58,20 +71,27 @@ final class ActionRowView: NSView {
 
     func show(symbolName: String, title: String) {
         glyph.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+        glyph.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
         titleLabel.stringValue = title
         toolTip = title
         setAccessibilityLabel(title)
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        guard isHovered else { return }
+    override func layout() {
+        super.layout()
         let pill = bounds.insetBy(dx: 0, dy: (bounds.height - Style.Metrics.rowPillHeight) / 2)
-        let path = NSBezierPath(roundedRect: pill,
-                                xRadius: Style.Metrics.rowCornerRadius,
-                                yRadius: Style.Metrics.rowCornerRadius)
-        Style.Colors.rowHoverFill.setFill()
-        path.fill()
+        highlight?.layout(
+            pill,
+            in: bounds.height,
+            flipped: isFlipped,
+            radius: Style.Metrics.rowCornerRadius,
+            scale: highlightScale
+        )
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        highlight?.refresh(appearance: effectiveAppearance)
     }
 
     override func updateTrackingAreas() {

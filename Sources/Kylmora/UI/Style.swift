@@ -48,7 +48,19 @@ enum Style {
         static let compactPlateShadowRadius: CGFloat = 18
         /// Distance from the sidebar's edge to the pinned tiles and the group
         /// headers. Tab rows sit further in again, by `rowIndent`.
-        static let sidebarInset: CGFloat = 6
+        ///
+        /// Eight, matching `elementSeparation`, so the gutter inside the
+        /// sidebar is the same measure as the gutter between the sidebar and
+        /// the page. At six the pills cleared the window edge by less than the
+        /// page card did, and the two gutters disagreeing by two points is
+        /// exactly the kind of thing that reads as "off" without being
+        /// nameable.
+        static let sidebarInset: CGFloat = elementSeparation
+
+        /// One device pixel on a Retina display. Hairlines are drawn at this
+        /// rather than at 1, which on a 2x screen is two pixels and reads as a
+        /// drawn border rather than as an edge.
+        static let hairline: CGFloat = 0.5
 
         /// Height of the strip the traffic lights float over. The sidebar owns
         /// it because the window has no titlebar of its own.
@@ -58,13 +70,17 @@ enum Style {
         static let trafficLightWidth: CGFloat = 78
 
         static let tileWidth: CGFloat = 68
-        /// A common tile height is 46. Ours is a third smaller so more
-        /// shortcuts fit across the strip before it wraps, which is the whole
-        /// point of a row of them.
-        static let tileHeight: CGFloat = 32
+        /// A common tile height is 46. Ours is smaller so more shortcuts fit
+        /// across the strip before it wraps, which is the whole point of a row
+        /// of them -- but not as small as the 32 it was: a 16-point icon in a
+        /// 32-point tile leaves eight points above and below, which is too
+        /// tight to read as a button and is why the strip looked like a row of
+        /// swatches rather than a row of shortcuts.
+        static let tileHeight: CGFloat = 36
         static let tileSpacing: CGFloat = 4
-        /// Scaled with the tile: a 14-point radius on a 32-point tile reads as
-        /// a lozenge rather than a rounded square.
+        /// Scaled with the tile: this proportion reads as a rounded square,
+        /// which is what a shortcut to an app-like site should be. Much larger
+        /// and it becomes a lozenge and stops rhyming with the favicon in it.
         static let tileCornerRadius: CGFloat = 10
         /// Icon drawn inside a pinned tile. The same 16 points the sidebar
         /// rows use, which is also the size the favicon cache stores for.
@@ -85,6 +101,14 @@ enum Style {
         /// proportion on a 28-point one. A larger radius like 14 looked right
         /// at that bigger size, but turns a pill this short into a capsule.
         static let rowCornerRadius: CGFloat = 8
+        /// How far the selected row's plate blurs below itself. Small: the
+        /// plate is meant to sit a millimetre off the material, not to hover
+        /// over it. A larger radius on a 26-point pill puts more shadow on
+        /// screen than pill and reads as a glow.
+        static let rowShadowRadius: CGFloat = 3
+        /// And how far it is offset downwards, so the light reads as coming
+        /// from above.
+        static let rowShadowOffset: CGFloat = 1
         /// Extra leading inset for rows that belong to a group.
         static let rowIndent: CGFloat = 14
         /// Matches `FaviconImageView.side`, so a row built here and a row built
@@ -102,24 +126,34 @@ enum Style {
         /// up with the tabs under it.
         static let groupHeaderHeight: CGFloat = 32
         /// The plate a folder and its children sit on. A little rounder than
-        /// the pills inside it, as a container should be.
-        static let folderPlateCornerRadius: CGFloat = 10
+        /// the pills inside it, as a container should be. The gap between this
+        /// and `rowCornerRadius` is what says which shape is inside which.
+        static let folderPlateCornerRadius: CGFloat = 12
         /// Clear space above a folder's plate. It is added to the header's row,
         /// so two folders in a row, or a folder after loose tabs, are separated
         /// by more than the pill margin alone.
-        static let folderPlateGap: CGFloat = 6
+        ///
+        /// A card needs more clear space around it than the rows inside it have
+        /// between them, or the eye cannot tell which gaps are joins and which
+        /// are breaks. At six -- barely more than the three points a pill keeps
+        /// -- two folders stacked on each other read as one striped block.
+        static let folderPlateGap: CGFloat = 10
         /// Clear space inside a folder's plate, under its last row. It is added
         /// to that row's height, so the card's bottom edge clears the last pill
         /// by a visible margin -- a pill whose bottom runs along the plate's
         /// bottom edge reads as the plate's own outline rather than as a row
-        /// inside it. Deliberately the same measure as `folderPlateGap`, so a
-        /// card is the same weight at both ends.
-        static let folderPlateBottomPadding: CGFloat = 6
+        /// inside it.
+        ///
+        /// Not the same as `folderPlateGap`, which is the space *outside* the
+        /// card: the padding within a container is smaller than the gap between
+        /// containers, or the grouping inverts and the cards read as separated
+        /// rows rather than as rows inside cards.
+        static let folderPlateBottomPadding: CGFloat = 5
         /// Disclosure chevron and the small glyphs in the sidebar footer.
         static let smallGlyphSide: CGFloat = 11
 
         /// The workspace indicator row, which is what the footer is.
-        static let footerHeight: CGFloat = 44
+        static let footerHeight: CGFloat = 40
         static let pageDotDiameter: CGFloat = 6
         /// Centre-to-centre, so the gap between two dots is this minus the
         /// diameter.
@@ -133,6 +167,14 @@ enum Style {
         static let iconButtonSpacing: CGFloat = 4
         /// Gap between the last navigation button and the breadcrumb.
         static let breadcrumbLeadingGap: CGFloat = 24
+        /// How wide the address field is allowed to get.
+        ///
+        /// An address bar as wide as the window is a browser-chrome habit, not
+        /// a good idea: addresses are rarely longer than this, the extra width
+        /// is never used, and it puts the one field in the chrome a user aims
+        /// at somewhere different on every window size. Capped, it is a fixed
+        /// target in a fixed place.
+        static let addressFieldMaxWidth: CGFloat = 620
         /// The trailing cluster sits further from its edge than the navigation
         /// buttons do from theirs: the leading edge butts up against the
         /// sidebar, the trailing one against the screen.
@@ -150,6 +192,14 @@ enum Style {
         /// `.continuous` corner curve is the same shape, so the number carries
         /// over directly rather than being converted to a plain-round 6.
         static let contentCornerRadius: CGFloat = 8
+        /// How far the page card's shadow spreads, and how far it is pushed
+        /// down. Larger than a row's, because the card is the largest surface
+        /// in the window and a shadow has to scale with what casts it: the
+        /// same three points that lift a 26-point pill are invisible under a
+        /// thousand-point sheet.
+        static let cardShadowRadius: CGFloat = 10
+        static let cardShadowOffset: CGFloat = 2
+
         /// The card is inset by the same gutter on all four edges.
         ///
         /// A zero top margin on the page wrapper is common elsewhere, and
@@ -170,9 +220,25 @@ enum Style {
         /// as one surface rather than a stack of widgets.
         static var body: NSFont { .systemFont(ofSize: 13) }
         static var emphasis: NSFont { .systemFont(ofSize: 13, weight: .semibold) }
+
+        /// The space's name, at the top of the sidebar. The one piece of
+        /// chrome text that is allowed to be larger than the body: it names
+        /// the whole window, and everything under it is a member of it.
+        static var title: NSFont { .systemFont(ofSize: 14, weight: .semibold) }
+
+        /// A folder's name.
+        ///
+        /// Smaller than the tabs inside it, not larger. A folder header is a
+        /// label for a group, not an item competing with the items -- the same
+        /// reasoning behind every section header in macOS. Set at the same
+        /// weight as the body text at a smaller size, and drawn in the
+        /// secondary colour, it reads as a caption over the rows rather than
+        /// as the loudest thing on the screen, which is what a bold 13-point
+        /// header on 13-point rows was.
+        static var groupHeader: NSFont { .systemFont(ofSize: 11.5, weight: .semibold) }
         /// Emoji ignore weight, and at 13pt they sit a shade small next to
         /// 13pt text, so group emoji get their own size.
-        static var groupEmoji: NSFont { .systemFont(ofSize: 14) }
+        static var groupEmoji: NSFont { .systemFont(ofSize: 12) }
         /// The idle badge on a tab row. Smaller than the title and no lighter:
         /// a badge that is both smaller and greyer reads as damage rather than
         /// as a second line of information, and it is already grey.
@@ -182,36 +248,116 @@ enum Style {
     // MARK: - Colours
 
     enum Colors {
-        /// A translucent plate, not the page's colour and not the accent.
+        /// One appearance-aware colour, given both its coats.
         ///
-        /// A reference selected pill is `rgba(255,255,255,0.8)` in light and
-        /// `rgba(255,255,255,0.18)` in dark, with only a 2-5% accent hint. The
-        /// continuity between the selected tab and the page comes from the
-        /// shared material behind both, not from painting the row the colour of
-        /// the page -- which is what Kylmora did before, and which makes the row
-        /// fight whatever site happens to be open.
-        static var rowSelectedFill: NSColor {
+        /// Every colour below is built from this rather than from a semantic
+        /// system colour, because the sidebar is not a system surface: it
+        /// carries a space's tint, and `quaternaryLabelColor` over a tinted
+        /// material comes out as a grey smear rather than as a highlight. The
+        /// pair is stated once and read in both appearances, which is also
+        /// what makes light and dark reviewable side by side.
+        static func dynamic(light: NSColor, dark: NSColor) -> NSColor {
             NSColor(name: nil) { appearance in
-                let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                return NSColor(white: 1, alpha: isDark ? 0.18 : 0.8)
+                appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
             }
         }
-        static var rowHoverFill: NSColor { .quaternaryLabelColor }
-        /// The plate behind a folder and its children: a step lighter than
-        /// the sidebar, so the folder reads as one block, and lighter still
-        /// than a hovered or selected pill, so those still show on top of it.
-        static var folderPlateFill: NSColor {
-            NSColor(name: nil) { appearance in
-                let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-                return isDark ? NSColor(white: 1, alpha: 0.07) : NSColor(white: 0, alpha: 0.05)
-            }
+
+        /// White at an alpha in light, white at another in dark. Most of the
+        /// chrome's surfaces are exactly this: a veil of light over whatever
+        /// the material and the space's tint have already put down.
+        static func veil(light: CGFloat, dark: CGFloat) -> NSColor {
+            dynamic(light: NSColor(white: 1, alpha: light), dark: NSColor(white: 1, alpha: dark))
         }
-        /// Fill behind a pinned tile, and behind the page container.
-        static var tileFill: NSColor { .quaternaryLabelColor }
-        static var tileHoverFill: NSColor { .tertiaryLabelColor }
+
+        /// Ink: black in light, white in dark, each at its own alpha. For the
+        /// shadows and hairlines that have to darken a light surface and
+        /// lighten a dark one.
+        static func ink(light: CGFloat, dark: CGFloat) -> NSColor {
+            dynamic(light: NSColor(white: 0, alpha: light), dark: NSColor(white: 1, alpha: dark))
+        }
+
+        /// Black at an alpha in light, black at another in dark.
+        ///
+        /// For shadows, and only for shadows. `ink` inverts with the
+        /// appearance, which is right for a hairline -- an edge has to contrast
+        /// with the surface it is on -- and badly wrong for a shadow: light
+        /// still falls from above in dark mode, so a shadow is still an absence
+        /// of light. Drawing one in white put a glowing halo around the
+        /// selected row rather than sitting it on the surface.
+        static func shade(light: CGFloat, dark: CGFloat) -> NSColor {
+            dynamic(light: NSColor(white: 0, alpha: light), dark: NSColor(white: 0, alpha: dark))
+        }
+
+        // MARK: Rows
+
+        /// The plate under the selected row.
+        ///
+        /// Nearly opaque white in light, a thin veil in dark. It is the one
+        /// surface in the sidebar that is meant to read as lifted off the
+        /// material, so it carries a hairline (`rowSelectedStroke`) and a soft
+        /// shadow (`rowSelectedShadow`) as well -- three cues, none of them
+        /// loud. A flat fill on its own was what made the selected tab read as
+        /// a white blob dropped on the tint.
+        static var rowSelectedFill: NSColor { veil(light: 0.92, dark: 0.16) }
+        /// The hairline around the selected plate: a shade of the surface it
+        /// sits on, not a border colour. It defines the edge at the point the
+        /// fill and the tint underneath are closest in value.
+        static var rowSelectedStroke: NSColor { ink(light: 0.07, dark: 0.13) }
+        /// What the selected plate casts. Deeper in dark, because a dark
+        /// surface swallows a shadow that a pale one would show plainly.
+        static var rowSelectedShadow: NSColor { shade(light: 0.13, dark: 0.40) }
+        /// Hover is a hint, not a selection: a twentieth of an alpha, enough to
+        /// confirm the pointer is on the row and no more.
+        static var rowHoverFill: NSColor { ink(light: 0.05, dark: 0.07) }
+
+        // MARK: Containers
+
+        /// The plate behind a folder and its children.
+        ///
+        /// Light in light mode rather than dark: a black veil over a tinted
+        /// sidebar reads as dirt, a white one as a recessed card. Faint enough
+        /// that a hovered or selected pill still lifts clearly off it.
+        static var folderPlateFill: NSColor { veil(light: 0.30, dark: 0.05) }
+        /// The hairline around a folder's plate. Without it the plate has no
+        /// edge at all in light mode, where its fill and the sidebar are within
+        /// a few percent of each other.
+        static var folderPlateStroke: NSColor { ink(light: 0.05, dark: 0.07) }
+
+        /// Fill behind a pinned tile.
+        static var tileFill: NSColor { veil(light: 0.42, dark: 0.07) }
+        static var tileHoverFill: NSColor { veil(light: 0.68, dark: 0.13) }
         /// The dashed outline of the empty pinned slot.
-        static var emptySlotStroke: NSColor { .tertiaryLabelColor }
+        static var emptySlotStroke: NSColor { ink(light: 0.16, dark: 0.20) }
+        /// The hairline every small container in the chrome carries.
+        static var hairline: NSColor { ink(light: 0.06, dark: 0.09) }
+
+        /// The resting plate behind the address bar.
+        ///
+        /// Faint, but present. Plain text floating in the middle of a wide bar
+        /// has no shape, so nothing says where to click or how far the field
+        /// runs -- and an address is the one thing in the chrome a user reaches
+        /// for by aiming rather than by reading. The plate is the shape.
+        static var fieldFill: NSColor { ink(light: 0.04, dark: 0.08) }
+        static var fieldStroke: NSColor { ink(light: 0.05, dark: 0.07) }
+
+        /// What the page card casts onto the chrome beside it. Weaker than a
+        /// row's shadow in absolute terms because it is spread over a much
+        /// larger radius, where the same opacity would read as a dark halo.
+        static var cardShadow: NSColor { shade(light: 0.10, dark: 0.42) }
+
+        /// The ring around the dots on a favicon's corner.
+        ///
+        /// Opaque, and neither the window background nor the tint: the ring's
+        /// only job is to hold a coloured dot off the icon it overlaps, and it
+        /// can only do that if it contrasts with both. A translucent ring picks
+        /// up the favicon underneath and stops separating anything.
+        static var dotRing: NSColor {
+            dynamic(light: .white, dark: NSColor(white: 0.17, alpha: 1))
+        }
+
         static var pageFill: NSColor { .textBackgroundColor }
+
+        // MARK: Text
 
         static var primaryText: NSColor { .labelColor }
         static var secondaryText: NSColor { .secondaryLabelColor }
@@ -220,6 +366,41 @@ enum Style {
         /// Near-full contrast for the current space and a clearly visible grey
         /// for the others: a dot the user cannot see is not an indicator.
         static var pageDotActive: NSColor { .labelColor }
-        static var pageDotInactive: NSColor { .tertiaryLabelColor }
+        static var pageDotInactive: NSColor { ink(light: 0.22, dark: 0.26) }
+    }
+
+    // MARK: - Motion
+
+    /// How long the chrome's small state changes take.
+    ///
+    /// The numbers are short on purpose. A hover that takes a quarter second to
+    /// arrive feels laggy, not smooth; the point of animating it at all is that
+    /// the highlight appears to grow rather than to blink into existence, and
+    /// that reads at well under a tenth of a second. Anything the user is
+    /// waiting on (a hover) is faster than anything they have just committed to
+    /// (a selection), which can afford to be seen travelling.
+    enum Motion {
+        /// A hover highlight fading in or out.
+        static let hover: CFTimeInterval = 0.09
+        /// A selection moving from one row to another.
+        static let selection: CFTimeInterval = 0.16
+
+        /// The curve everything in the chrome moves on: quick to leave, gentle
+        /// to arrive. `easeOut` alone starts too abruptly at these durations.
+        static var curve: CAMediaTimingFunction {
+            CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
+        }
+
+        /// Whether to move at all. Reduce Motion is a request for state to
+        /// change without travelling, which every animated surface here honours
+        /// by using a zero duration rather than by skipping the change.
+        @MainActor static var isReduced: Bool {
+            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        }
+
+        /// The duration to actually use, which is none under Reduce Motion.
+        @MainActor static func duration(_ base: CFTimeInterval) -> CFTimeInterval {
+            isReduced ? 0 : base
+        }
     }
 }

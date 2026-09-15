@@ -336,9 +336,7 @@ struct TabRowTests {
         let row = TabRowView()
         row.configure(TabRowContent(title: "Start", address: "https://example.com/"))
         row.isSelected = true
-        let others = UITestSupport.imageViews(in: row)
-            .filter { !($0 is FaviconImageView) && !$0.isHidden }
-        #expect(others.isEmpty)
+        #expect(UITestSupport.badgeIcons(in: row).isEmpty)
     }
 
     @Test("A sleeping row shows a moon, and an ordinary one shows nothing")
@@ -347,24 +345,18 @@ struct TabRowTests {
         // the row above. The moon says it on its own.
         let asleep = TabRowView()
         asleep.configure(TabRowContent(title: "Start", isAsleep: true))
-        let moons = UITestSupport.imageViews(in: asleep)
-            .filter { !($0 is FaviconImageView) && !$0.isHidden }
-        #expect(moons.count == 1)
+        #expect(UITestSupport.badgeIcons(in: asleep).count == 1)
 
         let awake = TabRowView()
         awake.configure(TabRowContent(title: "Start"))
-        #expect(UITestSupport.imageViews(in: awake)
-            .filter { !($0 is FaviconImageView) && !$0.isHidden }
-            .isEmpty)
+        #expect(UITestSupport.badgeIcons(in: awake).isEmpty)
     }
 
     @Test("The locks are visible on the row, not only in the menu that set them")
     func locksAreVisible() {
         let row = TabRowView()
         row.configure(TabRowContent(title: "Start", keepsAwake: true, keepsInSidebar: true))
-        let icons = UITestSupport.imageViews(in: row)
-            .filter { !($0 is FaviconImageView) && !$0.isHidden }
-        #expect(icons.count == 2)
+        #expect(UITestSupport.badgeIcons(in: row).count == 2)
     }
 
     @Test("The close button takes the trailing slot back from the badge")
@@ -374,9 +366,7 @@ struct TabRowTests {
         row.onClose = {}
         row.configure(TabRowContent(title: "Start", isAsleep: true, idleText: "2h"))
         row.isSelected = true
-        let visible = UITestSupport.imageViews(in: row)
-            .filter { !($0 is FaviconImageView) && !$0.isHidden }
-        #expect(visible.isEmpty)
+        #expect(UITestSupport.badgeIcons(in: row).isEmpty)
     }
 
     @Test("A locked row shows a padlock instead of a close button")
@@ -388,9 +378,7 @@ struct TabRowTests {
         row.onClose = {}
         row.configure(TabRowContent(title: "Start", isLocked: true))
         row.isSelected = true
-        let icons = UITestSupport.imageViews(in: row)
-            .filter { !($0 is FaviconImageView) && !$0.isHidden }
-        #expect(icons.count == 1)
+        #expect(UITestSupport.badgeIcons(in: row).count == 1)
         #expect(row.accessibilityLabel() == "Start, locked")
     }
 
@@ -398,9 +386,7 @@ struct TabRowTests {
     func lockAbsorbsTheStayBadge() {
         let row = TabRowView()
         row.configure(TabRowContent(title: "Start", keepsInSidebar: true, isLocked: true))
-        let icons = UITestSupport.imageViews(in: row)
-            .filter { !($0 is FaviconImageView) && !$0.isHidden }
-        #expect(icons.count == 1)
+        #expect(UITestSupport.badgeIcons(in: row).count == 1)
     }
 
     @Test("Visual-only state is spoken as well as shown", arguments: [
@@ -657,7 +643,11 @@ struct ArchivedRowTests {
         row.frame = NSRect(x: 0, y: 0, width: 280, height: ArchivedRowView.rowHeight)
         // Inset from the row on every side, and starting where a tab row's pill
         // starts so the two lists line up.
-        #expect(row.pillRect.minX == Style.Metrics.sidebarInset + 2)
+        // Derived, not a literal: the pill starts at the row's own indent plus
+        // the margin every pill in the app keeps, so changing the density moves
+        // this list and the tab list together.
+        let margin = (Style.Metrics.rowHeight - Style.Metrics.rowPillHeight) / 2
+        #expect(row.pillRect.minX == Style.Metrics.sidebarInset + margin)
         #expect(row.pillRect.height > Style.Metrics.rowPillHeight)
         #expect(row.pillRect.height < row.bounds.height)
     }
@@ -796,8 +786,43 @@ enum UITestSupport {
         descendants(of: view).compactMap { $0 as? NSImageView }
     }
 
+    /// The glyphs a row draws for itself: its badges, and nothing else.
+    ///
+    /// Not the favicon, which every row has, and not the face of a button --
+    /// an `IconButton` carries its symbol in an image view of its own, because
+    /// a symbol drawn by the button cell would sit underneath the button's own
+    /// highlight layer. A button is a control the row hosts, not a glyph the
+    /// row drew, so counting badges has to skip it. Hidden ancestors count as
+    /// hidden: an image view inside a hidden button is not on screen, whatever
+    /// its own flag says.
+    static func badgeIcons(in view: NSView) -> [NSImageView] {
+        imageViews(in: view).filter {
+            !($0 is FaviconImageView)
+                && !$0.isHiddenOrHasHiddenAncestor
+                && !hasButtonAncestor($0, below: view)
+        }
+    }
+
+    private static func hasButtonAncestor(_ view: NSView, below root: NSView) -> Bool {
+        var next = view.superview
+        while let current = next, current !== root {
+            if current is NSButton { return true }
+            next = current.superview
+        }
+        return false
+    }
+
     static func buttons(in view: NSView) -> [NSButton] {
         descendants(of: view).compactMap { $0 as? NSButton }
+    }
+
+    /// A bare pointer-moved event, for driving `mouseEntered`/`mouseExited` on
+    /// a view that is not in a window.
+    static func hoverEvent() -> NSEvent {
+        NSEvent.mouseEvent(
+            with: .mouseMoved, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 0
+        )!
     }
 
     /// Alignment is a claim about frames, and a frame only exists once Auto
@@ -843,13 +868,24 @@ enum UITestSupport {
 
 @Suite("Pinned tile wrapping")
 struct TileGridTests {
-    @Test("Tiles fill the row and share its width equally")
+    @Test("Tiles share the row equally, up to their natural size")
     func fillsTheRow() {
-        let plan = TileGrid.plan(itemCount: 4, availableWidth: 300)
-        #expect(plan.columns == 4)
+        // Narrow enough that four tiles are still under the ceiling: they then
+        // divide the strip between them and leave no ragged gap.
         let spacing = Style.Metrics.tileSpacing
-        let total = plan.tileWidth * 4 + spacing * 3
-        #expect(abs(total - 300) < 0.01)
+        let width = TileGrid.maximumTileWidth * 4 + spacing * 3 - 40
+        let plan = TileGrid.plan(itemCount: 4, availableWidth: width)
+        #expect(plan.columns == 4)
+        #expect(abs(plan.tileWidth * 4 + spacing * 3 - width) < 0.01)
+    }
+
+    @Test("A tile never grows past its natural size, however few there are")
+    func neverAboveMaximum() {
+        for count in 1...6 {
+            let plan = TileGrid.plan(itemCount: count, availableWidth: 900)
+            #expect(plan.tileWidth <= TileGrid.maximumTileWidth,
+                    "\(count) tiles produced \(plan.tileWidth)")
+        }
     }
 
     @Test("A narrow strip wraps instead of shrinking tiles past legibility")
@@ -896,7 +932,7 @@ struct TileGridTests {
     func singleTile() {
         let plan = TileGrid.plan(itemCount: 1, availableWidth: 900)
         #expect(plan.columns == 1)
-        #expect(plan.tileWidth == 900)
+        #expect(plan.tileWidth == TileGrid.maximumTileWidth)
     }
 
     @Test("A zero width does not divide by zero or report a negative height")

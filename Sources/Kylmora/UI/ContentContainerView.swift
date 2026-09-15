@@ -62,6 +62,20 @@ final class ContentContainerView: NSView {
     private let tint = TintView()
     private var page: NSView?
 
+    /// What the page card casts onto the sidebar material beside it.
+    ///
+    /// A separate layer because the card itself must clip its contents -- a
+    /// `WKWebView` has square corners and the card's mask is the only thing
+    /// rounding them -- and a layer that masks to its bounds cannot also cast
+    /// a shadow outside them. This one sits behind the card, matches its frame
+    /// and corner, and is otherwise empty.
+    ///
+    /// Without it the card is a rectangle of white that happens to abut the
+    /// sidebar. The shadow is what says the page is a sheet lying on the
+    /// chrome, which is the whole idea the rounded corners and the gutter are
+    /// reaching for.
+    private let cardShadow = CALayer()
+
     /// The colour of the space in front. It goes on the strip around the page
     /// card, not on the card: the page is the site's, and washing it would be
     /// colouring somebody else's document.
@@ -116,6 +130,14 @@ final class ContentContainerView: NSView {
         addSubview(underlay)
         addSubview(tint)
 
+        wantsLayer = true
+        cardShadow.cornerCurve = .continuous
+        cardShadow.cornerRadius = Style.Metrics.contentCornerRadius
+        cardShadow.shadowOffset = CGSize(width: 0, height: -Style.Metrics.cardShadowOffset)
+        cardShadow.shadowRadius = Style.Metrics.cardShadowRadius
+        cardShadow.shadowOpacity = 1
+        cardShadow.actions = ["bounds": NSNull(), "position": NSNull(), "shadowPath": NSNull()]
+
         card.wantsLayer = true
         card.layer?.cornerRadius = Style.Metrics.contentCornerRadius
         // The measured corner is a squircle, not a circular arc: a circle of the
@@ -132,6 +154,9 @@ final class ContentContainerView: NSView {
         card.layer?.masksToBounds = true
         card.translatesAutoresizingMaskIntoConstraints = false
         addSubview(card)
+        // Under the card's own layer, which is this view's subview and so sits
+        // above anything added directly to the backing layer.
+        layer?.addSublayer(cardShadow)
 
         card.addSubview(topBar)
         card.addSubview(tabStrip)
@@ -246,9 +271,30 @@ final class ContentContainerView: NSView {
         }
     }
 
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        cardShadow.frame = card.frame
+        cardShadow.shadowPath = CGPath(
+            roundedRect: CGRect(origin: .zero, size: card.frame.size),
+            cornerWidth: Style.Metrics.contentCornerRadius,
+            cornerHeight: Style.Metrics.contentCornerRadius,
+            transform: nil
+        )
+        CATransaction.commit()
+    }
+
     private func updateBackground() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             card.layer?.backgroundColor = Style.Colors.pageFill.cgColor
+            // A hairline at the card's edge. The page is usually white and the
+            // washed material beside it is usually pale, so in light mode the
+            // two meet with almost no contrast and the rounded corner -- the
+            // one thing that says this is a card -- disappears.
+            card.layer?.borderColor = Style.Colors.hairline.cgColor
+            card.layer?.borderWidth = Style.Metrics.hairline
+            cardShadow.shadowColor = Style.Colors.cardShadow.cgColor
         }
     }
 }

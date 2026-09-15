@@ -160,6 +160,16 @@ enum TileGrid {
     /// instead of shrinking further.
     static let minimumTileWidth: CGFloat = 45
 
+    /// And above this a tile stops being a tile.
+    ///
+    /// Without a ceiling the strip divided its whole width between however
+    /// many shortcuts there were, so two pinned sites became two lozenges half
+    /// a sidebar wide each: the same layout that looks right with six looked
+    /// absurd with two, and the tiles changed size every time one was added.
+    /// A shortcut is a fixed-size thing that there happen to be some number
+    /// of, so the row fills up from the left and stops.
+    static let maximumTileWidth: CGFloat = Style.Metrics.tileWidth
+
     static func plan(itemCount: Int, availableWidth: CGFloat) -> Plan {
         let spacing = Style.Metrics.tileSpacing
         let count = max(itemCount, 1)
@@ -173,7 +183,8 @@ enum TileGrid {
         // Never more columns than there are tiles, or the last row stretches a
         // single tile across the whole strip.
         let columns = max(1, min(count, fitting))
-        let width = (availableWidth - spacing * CGFloat(columns - 1)) / CGFloat(columns)
+        let even = (availableWidth - spacing * CGFloat(columns - 1)) / CGFloat(columns)
+        let width = min(even, maximumTileWidth)
         let rows = Int(ceil(Double(count) / Double(columns)))
         let height = CGFloat(rows) * Style.Metrics.tileHeight
             + CGFloat(rows - 1) * spacing
@@ -203,8 +214,9 @@ private final class PinnedTileView: NSView {
     private let ring = CAGradientLayer()
     private let ringMask = CAShapeLayer()
     private var trackingArea: NSTrackingArea?
+    private var highlight: RowHighlight?
     private var isHovered = false {
-        didSet { if isHovered != oldValue { needsDisplay = true } }
+        didSet { if isHovered != oldValue { updateHighlight() } }
     }
 
     private let isActive: Bool
@@ -217,6 +229,7 @@ private final class PinnedTileView: NSView {
         translatesAutoresizingMaskIntoConstraints = true
 
         wantsLayer = true
+        if let layer { highlight = RowHighlight(in: layer) }
         ring.type = .conic
         ring.startPoint = CGPoint(x: 0.5, y: 0.5)
         ring.endPoint = CGPoint(x: 0.5, y: 0)
@@ -231,6 +244,7 @@ private final class PinnedTileView: NSView {
         // The icon arrives asynchronously, so the ring is coloured when it does
         // rather than once at build time.
         icon.onImageChanged = { [weak self] image in self?.applyRing(for: image) }
+        updateHighlight()
         if let url = tile.url {
             icon.show(for: url, in: nil, isPrivate: isPrivate)
         }
@@ -254,19 +268,40 @@ private final class PinnedTileView: NSView {
     /// the strip draws.
     private static let ringWidth: CGFloat = 2
 
+    /// The brand ring, and only on the tile whose page is in front.
+    ///
+    /// Every tile used to carry one -- the inactive ones in a neutral grey at
+    /// 0.45 -- on the reasoning that a shared shape makes a strip read as one
+    /// thing. In practice it did the opposite: six grey outlines around six
+    /// grey boxes is six competing rectangles, and the one tile that mattered
+    /// was distinguished only by the hue of its outline. A ring nobody else
+    /// has is a far stronger signal than a ring everybody has in a different
+    /// colour, and the strip reads as a row of icons rather than a row of
+    /// frames.
     private func applyRing(for image: NSImage?) {
-        // The inactive tile keeps its ring, drawn in the neutral palette, so
-        // every tile is the same shape and only the colour changes.
-        let colors = isActive
-            ? BrandPalette.ringColors(for: image)
-            : BrandPalette.ringColors(for: nil)
-        ring.colors = colors.map(\.cgColor)
-        ring.opacity = isActive ? 1 : 0.45
+        guard isActive else {
+            ring.isHidden = true
+            return
+        }
+        ring.isHidden = false
+        ring.colors = BrandPalette.ringColors(for: image).map(\.cgColor)
+        ring.opacity = 1
         needsLayout = true
+    }
+
+    private func updateHighlight() {
+        highlight?.apply(
+            isActive ? .selected : (isHovered ? .hover : .rest),
+            appearance: effectiveAppearance
+        )
     }
 
     override func layout() {
         super.layout()
+        highlight?.layout(
+            bounds, in: bounds.height, flipped: isFlipped,
+            radius: Style.Metrics.tileCornerRadius, scale: highlightScale
+        )
         // No implicit animation: the tiles are re-laid out on every sidebar
         // drag, and a ring that eases into place on each frame smears.
         CATransaction.begin()
@@ -282,14 +317,20 @@ private final class PinnedTileView: NSView {
         CATransaction.commit()
     }
 
+    /// The resting fill, under the highlight. Drawn rather than layered so the
+    /// tile always has a body even before it is hovered or made active.
     override func draw(_ dirtyRect: NSRect) {
-        let fill = isHovered ? Style.Colors.tileHoverFill : Style.Colors.tileFill
-        fill.setFill()
+        Style.Colors.tileFill.setFill()
         NSBezierPath(
             roundedRect: bounds,
             xRadius: Style.Metrics.tileCornerRadius,
             yRadius: Style.Metrics.tileCornerRadius
         ).fill()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        highlight?.refresh(appearance: effectiveAppearance)
     }
 
     override func updateTrackingAreas() {

@@ -59,22 +59,25 @@ final class TabGroupHeaderView: NSView {
         emojiLabel.setAccessibilityElement(false)
         emojiLabel.setContentHuggingPriority(.required, for: .horizontal)
 
-        titleLabel.font = Style.Fonts.emphasis
-        titleLabel.textColor = Style.Colors.primaryText
+        titleLabel.font = Style.Fonts.groupHeader
+        // Secondary, not primary. A folder header names the rows under it; it
+        // is not one of them, and drawing it in full-contrast bold at the same
+        // size as the tabs made every folder shout over its own contents.
+        titleLabel.textColor = Style.Colors.secondaryText
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.cell?.usesSingleLineMode = true
         titleLabel.setAccessibilityElement(false)
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         chevron.imageScaling = .scaleProportionallyDown
-        chevron.contentTintColor = Style.Colors.secondaryText
+        chevron.contentTintColor = Style.Colors.tertiaryText
         chevron.setAccessibilityElement(false)
         chevron.setContentHuggingPriority(.required, for: .horizontal)
         chevron.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView(views: [emojiLabel, titleLabel, chevron])
         stack.orientation = .horizontal
-        stack.spacing = 6
+        stack.spacing = 5
         stack.alignment = .centerY
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
@@ -178,6 +181,7 @@ final class TabGroupHeaderView: NSView {
         // than rotating so the glyph stays optically correct at 11 points.
         let symbol = isExpanded ? "chevron.down" : "chevron.right"
         chevron.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 8, weight: .semibold)
         setAccessibilityValue(isExpanded)
         let name = titleLabel.stringValue
         setAccessibilityLabel(name.isEmpty ? "Tab group" : name)

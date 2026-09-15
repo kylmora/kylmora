@@ -100,11 +100,21 @@ enum SpaceTheme: String, CaseIterable, Codable, Sendable {
     ///
     /// Light mode gets a touch less than dark: the same alpha over a near-white
     /// surface reads louder than over a dark one.
+    ///
+    /// These numbers were nearly three times higher, and that single fact was
+    /// most of what made the window look cheap. A saturated hue laid over the
+    /// sidebar material at 0.42 stops being a tint: it covers the material
+    /// completely, so the chrome loses the desktop showing through it and the
+    /// depth that comes with that, and every surface drawn on top -- the
+    /// selected pill, a folder's plate -- has to fight a flat block of colour
+    /// instead of sitting on a neutral one. At this strength the hue is still
+    /// unmistakable at a glance, which is the whole job of a space colour,
+    /// while the material and everything layered over it still read.
     static func wash(of base: NSColor, opacity: CGFloat = 1) -> NSColor {
         let opacity = max(0, min(1, opacity))
         return NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            return base.withAlphaComponent((isDark ? 0.48 : 0.42) * opacity)
+            return base.withAlphaComponent((isDark ? 0.20 : 0.15) * opacity)
         }
     }
 

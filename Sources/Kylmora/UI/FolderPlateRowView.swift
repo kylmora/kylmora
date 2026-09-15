@@ -16,6 +16,18 @@ import AppKit
 final class FolderPlateRowView: NSTableRowView {
     static let reuseIdentifier = NSUserInterfaceItemIdentifier("folderPlate")
 
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // The cell inside this row casts the selected row's shadow past the
+        // row's own edges; a clip here would slice it off just as the cell's
+        // own would. See `TabRowView`.
+        clipsToBounds = false
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("FolderPlateRowView is created in code only")
+    }
+
     var slices: [FolderPlateSlice] = [] {
         didSet { if slices != oldValue { needsDisplay = true } }
     }
@@ -81,7 +93,6 @@ final class FolderPlateRowView: NSTableRowView {
         _ segment: FolderPlatePlan.Segment,
         leading: CGFloat, width: CGFloat, radius: CGFloat, gap: CGFloat
     ) {
-        Style.Colors.folderPlateFill.setFill()
         var rect = bounds
         rect.origin.x = leading
         rect.size.width = width
@@ -106,7 +117,24 @@ final class FolderPlateRowView: NSTableRowView {
 
         NSGraphicsContext.saveGraphicsState()
         bounds.clip()
-        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+        let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
+        Style.Colors.folderPlateFill.setFill()
+        path.fill()
+        // A hairline around the plate. Its fill and the sidebar behind it are
+        // within a few percent of each other by design -- a plate loud enough
+        // to have an edge of its own would compete with the pills on it -- so
+        // without this the card has no boundary at all in light mode and reads
+        // as a patch of slightly different material. The stroke is clipped to
+        // the row like the fill, so the sides run unbroken down a plate that
+        // spans several rows and only the real corners are drawn.
+        let line = Style.Metrics.hairline
+        let edge = NSBezierPath(
+            roundedRect: rect.insetBy(dx: line / 2, dy: line / 2),
+            xRadius: radius, yRadius: radius
+        )
+        edge.lineWidth = line
+        Style.Colors.folderPlateStroke.setStroke()
+        edge.stroke()
         NSGraphicsContext.restoreGraphicsState()
     }
 

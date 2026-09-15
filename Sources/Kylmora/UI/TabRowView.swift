@@ -109,7 +109,7 @@ final class TabRowView: NSTableCellView {
     var isSelected = false {
         didSet {
             guard isSelected != oldValue else { return }
-            needsDisplay = true
+            updateHighlight()
             updateTrailing()
         }
     }
@@ -117,7 +117,10 @@ final class TabRowView: NSTableCellView {
     /// Leading inset, on top of the pill's own. Rows inside a group are stepped
     /// in by `Style.Metrics.rowIndent`; loose rows pass 0.
     var indentation: CGFloat = Style.Metrics.rowIndent {
-        didSet { leadingConstraint?.constant = contentInset + indentation }
+        didSet {
+            leadingConstraint?.constant = contentInset + indentation
+            needsLayout = true
+        }
     }
 
     /// A row inside a group's plate. Its pill -- and the close button and spinner
@@ -131,7 +134,7 @@ final class TabRowView: NSTableCellView {
             guard isInGroupPlate != oldValue else { return }
             let extra = isInGroupPlate ? Style.Metrics.rowIndent : 0
             for constraint in trailingConstraints { constraint.constant = -(contentInset + extra) }
-            needsDisplay = true
+            needsLayout = true
         }
     }
 
@@ -210,6 +213,15 @@ final class TabRowView: NSTableCellView {
     )
 
     private var content = TabRowContent(title: "")
+    /// The animated plate behind the row. Drawn by a layer rather than in
+    /// `draw(_:)` so selection and hover fade rather than blink, and so the
+    /// selected row can carry a hairline and a shadow.
+    private var highlight: RowHighlight?
+    /// A cell that has just been built or recycled arrives already looking
+    /// right, rather than fading in from the last row's state. Cleared on the
+    /// first layout pass, by which point both `configure` and `isSelected`
+    /// have had their say about this row.
+    private var isFresh = true
     private var leadingConstraint: NSLayoutConstraint?
     /// The spinner's and close button's trailing constraints, kept so a row on a
     /// group plate can pull them in to match the pill's trailing inset.
@@ -221,7 +233,7 @@ final class TabRowView: NSTableCellView {
     private var isHovered = false {
         didSet {
             guard isHovered != oldValue else { return }
-            needsDisplay = true
+            updateHighlight()
             updateTrailing()
         }
     }
@@ -244,6 +256,15 @@ final class TabRowView: NSTableCellView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        wantsLayer = true
+        // The selected row's plate casts a shadow, and a pill inset three
+        // points inside its row needs about four to lay one down. Clipped to
+        // the cell, the shadow was sliced off in a hard straight line a
+        // fraction below the pill -- which reads as a grey rectangle stuck
+        // behind the row rather than as a shadow. A shadow that leaves its
+        // own row and falls on the neighbouring ones is what a shadow does.
+        clipsToBounds = false
+        if let layer { highlight = RowHighlight(in: layer) }
 
         titleLabel.font = Style.Fonts.body
         titleLabel.lineBreakMode = .byTruncatingTail
@@ -278,7 +299,7 @@ final class TabRowView: NSTableCellView {
         ])
         for dot in [tagDot, unreadDot] {
             dot.wantsLayer = true
-            dot.layer?.cornerRadius = 4
+            dot.layer?.cornerRadius = 3.5
             dot.layer?.borderWidth = 1.5
             dot.isHidden = true
             dot.translatesAutoresizingMaskIntoConstraints = false
@@ -287,12 +308,12 @@ final class TabRowView: NSTableCellView {
         }
         unreadDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
         NSLayoutConstraint.activate([
-            tagDot.widthAnchor.constraint(equalToConstant: 8),
-            tagDot.heightAnchor.constraint(equalToConstant: 8),
+            tagDot.widthAnchor.constraint(equalToConstant: 7),
+            tagDot.heightAnchor.constraint(equalToConstant: 7),
             tagDot.centerXAnchor.constraint(equalTo: favicon.trailingAnchor, constant: -1),
             tagDot.centerYAnchor.constraint(equalTo: favicon.bottomAnchor, constant: -1),
-            unreadDot.widthAnchor.constraint(equalToConstant: 8),
-            unreadDot.heightAnchor.constraint(equalToConstant: 8),
+            unreadDot.widthAnchor.constraint(equalToConstant: 7),
+            unreadDot.heightAnchor.constraint(equalToConstant: 7),
             unreadDot.centerXAnchor.constraint(equalTo: favicon.trailingAnchor, constant: -1),
             unreadDot.centerYAnchor.constraint(equalTo: favicon.topAnchor, constant: 1)
         ])
@@ -387,14 +408,17 @@ final class TabRowView: NSTableCellView {
         emojiLabel.isHidden = content.emoji == nil
         favicon.isHidden = content.emoji != nil
 
-        if let tag = content.colorTag {
-            tagDot.layer?.backgroundColor = tag.nsColor.cgColor
-            tagDot.layer?.borderColor = NSColor.windowBackgroundColor.cgColor
-            tagDot.isHidden = false
-        } else {
-            tagDot.isHidden = true
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            if let tag = content.colorTag {
+                tagDot.layer?.backgroundColor = tag.nsColor.cgColor
+                tagDot.layer?.borderColor = Style.Colors.dotRing.cgColor
+                tagDot.isHidden = false
+            } else {
+                tagDot.isHidden = true
+            }
+            unreadDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+            unreadDot.layer?.borderColor = Style.Colors.dotRing.cgColor
         }
-        unreadDot.layer?.borderColor = NSColor.windowBackgroundColor.cgColor
         unreadDot.isHidden = !content.hasUnreadChange
 
         // VoiceOver reads the row, so state that is only shown visually --
@@ -536,22 +560,36 @@ final class TabRowView: NSTableCellView {
         return pill
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        let fill: NSColor?
-        if isSelected {
-            fill = Style.Colors.rowSelectedFill
-        } else if isHovered {
-            fill = Style.Colors.rowHoverFill
-        } else {
-            fill = nil
+    override func layout() {
+        super.layout()
+        highlight?.layout(
+            pillRect,
+            in: bounds.height,
+            flipped: isFlipped,
+            radius: Style.Metrics.rowCornerRadius,
+            scale: highlightScale
+        )
+        // Both halves of this row's state have been applied by now, so from
+        // here on a change is a change the user made and is worth animating.
+        if isFresh {
+            isFresh = false
+            updateHighlight(animated: false)
         }
-        guard let fill else { return }
-        fill.setFill()
-        NSBezierPath(
-            roundedRect: pillRect,
-            xRadius: Style.Metrics.rowCornerRadius,
-            yRadius: Style.Metrics.rowCornerRadius
-        ).fill()
+    }
+
+    /// What the plate is currently showing. Exposed so the rule that selection
+    /// outranks hover can be checked without rendering anything.
+    var highlightState: RowHighlight.State { highlight?.state ?? .rest }
+
+    /// The plate's state follows from the row's, in one place.
+    private func updateHighlight(animated: Bool = true) {
+        let state: RowHighlight.State = isSelected ? .selected : (isHovered ? .hover : .rest)
+        highlight?.apply(state, appearance: effectiveAppearance, animated: animated && !isFresh)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        highlight?.refresh(appearance: effectiveAppearance)
     }
 
     override func updateTrackingAreas() {
@@ -568,6 +606,10 @@ final class TabRowView: NSTableCellView {
     override func prepareForReuse() {
         super.prepareForReuse()
         onClose = nil
+        // Whatever this cell shows next arrives already correct rather than
+        // fading out of the previous row's selection.
+        isFresh = true
+        onToggleMute = nil
         isHovered = false
         isSelected = false
         content = TabRowContent(title: "")

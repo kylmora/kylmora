@@ -69,8 +69,7 @@ enum SidebarDensity: String, CaseIterable, Codable, Sendable {
         }
     }
 
-    /// The full row, and the pill drawn inside it: the pill keeps the same
-    /// 2-point margin above and below at every density.
+    /// The full row, and the pill drawn inside it.
     var rowHeight: CGFloat {
         switch self {
         case .compact: return 28
@@ -79,7 +78,14 @@ enum SidebarDensity: String, CaseIterable, Codable, Sendable {
         }
     }
 
-    var pillHeight: CGFloat { rowHeight - 4 }
+    /// Three points of clear material above and below every pill, not two.
+    ///
+    /// A pill with a two-point margin nearly touches the pills above and below
+    /// it, so a list of them reads as one segmented bar rather than as separate
+    /// rows -- and the selected one, which now casts a shadow, had nowhere to
+    /// cast it. Six points off the row is the largest margin a 28-point row can
+    /// give and still leave a pill tall enough for a 16-point favicon.
+    var pillHeight: CGFloat { rowHeight - 6 }
 }
 
 extension Notification.Name {

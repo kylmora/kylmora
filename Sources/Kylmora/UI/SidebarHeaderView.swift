@@ -78,15 +78,24 @@ final class MenuLabelButton: NSView {
 
     private let label = NSTextField(labelWithString: "")
     private var trackingArea: NSTrackingArea?
+    private var highlight: RowHighlight?
     private var isHovered = false {
-        didSet { if isHovered != oldValue { needsDisplay = true } }
+        didSet {
+            guard isHovered != oldValue else { return }
+            highlight?.apply(
+                isHovered && menuProvider != nil ? .hover : .rest,
+                appearance: effectiveAppearance
+            )
+        }
     }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        if let layer { highlight = RowHighlight(in: layer, depth: .flat) }
 
-        label.font = Style.Fonts.emphasis
+        label.font = Style.Fonts.title
         label.textColor = Style.Colors.primaryText
         label.lineBreakMode = .byTruncatingTail
         label.cell?.usesSingleLineMode = true
@@ -118,10 +127,14 @@ final class MenuLabelButton: NSView {
         toolTip = tooltip
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        guard isHovered, menuProvider != nil else { return }
-        Style.Colors.rowHoverFill.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
+    override func layout() {
+        super.layout()
+        highlight?.layout(bounds, in: bounds.height, flipped: isFlipped, radius: 7, scale: highlightScale)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        highlight?.refresh(appearance: effectiveAppearance)
     }
 
     override func updateTrackingAreas() {

@@ -7,9 +7,10 @@ import AppKit
 /// Escape reverts to the page's own address. A copy button at the trailing
 /// edge puts the full URL on the clipboard in one click.
 ///
-/// It draws no background of its own -- it sits on the top bar as plain text,
-/// the same colour as everything around it -- and always holds the full URL,
-/// so what you edit or copy is the whole address.
+/// It draws a faint plate of its own and always holds the full URL, so what
+/// you edit or copy is the whole address. The plate brightens under the
+/// pointer and again while the field is being edited, so the bar answers "is
+/// this mine to type in?" before it is clicked.
 @MainActor
 final class AddressField: NSView, NSTextFieldDelegate {
     /// The text the user committed with Return. The controller resolves it to
@@ -24,11 +25,24 @@ final class AddressField: NSView, NSTextFieldDelegate {
     private var currentDisplay = ""
     /// The full URL, for the tooltip and the copy button.
     private var currentURL: URL?
-    private var isEditing = false
+    private var highlight: RowHighlight?
+    private var trackingArea: NSTrackingArea?
+    private var isHovered = false {
+        didSet { if isHovered != oldValue { updateHighlight() } }
+    }
+    private var isEditing = false {
+        didSet { if isEditing != oldValue { updateHighlight() } }
+    }
+
+    /// The field's corner. A touch rounder than a toolbar button's, because
+    /// the shape is long: the same radius reads as sharper the wider it gets.
+    private static let cornerRadius: CGFloat = 8
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        if let layer { highlight = RowHighlight(in: layer, depth: .flat) }
 
         field.translatesAutoresizingMaskIntoConstraints = false
         field.delegate = self
@@ -59,19 +73,67 @@ final class AddressField: NSView, NSTextFieldDelegate {
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: Style.Metrics.iconButtonSide),
-            securityIcon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            securityIcon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
             securityIcon.centerYAnchor.constraint(equalTo: centerYAnchor),
             securityIcon.widthAnchor.constraint(equalToConstant: 15),
             securityIcon.heightAnchor.constraint(equalToConstant: 15),
             field.leadingAnchor.constraint(equalTo: securityIcon.trailingAnchor, constant: 6),
             field.centerYAnchor.constraint(equalTo: centerYAnchor),
             field.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -4),
-            copyButton.trailingAnchor.constraint(equalTo: trailingAnchor),
+            copyButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
             copyButton.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
     }
 
     required init?(coder: NSCoder) { fatalError("AddressField is created in code only") }
+
+    // MARK: - The plate
+
+    /// The resting plate, under the highlight. Drawn rather than layered so the
+    /// field has a shape even when nothing is hovering or editing it.
+    override func draw(_ dirtyRect: NSRect) {
+        let shape = NSBezierPath(
+            roundedRect: bounds.insetBy(dx: Style.Metrics.hairline / 2, dy: Style.Metrics.hairline / 2),
+            xRadius: Self.cornerRadius,
+            yRadius: Self.cornerRadius
+        )
+        Style.Colors.fieldFill.setFill()
+        shape.fill()
+        shape.lineWidth = Style.Metrics.hairline
+        Style.Colors.fieldStroke.setStroke()
+        shape.stroke()
+    }
+
+    override func layout() {
+        super.layout()
+        highlight?.layout(
+            bounds, in: bounds.height, flipped: isFlipped,
+            radius: Self.cornerRadius, scale: highlightScale
+        )
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        highlight?.refresh(appearance: effectiveAppearance)
+        needsDisplay = true
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingArea = installHoverTracking(replacing: trackingArea)
+    }
+
+    override func mouseEntered(with event: NSEvent) { isHovered = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
+
+    /// Editing outranks hover: a field being typed into stays lit even when the
+    /// pointer has wandered off it.
+    private func updateHighlight() {
+        highlight?.apply(
+            isEditing ? .selected : (isHovered ? .hover : .rest),
+            appearance: effectiveAppearance
+        )
+    }
 
     /// Loads a page's address into the bar. Ignored while the user is editing,
     /// so a page finishing in the background does not yank the text out from

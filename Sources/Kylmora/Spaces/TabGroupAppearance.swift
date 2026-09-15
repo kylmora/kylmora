@@ -109,11 +109,17 @@ struct TabGroupAppearance: Codable, Hashable, Sendable {
         return NSGradient(starting: start, ending: end)
     }
 
-    /// How opaque a coloured plate is. Below one so it composites with the
-    /// material underneath rather than reading as a flat rectangle, the same
-    /// reasoning as `SpaceTheme.wash`, but stronger because a group card is
-    /// meant to be seen as a card.
-    static let fillAlpha: CGFloat = 0.85
+    /// How opaque a coloured plate is.
+    ///
+    /// Well below one, so it composites with the material underneath rather
+    /// than reading as a flat rectangle -- the same reasoning as
+    /// `SpaceTheme.wash`, and it was wrong here for the same reason. At 0.85 a
+    /// coloured folder was an opaque slab of pigment in the middle of the
+    /// sidebar: it drowned the favicons and titles on its own rows, and it
+    /// outshouted the space colour it was meant to sit inside. A group is a
+    /// division within a space, so its colour has to be quieter than the
+    /// space's, not louder.
+    static let fillAlpha: CGFloat = 0.22
 
     // MARK: - Convenience for the editor
 

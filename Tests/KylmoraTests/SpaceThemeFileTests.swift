@@ -57,7 +57,7 @@ struct SpaceThemeFileTests {
         #expect(SidebarDensity.compact.rowHeight < SidebarDensity.regular.rowHeight)
         #expect(SidebarDensity.regular.rowHeight < SidebarDensity.roomy.rowHeight)
         for density in SidebarDensity.allCases {
-            #expect(density.pillHeight == density.rowHeight - 4)
+            #expect(density.pillHeight == density.rowHeight - 6)
         }
 
         var notified = 0
@@ -65,7 +65,7 @@ struct SpaceThemeFileTests {
         defer { NotificationCenter.default.removeObserver(token) }
         settings.sidebarDensity = .roomy
         #expect(Style.Metrics.rowHeight == 38)
-        #expect(Style.Metrics.rowPillHeight == 34)
+        #expect(Style.Metrics.rowPillHeight == 32)
         settings.sidebarDensity = .roomy
         #expect(notified == 1, "setting the same density again is not a change")
         settings.sidebarDensity = .compact

@@ -253,7 +253,10 @@ final class SidebarViewController: NSViewController {
         // recompute one of their opacities halfway through the animation.
         let contentStack = NSStackView(views: [diaHeader, pinnedTiles, scrollView, archiveList])
         contentStack.orientation = .vertical
-        contentStack.spacing = 6
+        // The bands of the sidebar -- title, shortcuts, tabs -- are different
+        // kinds of thing, so the space between them is the gutter rather than
+        // the tighter rhythm the rows inside a band keep.
+        contentStack.spacing = Style.Metrics.elementSeparation
         contentStack.alignment = .leading
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.wantsLayer = true
@@ -272,7 +275,7 @@ final class SidebarViewController: NSViewController {
 
         let stack = NSStackView(views: [contentStack, nowPlayingView, diaFooter])
         stack.orientation = .vertical
-        stack.spacing = 6
+        stack.spacing = Style.Metrics.elementSeparation
         stack.alignment = .leading
         stack.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stack)
@@ -327,6 +330,9 @@ final class SidebarViewController: NSViewController {
         // highlight cannot be.
         tableView.style = .plain
         tableView.selectionHighlightStyle = .none
+        // A row's shadow is allowed to fall on its neighbours. The scroll view
+        // still clips at the list's own edges, which is right.
+        tableView.clipsToBounds = false
         tableView.allowsEmptySelection = true
         tableView.allowsMultipleSelection = true
         tableView.dataSource = self
