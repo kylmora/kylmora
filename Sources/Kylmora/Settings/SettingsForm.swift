@@ -44,6 +44,19 @@ final class SettingsForm: NSView {
         }
     }
 
+    /// Re-applies the pane's hue to controls built since it was set.
+    ///
+    /// The accent is handed to a form once, when the window shows the pane,
+    /// and it colours what is there at that moment. A pane that rebuilds part
+    /// of itself afterwards -- a list that reloads, rows reordered by a drag --
+    /// creates its controls long after that, and they arrive wearing the
+    /// system accent while everything around them wears the pane's. Panes that
+    /// rebuild call this when they are done.
+    func refreshAccent() {
+        for adaptor in adaptors { adaptor.control.tint = accent }
+        tintControls(in: self)
+    }
+
     /// The pane's colour, down to every pill and chevron on it.
     private func tintControls(in view: NSView) {
         for child in view.subviews {

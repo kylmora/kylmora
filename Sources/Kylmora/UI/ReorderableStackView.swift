@@ -89,6 +89,16 @@ final class ReorderableStackView: NSStackView {
 
     // MARK: - Dragging
 
+    /// A press here moves a row, never the window.
+    ///
+    /// The settings window is movable by its background, and before a view
+    /// ever sees a drag AppKit asks the view under the pointer whether a press
+    /// on it may move the window. A plain container says yes, so pressing a
+    /// row and dragging picked up the whole window and carried it off, and the
+    /// row never moved at all: the view did get the initial press, which is
+    /// why this looked like a drag that simply did nothing.
+    override var mouseDownCanMoveWindow: Bool { false }
+
     /// Routes a press to this view unless it landed on something that acts on
     /// clicks itself.
     ///

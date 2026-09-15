@@ -294,6 +294,11 @@ final class BrowsingSettingsViewController: NSViewController {
                 row.heightAnchor.constraint(greaterThanOrEqualToConstant: 30)
             ])
         }
+
+        // These switches were built after the window handed this form its
+        // colour, so they have to be told it: without this they wear the system
+        // accent and every other switch on the page wears the pane's.
+        (view as? SettingsForm)?.refreshAccent()
     }
 
     /// Moves a button up or down the order by one place.

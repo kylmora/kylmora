@@ -430,6 +430,34 @@ struct ReorderableStackTests {
         #expect(alone.pitch == 0)
     }
 
+    @Test("Rows rebuilt after the pane was coloured still wear its colour")
+    func rebuiltRowsKeepThePaneColour() throws {
+        // The accent reaches a form once, when the window shows the pane. Rows
+        // rebuilt after that -- by a drag, by an arrow, by a reload -- were
+        // arriving in the system accent while every other switch on the page
+        // wore the pane's.
+        let pane = BrowsingSettingsViewController(settings: .shared)
+        pane.loadViewIfNeeded()
+        let form = try #require(pane.view as? SettingsForm)
+        form.accent = .systemRed
+        form.refreshAccent()
+
+        let names = Set(ToolbarLayout.catalog.map(\.label))
+        let toggles = UITestSupport.descendants(of: pane.view)
+            .compactMap { $0 as? SettingsToggle }
+            .filter { names.contains($0.identifier?.rawValue ?? "") }
+        #expect(!toggles.isEmpty)
+        #expect(toggles.allSatisfy { $0.tint == .systemRed })
+    }
+
+    @Test("A press on a row moves the row, not the window")
+    func pressDoesNotDragTheWindow() {
+        // The settings window is movable by its background. A container that
+        // does not refuse this hands every press to the window, which carries
+        // the whole window off while the row stays exactly where it was.
+        #expect(ReorderableStackView().mouseDownCanMoveWindow == false)
+    }
+
     @Test("The toolbar list is the draggable kind")
     func toolbarListIsReorderable() {
         let pane = BrowsingSettingsViewController(settings: .shared)
