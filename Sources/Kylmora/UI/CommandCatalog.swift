@@ -74,7 +74,7 @@ enum CommandCatalog {
             title: "Duplicate Tab",
             subtitle: "Clone current tab in current space",
             symbolName: "plus.square.on.square",
-            shortcut: "⇧⌘D",
+            shortcut: "⌥⇧⌘D",
             keywords: ["duplicate", "copy", "tab", "clone"]
         ),
         CommandCandidate(
@@ -190,7 +190,7 @@ enum CommandCatalog {
             title: "Split Stacked",
             subtitle: "Tile two tabs horizontally top-and-bottom",
             symbolName: "rectangle.split.1x2",
-            shortcut: "⌥⌘H",
+            shortcut: "⌥⇧⌘H",
             keywords: ["split", "stacked", "horizontal", "tile"]
         ),
         CommandCandidate(
@@ -214,7 +214,7 @@ enum CommandCatalog {
             title: "Stick / Unstick Split Pane",
             subtitle: "Keep active pane locked on screen while switching other tabs in sidebar",
             symbolName: "pin",
-            shortcut: "⌥⌘S",
+            shortcut: "⌥⇧⌘P",
             keywords: ["stick", "pin", "lock", "split", "pane", "stay", "freeze", "side"]
         ),
         CommandCandidate(
@@ -322,7 +322,7 @@ enum CommandCatalog {
             title: "Read Aloud (Text to Speech)",
             subtitle: "Listen to the article using on-device speech",
             symbolName: "speaker.wave.2",
-            shortcut: "⌥⌘S",
+            shortcut: "⌥⇧⌘S",
             keywords: ["speech", "listen", "tts", "read", "aloud", "audio", "voice"]
         ),
         CommandCandidate(
@@ -372,7 +372,7 @@ enum CommandCatalog {
             title: "Toggle Sidebar Position",
             subtitle: "Switch sidebar between left and right window edge",
             symbolName: "arrow.left.arrow.right",
-            shortcut: "⌥⌘S",
+            shortcut: "⌃⇧⌘S",
             keywords: ["sidebar", "position", "left", "right", "edge", "dock"]
         ),
         CommandCandidate(
@@ -618,6 +618,62 @@ enum CommandCatalog {
             keywords: ["standalone", "focus", "window", "chromeless", "web app", "ssb"]
         ),
         CommandCandidate(
+            id: "automations",
+            title: "Automations\u{2026}",
+            subtitle: "Space routing and rules that act on tabs when something happens",
+            symbolName: "bolt.horizontal",
+            shortcut: "",
+            keywords: ["automation", "rules", "routing", "trigger", "action", "when", "idle", "shortcut", "applescript"]
+        ),
+        CommandCandidate(
+            id: "close-duplicate-tabs",
+            title: "Close Duplicate Tabs",
+            subtitle: "Keep one tab per address in this Space",
+            symbolName: "rectangle.on.rectangle.slash",
+            shortcut: "",
+            keywords: ["duplicate", "close", "tabs", "tidy", "dedupe"]
+        ),
+        CommandCandidate(
+            id: "sort-tabs-title",
+            title: "Sort Tabs by Title",
+            subtitle: "Reorder this Space's tabs alphabetically",
+            symbolName: "arrow.up.arrow.down",
+            shortcut: "",
+            keywords: ["sort", "tabs", "title", "order", "alphabetical"]
+        ),
+        CommandCandidate(
+            id: "sort-tabs-domain",
+            title: "Sort Tabs by Domain",
+            subtitle: "Group this Space's tabs by site",
+            symbolName: "arrow.up.arrow.down",
+            shortcut: "",
+            keywords: ["sort", "tabs", "domain", "site", "order", "group"]
+        ),
+        CommandCandidate(
+            id: "sort-tabs-last-used",
+            title: "Sort Tabs by Last Used",
+            subtitle: "Most recently used tabs first",
+            symbolName: "arrow.up.arrow.down",
+            shortcut: "",
+            keywords: ["sort", "tabs", "recent", "last used", "order"]
+        ),
+        CommandCandidate(
+            id: "keyboard-shortcuts",
+            title: "Keyboard Shortcuts",
+            subtitle: "Every shortcut on one page",
+            symbolName: "keyboard",
+            shortcut: "⌘/",
+            keywords: ["keyboard", "shortcuts", "cheat sheet", "keys", "help"]
+        ),
+        CommandCandidate(
+            id: "toggle-tab-bar",
+            title: "Show / Hide Tab Bar",
+            subtitle: "A horizontal row of tabs above the page",
+            symbolName: "rectangle.topthird.inset.filled",
+            shortcut: "⌃⌘B",
+            keywords: ["tab bar", "horizontal tabs", "tabs", "strip", "top tabs"]
+        ),
+        CommandCandidate(
             id: "print-page",
             title: "Print Page\u{2026}",
             subtitle: "Print the page with the standard print panel",
@@ -726,6 +782,22 @@ enum CommandCatalog {
             keywords: ["screenshot", "capture", "copy", "clipboard", "snapshot", "visible"]
         ),
         CommandCandidate(
+            id: "annotate-visible-area",
+            title: "Capture and Annotate Visible Area\u{2026}",
+            subtitle: "Crop, arrows, boxes, blur and text before saving or copying",
+            symbolName: "pencil.and.outline",
+            shortcut: "⌃⌥⌘3",
+            keywords: ["screenshot", "annotate", "markup", "arrow", "blur", "crop", "edit", "draw"]
+        ),
+        CommandCandidate(
+            id: "annotate-full-page",
+            title: "Capture and Annotate Full Page\u{2026}",
+            subtitle: "The whole page in the editor: crop, arrows, boxes, blur and text",
+            symbolName: "pencil.and.outline",
+            shortcut: "⌃⌥⌘4",
+            keywords: ["screenshot", "annotate", "markup", "full page", "blur", "crop", "edit"]
+        ),
+        CommandCandidate(
             id: "capture-full-page",
             title: "Capture Full Page Screenshot",
             subtitle: "Save entire scrollable webpage as an image to Downloads",
@@ -794,7 +866,7 @@ enum CommandCatalog {
             title: "Lock Browser",
             subtitle: "Lock Kylmora and require authentication",
             symbolName: "lock.shield.fill",
-            shortcut: "⌥⌘L",
+            shortcut: "⌃⌘L",
             keywords: ["lock", "protect", "master", "password", "touch id", "security", "privacy"]
         ),
 
@@ -804,7 +876,7 @@ enum CommandCatalog {
             title: "Task Manager",
             subtitle: "View per-tab CPU, RAM, and resource usage",
             symbolName: "cpu",
-            shortcut: "⌥⌘U",
+            shortcut: "⇧⌘U",
             keywords: ["task", "manager", "cpu", "ram", "memory", "usage", "resource", "process", "kill", "suspend", "hog"]
         ),
 

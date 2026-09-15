@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookUI
 import Combine
 
 /// The downloads list, in a popover hung off the sidebar's Downloads button.
@@ -24,7 +25,7 @@ final class DownloadsPopover: NSViewController {
     static let emptyListHeight: CGFloat = 96
 
     private let manager: DownloadManager
-    private let tableView = NSTableView()
+    private let tableView = DownloadTableView()
     private let scrollView = NSScrollView()
     private let clearButton = NSButton(title: "Clear", target: nil, action: nil)
     private let emptyTitle = NSTextField(labelWithString: "No Downloads")
@@ -137,6 +138,7 @@ final class DownloadsPopover: NSViewController {
     }()
 
     private func configureTable() {
+        tableView.onQuickLook = { [weak self] in self?.quickLook() }
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("download"))
         column.resizingMask = .autoresizingMask
         tableView.addTableColumn(column)
@@ -255,6 +257,7 @@ final class DownloadsPopover: NSViewController {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Open", action: #selector(openClicked), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Show in Finder", action: #selector(revealClicked), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Quick Look", action: #selector(quickLookClicked), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Copy Address", action: #selector(copyAddressClicked), keyEquivalent: ""))
         menu.addItem(.separator())
@@ -286,6 +289,26 @@ final class DownloadsPopover: NSViewController {
     }
 
     @objc private func openClicked() { openSelected() }
+
+    /// The file under the cursor or selection, if it is on disk.
+    var quickLookURL: URL? {
+        guard let download = clickedDownload, download.fileExists else { return nil }
+        return download.destination
+    }
+
+    @objc private func quickLookClicked() { quickLook() }
+
+    /// Space bar, like the Finder: the file in a Quick Look panel.
+    func quickLook() {
+        guard quickLookURL != nil, let panel = QLPreviewPanel.shared() else { return }
+        panel.dataSource = self
+        panel.delegate = self
+        if panel.isVisible {
+            panel.reloadData()
+        } else {
+            panel.makeKeyAndOrderFront(nil)
+        }
+    }
 
     @objc private func revealClicked() {
         guard let download = clickedDownload, download.fileExists else { return }
@@ -370,5 +393,29 @@ extension DownloadsPopover: NSTableViewDataSource, NSTableViewDelegate {
             let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? DownloadCellView
             cell?.isSelected = index == tableView.selectedRow
         }
+    }
+}
+
+extension DownloadsPopover: @preconcurrency QLPreviewPanelDataSource, @preconcurrency QLPreviewPanelDelegate {
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+        quickLookURL == nil ? 0 : 1
+    }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
+        quickLookURL as NSURL?
+    }
+}
+
+/// The downloads table, with the space bar wired to Quick Look.
+@MainActor
+final class DownloadTableView: NSTableView {
+    var onQuickLook: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.charactersIgnoringModifiers == " " {
+            onQuickLook?()
+            return
+        }
+        super.keyDown(with: event)
     }
 }

@@ -26,6 +26,9 @@ enum MainMenu {
         root.addItem(dynamicMenuItem(titled: "Bookmarks", delegate: bookmarks))
         root.addItem(dynamicMenuItem(titled: "History", delegate: history))
         root.addItem(windowMenuItem())
+        root.addItem(submenu("Help", [
+            item("Keyboard Shortcuts", #selector(BrowserWindowController.showShortcutCheatSheet(_:)), "/")
+        ]))
         ShortcutManager.shared.apply(to: root)
         return root
     }
@@ -87,7 +90,7 @@ enum MainMenu {
             item("Settings\u{2026}", #selector(AppDelegate.showSettings(_:)), ","),
             .separator(),
             item("Lock \(appName)", #selector(AppDelegate.lockBrowser(_:)), "l",
-                 modifiers: [.command, .option]),
+                 modifiers: [.command, .control]),
             .separator(),
             item("Hide \(appName)", #selector(NSApplication.hide(_:)), "h"),
             item("Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h",
@@ -106,12 +109,18 @@ enum MainMenu {
             item("Pin / Unpin Tab", #selector(BrowserWindowController.togglePinActiveTab(_:)), "p",
                  modifiers: [.command, .shift]),
             item("Duplicate Tab", #selector(BrowserWindowController.duplicateActiveTab(_:)), "d",
-                 modifiers: [.command, .shift]),
+                 modifiers: [.command, .shift, .option]),
             item("Reopen Closed Tab", #selector(BrowserWindowController.reopenClosedTab(_:)), "t",
                  modifiers: [.command, .shift]),
             item("Close Tab", #selector(BrowserWindowController.closeTab(_:)), "w"),
             item("Close All Tabs in Current Space", #selector(BrowserWindowController.closeAllTabsInCurrentSpace(_:)), "w",
                  modifiers: [.command, .shift, .option]),
+            item("Close Duplicate Tabs", #selector(BrowserWindowController.closeDuplicateTabs(_:))),
+            submenu("Sort Tabs By", [
+                item("Title", #selector(BrowserWindowController.sortTabsByTitle(_:))),
+                item("Domain", #selector(BrowserWindowController.sortTabsByDomain(_:))),
+                item("Last Used", #selector(BrowserWindowController.sortTabsByLastUsed(_:)))
+            ]),
             .separator(),
             item("Page Setup\u{2026}", #selector(BrowserWindowController.runPageSetup(_:))),
             item("Print\u{2026}", #selector(BrowserWindowController.printPage(_:)), "p"),
@@ -129,7 +138,12 @@ enum MainMenu {
                 item("Capture Full Page", #selector(BrowserWindowController.captureFullPage(_:)), "4",
                      modifiers: [.command, .shift, .option]),
                 item("Copy Full Page to Clipboard", #selector(BrowserWindowController.copyFullPageToClipboard(_:)), "4",
-                     modifiers: [.command, .shift, .control])
+                     modifiers: [.command, .shift, .control]),
+                .separator(),
+                item("Capture and Annotate Visible Area\u{2026}", #selector(BrowserWindowController.annotateVisibleArea(_:)), "3",
+                     modifiers: [.command, .option, .control]),
+                item("Capture and Annotate Full Page\u{2026}", #selector(BrowserWindowController.annotateFullPage(_:)), "4",
+                     modifiers: [.command, .option, .control])
             ]),
             .separator(),
             item("Sync Now", #selector(AppDelegate.syncNow(_:)), "s", modifiers: [.command, .option]),
@@ -198,7 +212,7 @@ enum MainMenu {
             // is in the chain; the application delegate is not reached the same
             // way, and an item that silently does nothing is the worst failure
             // mode a menu has.
-            entry.target = NSApp.delegate
+            entry.target = NSApplication.shared.delegate
             menu.addItem(entry)
         }
         item.submenu = menu
@@ -256,14 +270,16 @@ enum MainMenu {
             .separator(),
             item("Split Side by Side", #selector(BrowserWindowController.splitSideBySide(_:)), "v",
                  modifiers: [.command, .option]),
+            // Option-Command-H is the system's Hide Others.
             item("Split Stacked", #selector(BrowserWindowController.splitStacked(_:)), "h",
-                 modifiers: [.command, .option]),
+                 modifiers: [.command, .option, .shift]),
             item("Split Grid", #selector(BrowserWindowController.splitGrid(_:)), "g",
                  modifiers: [.command, .option]),
             item("Unsplit", #selector(BrowserWindowController.unsplit(_:)), "u",
                  modifiers: [.command, .option]),
-            item("Stick Pane", #selector(BrowserWindowController.toggleStickyPane(_:)), "s",
-                 modifiers: [.command, .option]),
+            // "P" for pane: every S combination is already taken.
+            item("Stick Pane", #selector(BrowserWindowController.toggleStickyPane(_:)), "p",
+                 modifiers: [.command, .option, .shift]),
             item("Undo Split", #selector(BrowserWindowController.undoSplit(_:)), "z",
                  modifiers: [.command, .option]),
             item("Equalize Split Panes", #selector(BrowserWindowController.equalizeSplitPanes(_:)), "=",
@@ -275,6 +291,8 @@ enum MainMenu {
                  modifiers: [.command, .option]),
             item("Archive", #selector(BrowserWindowController.toggleArchive(_:)), "a",
                  modifiers: [.command, .option, .shift]),
+            item("Show Tab Bar", #selector(BrowserWindowController.toggleTabStrip(_:)), "b",
+                 modifiers: [.command, .control]),
             item("Hide Sidebar", #selector(BrowserWindowController.toggleKylmoraSidebar(_:)), "s",
                  modifiers: [.command, .control]),
             item("Icons-Only Sidebar", #selector(BrowserWindowController.toggleIconsOnlySidebar(_:)), "i",
@@ -287,7 +305,7 @@ enum MainMenu {
                  modifiers: [.command, .control, .option]),
             item("Toggle Sidebar Position",
                  #selector(BrowserWindowController.toggleSidebarPosition(_:)), "s",
-                 modifiers: [.command, .option]),
+                 modifiers: [.command, .shift, .control]),
             item("Zen Mode (Hide All UI)",
                  #selector(BrowserWindowController.toggleZenMode(_:)), "z",
                  modifiers: [.command, .control]),
@@ -342,7 +360,7 @@ enum MainMenu {
                  modifiers: [.command, .shift, .option]),
             item("Read Aloud",
                  #selector(BrowserWindowController.readAloudCurrentPage(_:)), "s",
-                 modifiers: [.command, .option]),
+                 modifiers: [.command, .option, .shift]),
             .separator(),
             item("Toggle Web Panel",
                  #selector(BrowserWindowController.toggleWebPanel(_:)), "p",
@@ -385,8 +403,10 @@ enum MainMenu {
             item("New Floating Web Window\u{2026}", #selector(BrowserWindowController.openFloatingWindow(_:)), "f",
                  modifiers: [.command, .option, .shift]),
             .separator(),
+            // Shift, not Option: Option-Command-U is Unsplit, and two items on
+            // one key means the second never fires.
             item("Task Manager", #selector(BrowserWindowController.openTaskManager(_:)), "u",
-                 modifiers: [.command, .option])
+                 modifiers: [.command, .shift])
         ])
         NSApp.windowsMenu = menuItem.submenu
         return menuItem

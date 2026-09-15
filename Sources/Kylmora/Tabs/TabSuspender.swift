@@ -73,13 +73,17 @@ final class TabSuspender {
 
     private func evaluate(_ trigger: TabSuspension.Trigger) {
         let tabs = session.allTabs
-        let candidates = TabSuspension.candidates(
-            among: tabs,
-            protecting: session.visibleTabIDs,
-            idleThreshold: settings.tabSuspensionDelay,
-            trigger: trigger,
-            cohorts: session.splitCohorts
-        )
+        // Each space may set its own idle threshold, so the sweep runs per
+        // space with that space's delay.
+        let candidates = session.spaces.flatMap { space in
+            TabSuspension.candidates(
+                among: space.tabs,
+                protecting: session.visibleTabIDs,
+                idleThreshold: space.sleepDelay(global: settings.tabSuspensionDelay),
+                trigger: trigger,
+                cohorts: session.splitCohorts
+            )
+        }
 
         if Metrics.isLoggingEnabled {
             let loaded = tabs.filter(\.isLoaded)

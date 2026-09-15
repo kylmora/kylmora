@@ -27,6 +27,18 @@ final class ContentContainerView: NSView {
     let bookmarksBar = BookmarksBarView()
     private var bookmarksBarHeight: NSLayoutConstraint!
 
+    /// The row of tabs above the page, for those who want one.
+    let tabStrip = TabStripView()
+    private var tabStripHeight: NSLayoutConstraint!
+
+    var showsTabStrip: Bool = false {
+        didSet {
+            guard showsTabStrip != oldValue else { return }
+            tabStrip.isHidden = !showsTabStrip
+            tabStripHeight.constant = showsTabStrip ? TabStripView.height : 0
+        }
+    }
+
     var showsBookmarksBar: Bool = false {
         didSet {
             guard showsBookmarksBar != oldValue else { return }
@@ -122,6 +134,11 @@ final class ContentContainerView: NSView {
         addSubview(card)
 
         card.addSubview(topBar)
+        card.addSubview(tabStrip)
+        tabStrip.isHidden = true
+        let stripHeight = tabStrip.heightAnchor.constraint(equalToConstant: 0)
+        stripHeight.priority = .required
+        tabStripHeight = stripHeight
         card.addSubview(bookmarksBar)
         bookmarksBar.isHidden = true
         let barHeight = bookmarksBar.heightAnchor.constraint(equalToConstant: 0)
@@ -172,7 +189,12 @@ final class ContentContainerView: NSView {
             topBar.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             topBar.trailingAnchor.constraint(equalTo: card.trailingAnchor),
 
-            bookmarksBar.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            tabStrip.topAnchor.constraint(equalTo: topBar.bottomAnchor),
+            tabStrip.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            tabStrip.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            stripHeight,
+
+            bookmarksBar.topAnchor.constraint(equalTo: tabStrip.bottomAnchor),
             bookmarksBar.leadingAnchor.constraint(equalTo: card.leadingAnchor),
             bookmarksBar.trailingAnchor.constraint(equalTo: card.trailingAnchor),
             barHeight

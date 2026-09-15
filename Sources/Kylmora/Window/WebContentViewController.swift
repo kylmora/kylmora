@@ -141,9 +141,35 @@ final class WebContentViewController: NSViewController {
             self.session.openLinkInSplit(url, from: activeTab)
         }
 
+        contentContainer.tabStrip.onSelect = { [weak self] tab in self?.session.selectTab(tab) }
+        contentContainer.tabStrip.onClose = { [weak self] tab in
+            guard let self, !tab.isLocked, TabClosing.confirm(closing: tab) else { return }
+            _ = self.session.closeTab(tab)
+        }
+        contentContainer.tabStrip.onNewTab = { [weak self] in _ = self?.session.newTab() }
+        contentContainer.tabStrip.onReorder = { [weak self] from, to in self?.session.moveTab(from: from, to: to) }
+        for name in [Notification.Name.tabStripDidChange, .zenModeDidChange] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateTabStrip(rebuild: true) }
+            }
+        }
+        updateTabStrip(rebuild: true)
+
         session.changes
             .sink { [weak self] change in
                 guard let self else { return }
+                switch change {
+                case .tab(let tab) where tab.id != self.session.activeTab?.id:
+                    // A background tab's title or sound changed: its cell follows.
+                    self.updateTabStrip(rebuild: false)
+                    return
+                case .activeTab, .spaces, .tabs, .structure:
+                    self.updateTabStrip(rebuild: true)
+                case .tab:
+                    self.updateTabStrip(rebuild: false)
+                case .bookmarks:
+                    break
+                }
                 switch change {
                 case .activeTab, .spaces, .tabs:
                     // A glance belongs to the page it was opened over; when
@@ -234,8 +260,10 @@ final class WebContentViewController: NSViewController {
             return
         }
         tab.markActive()
+        if tab.showsStartPage { refreshStartPage(for: tab) }
         container.show(
             tab.webView(),
+            document: tab.contentOverlay,
             failure: tab.failure,
             url: tab.displayURL,
             onRetry: { [weak tab] in tab?.reload() }
@@ -283,14 +311,68 @@ final class WebContentViewController: NSViewController {
         let settings = Settings.shared
         // The full address, so what the user edits or copies is the whole URL
         // rather than a bare host that would drop the path.
+        // The start page has no address to show or copy: the field is empty
+        // and ready to type into.
+        let onStartPage = tab?.showsStartPage ?? false
         topBar.addressField.show(
-            display: tab.map {
+            display: onStartPage ? "" : tab.map {
                 AddressFormatter.display($0.displayURL, full: true, unicodeDomains: settings.showsUnicodeDomains)
             },
-            url: tab?.displayURL
+            url: onStartPage ? nil : tab?.displayURL
         )
         let zoom = tab.map { Double($0.currentWebView?.pageZoom ?? SiteSettings.shared.pageZoom(for: $0.url)) } ?? 1
         topBar.zoomControl.setPercent(Int((zoom * 100).rounded()))
+    }
+
+    // MARK: - Tab strip
+
+    /// Shows or hides the row of tabs and fills it from the active space.
+    /// Zen mode hides it with everything else.
+    func updateTabStrip(rebuild: Bool) {
+        let settings = Settings.shared
+        let shows = settings.showsTabStrip && !settings.zenModeEnabled
+        contentContainer.showsTabStrip = shows
+        guard shows else { return }
+        let space = session.activeSpace
+        if rebuild {
+            contentContainer.tabStrip.show(space.tabs, activeID: session.activeTab?.id, isPrivate: space.isPrivate)
+        } else {
+            contentContainer.tabStrip.refresh(activeID: session.activeTab?.id)
+        }
+    }
+
+    // MARK: - Start page
+
+    /// Fills the tab's start page from the session: the Space's pinned sites,
+    /// the most visited pages, recently closed tabs and the unread reading
+    /// list. History comes from the database, so the tiles land a beat after
+    /// the page.
+    func refreshStartPage(for tab: Tab) {
+        guard tab.showsStartPage, let view = tab.contentOverlay as? StartPageView else { return }
+        let space = session.activeSpace
+        var model = StartPageModel()
+        model.spaceName = space.name
+        model.spaceColor = space.color
+        model.isPrivate = space.isPrivate
+        model.pinned = space.pinnedSites.map { StartPageModel.Link(id: $0.id.uuidString, url: $0.url, title: $0.title) }
+        model.recentlyClosed = session.closedTabs.prefix(6).map {
+            StartPageModel.Link(id: $0.id.uuidString, url: $0.url, title: $0.title)
+        }
+        model.readingList = ReadingListStore.shared.unreadItems.prefix(5).map {
+            StartPageModel.Link(id: $0.id.uuidString, url: $0.url, title: $0.title)
+        }
+        view.onOpen = { [weak tab] url in tab?.load(url) }
+        view.configure(with: model)
+
+        guard !space.isPrivate else { return }
+        Task { [weak self, weak tab, weak view] in
+            guard let self else { return }
+            let sites = await self.session.topSites(limit: 12)
+            guard let tab, tab.showsStartPage, let view, view.model.spaceName == model.spaceName else { return }
+            var filled = view.model
+            filled.topSites = sites.map { StartPageModel.Link(url: $0.url, title: $0.title) }
+            view.configure(with: filled)
+        }
     }
 
     // MARK: - Find in page
@@ -298,7 +380,15 @@ final class WebContentViewController: NSViewController {
     var canFind: Bool { find.canFind }
     var canRepeatFind: Bool { find.canRepeat }
 
-    func showFind() { find.show() }
+    /// A tab showing a document searches the document; the find bar is for
+    /// web pages.
+    func showFind() {
+        if let documentView = session.activeTab?.documentView, session.activeSplit == nil {
+            documentView.focusSearch()
+            return
+        }
+        find.show()
+    }
 
     // MARK: - Glance
 
@@ -312,6 +402,18 @@ final class WebContentViewController: NSViewController {
 
     func closeGlance() { glance.dismiss(.closeButton) }
     func promoteGlance() { glance.promote() }
-    func findNext() { find.findNext() }
-    func findPrevious() { find.findPrevious() }
+    func findNext() {
+        if let documentView = session.activeTab?.documentView, session.activeSplit == nil {
+            documentView.findNext()
+            return
+        }
+        find.findNext()
+    }
+    func findPrevious() {
+        if let documentView = session.activeTab?.documentView, session.activeSplit == nil {
+            documentView.findPrevious()
+            return
+        }
+        find.findPrevious()
+    }
 }

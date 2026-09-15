@@ -1,0 +1,49 @@
+#!/bin/sh
+# The Kylmora command-line tool. Ships inside the app bundle as
+# Contents/MacOS/kylmora-cli; link it somewhere on your PATH:
+#   ln -s /Applications/Kylmora.app/Contents/MacOS/kylmora-cli /usr/local/bin/kylmora
+#
+#   kylmora open URL [--space NAME] [--background]   open a page
+#   kylmora space NAME                               switch to a Space
+#   kylmora command ID                               run a palette command (e.g. print-page)
+#   kylmora new-tab                                  open a new tab
+#   kylmora url ...                                  print the kylmora:// address instead of opening it
+set -e
+
+encode() {
+    printf '%s' "$1" | xxd -p | tr -d '\n' | sed 's/../%&/g'
+}
+
+usage() {
+    sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'
+    exit 1
+}
+
+print_only=0
+if [ "${1-}" = "url" ]; then print_only=1; shift; fi
+[ $# -ge 1 ] || usage
+
+case "$1" in
+    open)
+        [ $# -ge 2 ] || usage
+        target="kylmora://tab?url=$(encode "$2")"
+        shift 2
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --space) target="$target&space=$(encode "$2")"; shift 2 ;;
+                --background|-g) target="$target&background=1"; shift ;;
+                *) usage ;;
+            esac
+        done
+        ;;
+    space)   [ $# -eq 2 ] || usage; target="kylmora://space?name=$(encode "$2")" ;;
+    command) [ $# -eq 2 ] || usage; target="kylmora://command?id=$(encode "$2")" ;;
+    new-tab) target="kylmora://new-tab" ;;
+    *) usage ;;
+esac
+
+if [ $print_only -eq 1 ]; then
+    printf '%s\n' "$target"
+else
+    open -a Kylmora "$target"
+fi

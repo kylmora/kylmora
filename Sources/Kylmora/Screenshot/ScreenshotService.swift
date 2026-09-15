@@ -16,6 +16,8 @@ public enum ScreenshotDestination: Sendable {
     case saveToDownloads(customDirectory: URL? = nil)
     /// Copies the screenshot as an image and PNG data to the system clipboard.
     case copyToClipboard
+    /// Opens the screenshot in the editor to crop and mark up before saving.
+    case annotate
 }
 
 /// Coordinates capturing, rendering, saving, and copying screenshots of web pages.

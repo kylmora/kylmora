@@ -22,6 +22,9 @@ final class Settings {
         static let sidebarMode = "sidebarDisplayMode"
         static let sidebarPosition = "sidebarPosition"
         static let sidebarHoverDelay = "sidebarHoverDelay"
+        static let sidebarDensity = "sidebarDensity"
+        static let showsTabStrip = "showsTabStrip"
+        static let toolbarLayout = "toolbarLayout"
         static let zenMode = "zenModeEnabled"
         static let spaceSwitchWraps = "spaceSwitchWrapsAround"
         static let appearance = "appearancePreference"
@@ -52,6 +55,7 @@ final class Settings {
         static let automaticallyDownloadUpdates = "automaticallyDownloadUpdates"
         static let skippedUpdateVersion = "skippedUpdateVersion"
         static let lastUpdateCheckDate = "lastUpdateCheckDate"
+        static let lastLaunchedVersion = "lastLaunchedVersion"
         static let upgradesToHTTPS = "upgradesKnownHostsToHTTPS"
         static let showsFullAddress = "showsFullAddress"
         static let showsUnicodeDomains = "showsUnicodeDomains"
@@ -84,10 +88,14 @@ final class Settings {
         static let passwordOfferSave = "passwordOfferSave"
         static let passwordSubmitAutomatically = "passwordSubmitAutomatically"
         static let passwordUsesTouchID = "passwordUsesTouchID"
+        static let formAutofillEnabled = "formAutofillEnabled"
+        static let cardAutofillEnabled = "cardAutofillEnabled"
         static let syncEnabled = "syncEnabled"
         static let syncOpenTabs = "syncOpenTabs"
         static let syncBookmarks = "syncBookmarks"
         static let syncSiteSettings = "syncSiteSettings"
+        static let syncHistory = "syncHistory"
+        static let syncPasswords = "syncPasswords"
         static let syncCustomDirectory = "syncCustomDirectory"
         static let syncLastTimestamp = "syncLastTimestamp"
         static let syncService = "syncService"
@@ -181,6 +189,8 @@ final class Settings {
             Key.sidebarMode: SidebarMode.expanded.rawValue,
             Key.sidebarPosition: SidebarPosition.leading.rawValue,
             Key.sidebarHoverDelay: 0.20,
+            Key.sidebarDensity: SidebarDensity.regular.rawValue,
+            Key.showsTabStrip: false,
             Key.zenMode: false,
             Key.spaceSwitchWraps: true,
             Key.appearance: AppearancePreference.system.rawValue,
@@ -188,7 +198,7 @@ final class Settings {
             Key.blocksAds: true,
             Key.blocksCookieBanners: true,
             Key.blocksTrackers: true,
-            Key.newTabTarget: NewTabTarget.startPage.rawValue,
+            Key.newTabTarget: NewTabTarget.kylmora.rawValue,
             Key.privateSearchEngine: SearchEngine.duckDuckGo.id,
             Key.sameEngineInPrivate: true,
             Key.suggestTopHits: true,
@@ -233,10 +243,14 @@ final class Settings {
             Key.passwordOfferSave: true,
             Key.passwordSubmitAutomatically: false,
             Key.passwordUsesTouchID: true,
+            Key.formAutofillEnabled: true,
+            Key.cardAutofillEnabled: true,
             Key.syncEnabled: false,
             Key.syncOpenTabs: true,
             Key.syncBookmarks: true,
             Key.syncSiteSettings: true,
+            Key.syncHistory: false,
+            Key.syncPasswords: false,
             Key.syncCustomDirectory: "",
             Key.syncLastTimestamp: 0.0,
             Key.syncService: SyncService.iCloud.rawValue,
@@ -424,6 +438,12 @@ final class Settings {
         set { defaults.set(newValue, forKey: Key.automaticallyDownloadUpdates) }
     }
 
+    /// The version that ran last time, so an update can say what is new.
+    var lastLaunchedVersion: String? {
+        get { defaults.string(forKey: Key.lastLaunchedVersion) }
+        set { defaults.set(newValue, forKey: Key.lastLaunchedVersion) }
+    }
+
     var skippedUpdateVersion: String? {
         get { defaults.string(forKey: Key.skippedUpdateVersion) }
         set { defaults.set(newValue, forKey: Key.skippedUpdateVersion) }
@@ -575,6 +595,18 @@ final class Settings {
         set { defaults.set(newValue.rawValue, forKey: Key.passwordProvider) }
     }
 
+    /// Names, addresses and contact details from the saved identities.
+    var formAutofillEnabled: Bool {
+        get { defaults.bool(forKey: Key.formAutofillEnabled) }
+        set { defaults.set(newValue, forKey: Key.formAutofillEnabled) }
+    }
+
+    /// Saved payment cards, behind Touch ID when passwords are.
+    var cardAutofillEnabled: Bool {
+        get { defaults.bool(forKey: Key.cardAutofillEnabled) }
+        set { defaults.set(newValue, forKey: Key.cardAutofillEnabled) }
+    }
+
     var passwordOfferAutofill: Bool {
         get { defaults.bool(forKey: Key.passwordOfferAutofill) }
         set { defaults.set(newValue, forKey: Key.passwordOfferAutofill) }
@@ -621,7 +653,7 @@ final class Settings {
     }
 
     var newTabTarget: NewTabTarget {
-        get { NewTabTarget(rawValue: defaults.string(forKey: Key.newTabTarget) ?? "") ?? .startPage }
+        get { NewTabTarget(rawValue: defaults.string(forKey: Key.newTabTarget) ?? "") ?? .kylmora }
         set { defaults.set(newValue.rawValue, forKey: Key.newTabTarget) }
     }
 
@@ -857,6 +889,45 @@ final class Settings {
     }
 
     /// Configurable hover delay before the sidebar reveals or expands on hover.
+    /// Which buttons the bar above the page shows, and their order.
+    var toolbarLayout: ToolbarLayout {
+        get {
+            guard let data = defaults.data(forKey: Key.toolbarLayout),
+                  let layout = try? JSONDecoder().decode(ToolbarLayout.self, from: data) else { return .default }
+            return layout
+        }
+        set {
+            guard newValue != toolbarLayout else { return }
+            if newValue.isDefault {
+                defaults.removeObject(forKey: Key.toolbarLayout)
+            } else if let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: Key.toolbarLayout)
+            }
+            NotificationCenter.default.post(name: .toolbarLayoutDidChange, object: nil)
+        }
+    }
+
+    /// A horizontal row of tabs above the page, beside or instead of the
+    /// sidebar's list.
+    var showsTabStrip: Bool {
+        get { defaults.bool(forKey: Key.showsTabStrip) }
+        set {
+            guard newValue != showsTabStrip else { return }
+            defaults.set(newValue, forKey: Key.showsTabStrip)
+            NotificationCenter.default.post(name: .tabStripDidChange, object: nil)
+        }
+    }
+
+    /// How tall the sidebar's rows are. Changing it rebuilds the rows.
+    var sidebarDensity: SidebarDensity {
+        get { SidebarDensity(rawValue: defaults.string(forKey: Key.sidebarDensity) ?? "") ?? .regular }
+        set {
+            guard newValue != sidebarDensity else { return }
+            defaults.set(newValue.rawValue, forKey: Key.sidebarDensity)
+            NotificationCenter.default.post(name: .sidebarDensityDidChange, object: nil)
+        }
+    }
+
     var sidebarHoverDelay: Double {
         get {
             guard defaults.object(forKey: Key.sidebarHoverDelay) != nil else {
@@ -941,8 +1012,11 @@ final class Settings {
 
     /// A private space starts on its own engine's page.
     func newTabURL(isPrivate: Bool) -> URL {
-        if newTabTarget == .homepage, let homepage = homepageURL { return homepage }
-        return searchEngine(isPrivate: isPrivate).homeURL
+        switch newTabTarget {
+        case .kylmora: return StartPage.url
+        case .homepage: return homepageURL ?? StartPage.url
+        case .startPage: return searchEngine(isPrivate: isPrivate).homeURL
+        }
     }
 
     // MARK: - Sync
@@ -965,6 +1039,20 @@ final class Settings {
     var syncSiteSettings: Bool {
         get { defaults.bool(forKey: Key.syncSiteSettings) }
         set { defaults.set(newValue, forKey: Key.syncSiteSettings) }
+    }
+
+    /// Recent history travels with the archive. Off by default: where you
+    /// have been is the most personal thing the browser knows.
+    var syncHistory: Bool {
+        get { defaults.bool(forKey: Key.syncHistory) }
+        set { defaults.set(newValue, forKey: Key.syncHistory) }
+    }
+
+    /// Saved logins travel too, and only inside an archive encrypted with the
+    /// passphrase; with no passphrase the switch does nothing.
+    var syncPasswords: Bool {
+        get { defaults.bool(forKey: Key.syncPasswords) }
+        set { defaults.set(newValue, forKey: Key.syncPasswords) }
     }
 
     var syncCustomDirectory: String {

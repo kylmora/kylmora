@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import Combine
 
 /// The Spaces pane: the list of spaces, and an editor for the selected one.
@@ -59,6 +60,10 @@ final class SpacesSettingsViewController: NSViewController {
     /// Kept by identity, not by index: a delete or a reorder moves indices, and
     /// the editor must not silently start pointing at a different space.
     private var editing: Space?
+    private let searchEnginePopUp = NSPopUpButton()
+    private let sleepPopUp = NSPopUpButton()
+    private let zoomPopUp = NSPopUpButton()
+    private let userAgentField = NSTextField()
     /// The list is as tall as the spaces in it.
     private var listHeight: NSLayoutConstraint?
 
@@ -225,6 +230,11 @@ final class SpacesSettingsViewController: NSViewController {
         borderRow = form.addRow("Window border", [borderSummary, customizeBorder])
         borderNoteRow = form.addNote("A rim around the window in this space's colours, so a glance at any corner says which identity is in front.")
 
+        let exportTheme = NSButton(title: "Export Theme\u{2026}", target: self, action: #selector(exportTheme))
+        let importTheme = NSButton(title: "Import Theme\u{2026}", target: self, action: #selector(importTheme))
+        form.addRow("Theme file", [exportTheme, importTheme])
+        form.addNote("This space's colour, gradient, appearance, fonts, bars and window border as a .kylmoratheme file, to share or to bring to another Mac. Tabs and logins stay here.")
+
         form.addSeparator()
 
         for box in [toolbarInFullScreen, sidebarInFullScreen, opaqueInFullScreen, showsBookmarksBar] {
@@ -277,6 +287,26 @@ final class SpacesSettingsViewController: NSViewController {
         bookmarkFolderField.widthAnchor.constraint(equalToConstant: 320).isActive = true
         form.addRow("Bookmarks folder", bookmarkFolderField)
         form.addNote("Folder of bookmarks displayed on this space's bookmarks bar.")
+
+        // Per-space overrides of what Settings decides for everyone.
+        searchEnginePopUp.target = self
+        searchEnginePopUp.action = #selector(searchEngineChanged)
+        form.addRow("Search engine", SettingsForm.fill(searchEnginePopUp))
+        sleepPopUp.addItems(withTitles: ["Default"] + Self.sleepChoices.map { $0 == 0 ? "Never" : "After \($0) min" })
+        sleepPopUp.target = self
+        sleepPopUp.action = #selector(sleepChanged)
+        form.addRow("Tab sleeping", SettingsForm.fill(sleepPopUp))
+        zoomPopUp.addItems(withTitles: ["Default"] + SiteSettingCategory.pageZoom.options.map(\.title))
+        zoomPopUp.target = self
+        zoomPopUp.action = #selector(zoomChanged)
+        form.addRow("Default zoom", SettingsForm.fill(zoomPopUp))
+        userAgentField.placeholderString = "Default (leave empty)"
+        userAgentField.target = self
+        userAgentField.action = #selector(userAgentChanged)
+        userAgentField.translatesAutoresizingMaskIntoConstraints = false
+        userAgentField.widthAnchor.constraint(equalToConstant: 320).isActive = true
+        form.addRow("User agent", userAgentField)
+        form.addNote("These apply to every tab in this space. A site's own choice in Websites still wins for that site.")
 
         passwordVaultField.placeholderString = "Space name (e.g. Work, Personal)"
         passwordVaultField.target = self
@@ -351,6 +381,44 @@ final class SpacesSettingsViewController: NSViewController {
         }
         bookmarkFolderField.stringValue = space.bookmarkFolder ?? ""
         passwordVaultField.stringValue = space.passwordVaultAccount ?? ""
+
+        searchEnginePopUp.removeAllItems()
+        searchEnginePopUp.addItem(withTitle: "Default")
+        for engine in Settings.shared.searchEngines { searchEnginePopUp.addItem(withTitle: engine.name) }
+        if let id = space.searchEngineID, let index = Settings.shared.searchEngines.firstIndex(where: { $0.id == id }) {
+            searchEnginePopUp.selectItem(at: index + 1)
+        } else {
+            searchEnginePopUp.selectItem(at: 0)
+        }
+        sleepPopUp.selectItem(at: space.sleepMinutes.flatMap { Self.sleepChoices.firstIndex(of: $0) }.map { $0 + 1 } ?? 0)
+        zoomPopUp.selectItem(at: space.defaultZoom.flatMap { zoom in SiteSettingCategory.pageZoom.options.firstIndex { $0.id == zoom } }.map { $0 + 1 } ?? 0)
+        userAgentField.stringValue = space.userAgent ?? ""
+    }
+
+    static let sleepChoices = [0, 5, 10, 30, 60]
+
+    @objc private func searchEngineChanged() {
+        guard let space = editing else { return }
+        let index = searchEnginePopUp.indexOfSelectedItem
+        let engines = Settings.shared.searchEngines
+        session.setSearchEngineID(index > 0 && engines.indices.contains(index - 1) ? engines[index - 1].id : nil, for: space)
+    }
+
+    @objc private func sleepChanged() {
+        guard let space = editing else { return }
+        let index = sleepPopUp.indexOfSelectedItem
+        session.setSleepMinutes(index > 0 ? Self.sleepChoices[index - 1] : nil, for: space)
+    }
+
+    @objc private func zoomChanged() {
+        guard let space = editing else { return }
+        let index = zoomPopUp.indexOfSelectedItem
+        session.setDefaultZoom(index > 0 ? SiteSettingCategory.pageZoom.options[index - 1].id : nil, for: space)
+    }
+
+    @objc private func userAgentChanged() {
+        guard let space = editing else { return }
+        session.setUserAgent(userAgentField.stringValue, for: space)
     }
 
     @objc private func chooseDownloadsFolder() {
@@ -596,6 +664,30 @@ final class SpacesSettingsViewController: NSViewController {
             showFont(fonts)
         }
         presentAsSheet(sheet)
+    }
+
+    @objc private func exportTheme() {
+        guard let space = editing, let window = view.window else { return }
+        let file = SpaceThemeFile(space: space)
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [SpaceThemeFile.contentType, .json]
+        panel.nameFieldStringValue = file.suggestedFileName
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url, let data = try? file.data() else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    @objc private func importTheme() {
+        guard let space = editing, let window = view.window else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [SpaceThemeFile.contentType, .json]
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .OK, let url = panel.url,
+                  let data = try? Data(contentsOf: url), let file = try? SpaceThemeFile(data: data) else { return }
+            file.apply(to: space, in: self.session)
+            self.select(space)
+        }
     }
 
     @objc private func customizeBorder() {

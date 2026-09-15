@@ -230,11 +230,13 @@ struct GeneralSettingsTests {
         let defaults = UserDefaults(suiteName: "kylmora.tests.\(UUID().uuidString)")!
         let settings = Settings(defaults: defaults)
         let start = settings.searchEngine.homeURL
-        #expect(settings.newTabURL == start)
+        // Kylmora's own start page unless told otherwise.
+        #expect(settings.newTabTarget == .kylmora)
+        #expect(settings.newTabURL == StartPage.url)
 
         settings.newTabTarget = .homepage
         // Chosen but unset falls back rather than opening nothing.
-        #expect(settings.newTabURL == start)
+        #expect(settings.newTabURL == StartPage.url)
 
         settings.homepageURL = URL(string: "https://home.example/")
         #expect(settings.newTabURL == URL(string: "https://home.example/"))

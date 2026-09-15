@@ -40,6 +40,12 @@ struct TabRowContent {
     var isPlayingAudio: Bool = false
     /// Whether audio has been muted for this tab.
     var isMuted: Bool = false
+    /// The user's colour tag, drawn as a dot on the favicon's corner.
+    var colorTag: TabColorTag? = nil
+    /// The page changed its title while the tab was out of sight.
+    var hasUnreadChange: Bool = false
+    /// An emoji standing in for the favicon.
+    var emoji: String? = nil
 
     init(
         title: String,
@@ -53,7 +59,10 @@ struct TabRowContent {
         keepsInSidebar: Bool = false,
         isLocked: Bool = false,
         isPlayingAudio: Bool = false,
-        isMuted: Bool = false
+        isMuted: Bool = false,
+        colorTag: TabColorTag? = nil,
+        hasUnreadChange: Bool = false,
+        emoji: String? = nil
     ) {
         self.title = title
         self.address = address
@@ -67,6 +76,9 @@ struct TabRowContent {
         self.isLocked = isLocked
         self.isPlayingAudio = isPlayingAudio
         self.isMuted = isMuted
+        self.colorTag = colorTag
+        self.hasUnreadChange = hasUnreadChange
+        self.emoji = emoji
     }
 }
 
@@ -125,6 +137,16 @@ final class TabRowView: NSTableCellView {
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let spinner = NSProgressIndicator()
+    /// The emoji drawn where the favicon goes, when the tab has one.
+    private let emojiLabel = NSTextField(labelWithString: "")
+    var showsEmoji: Bool { !emojiLabel.isHidden }
+    /// The colour tag on the favicon's lower trailing corner.
+    private let tagDot = NSView()
+    /// The unread mark on the favicon's upper trailing corner.
+    private let unreadDot = NSView()
+
+    var showsTagDot: Bool { !tagDot.isHidden }
+    var showsUnreadDot: Bool { !unreadDot.isHidden }
 
     /// The band of the row the pill -- and everything in it -- occupies,
     /// pinned to the row's top edge.
@@ -244,6 +266,36 @@ final class TabRowView: NSTableCellView {
         idleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(favicon)
+        emojiLabel.font = .systemFont(ofSize: 13)
+        emojiLabel.alignment = .center
+        emojiLabel.isHidden = true
+        emojiLabel.translatesAutoresizingMaskIntoConstraints = false
+        emojiLabel.setAccessibilityElement(false)
+        addSubview(emojiLabel)
+        NSLayoutConstraint.activate([
+            emojiLabel.centerXAnchor.constraint(equalTo: favicon.centerXAnchor),
+            emojiLabel.centerYAnchor.constraint(equalTo: favicon.centerYAnchor)
+        ])
+        for dot in [tagDot, unreadDot] {
+            dot.wantsLayer = true
+            dot.layer?.cornerRadius = 4
+            dot.layer?.borderWidth = 1.5
+            dot.isHidden = true
+            dot.translatesAutoresizingMaskIntoConstraints = false
+            dot.setAccessibilityElement(false)
+            addSubview(dot)
+        }
+        unreadDot.layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        NSLayoutConstraint.activate([
+            tagDot.widthAnchor.constraint(equalToConstant: 8),
+            tagDot.heightAnchor.constraint(equalToConstant: 8),
+            tagDot.centerXAnchor.constraint(equalTo: favicon.trailingAnchor, constant: -1),
+            tagDot.centerYAnchor.constraint(equalTo: favicon.bottomAnchor, constant: -1),
+            unreadDot.widthAnchor.constraint(equalToConstant: 8),
+            unreadDot.heightAnchor.constraint(equalToConstant: 8),
+            unreadDot.centerXAnchor.constraint(equalTo: favicon.trailingAnchor, constant: -1),
+            unreadDot.centerYAnchor.constraint(equalTo: favicon.topAnchor, constant: 1)
+        ])
         addSubview(titleLabel)
         addSubview(badge)
         addSubview(spinner)
@@ -331,6 +383,20 @@ final class TabRowView: NSTableCellView {
             : Style.Colors.primaryText
         toolTip = content.address
 
+        emojiLabel.stringValue = content.emoji ?? ""
+        emojiLabel.isHidden = content.emoji == nil
+        favicon.isHidden = content.emoji != nil
+
+        if let tag = content.colorTag {
+            tagDot.layer?.backgroundColor = tag.nsColor.cgColor
+            tagDot.layer?.borderColor = NSColor.windowBackgroundColor.cgColor
+            tagDot.isHidden = false
+        } else {
+            tagDot.isHidden = true
+        }
+        unreadDot.layer?.borderColor = NSColor.windowBackgroundColor.cgColor
+        unreadDot.isHidden = !content.hasUnreadChange
+
         // VoiceOver reads the row, so state that is only shown visually --
         // dimming for suspended, a spinner for loading -- has to be spoken too.
         var described = content.title
@@ -356,6 +422,8 @@ final class TabRowView: NSTableCellView {
         } else if content.isPlayingAudio {
             described += ", playing audio"
         }
+        if let tag = content.colorTag { described += ", tagged \(tag.title.lowercased())" }
+        if content.hasUnreadChange { described += ", changed since you last looked" }
         if let spoken = content.idleSpoken { described += ", \(spoken)" }
         setAccessibilityRole(.row)
         setAccessibilityLabel(described)

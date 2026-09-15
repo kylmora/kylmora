@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import PDFKit
 import WebKit
 
 @MainActor
@@ -346,6 +347,133 @@ final class Tab: Identifiable {
     /// Set when the current navigation failed, cleared when a new one starts.
     private(set) var failure: NavigationFailure?
 
+    /// The colour the user tagged this tab with, if any.
+    private(set) var colorTag: TabColorTag?
+
+    /// A note the user attached to this tab, shown in its tooltip.
+    private(set) var note: String?
+
+    /// An emoji standing in for the favicon, when the user set one.
+    private(set) var emoji: String?
+
+    func setEmoji(_ text: String?) {
+        let value = Self.firstEmoji(in: text)
+        guard value != emoji else { return }
+        emoji = value
+        didChange.send()
+    }
+
+    /// The first character of what was typed, if it is an emoji.
+    static func firstEmoji(in text: String?) -> String? {
+        guard let first = text?.trimmingCharacters(in: .whitespacesAndNewlines).first else { return nil }
+        let scalars = first.unicodeScalars
+        guard scalars.contains(where: { $0.properties.isEmojiPresentation || $0.properties.isEmojiModifierBase })
+              || (scalars.first?.properties.isEmoji == true && scalars.contains { $0.value == 0xFE0F || $0.value > 0x2000 }) else { return nil }
+        return String(first)
+    }
+
+    func setNote(_ text: String?) {
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        guard value != note else { return }
+        note = value
+        didChange.send()
+    }
+
+    /// Seconds between automatic reloads, or nil when the page reloads only
+    /// when asked. Kept across a relaunch, since a dashboard left refreshing
+    /// is meant to stay that way.
+    private(set) var autoReloadInterval: TimeInterval?
+    private var autoReloadTimer: Timer?
+
+    static let autoReloadChoices: [TimeInterval] = [10, 30, 60, 300, 900]
+
+    func setAutoReload(every interval: TimeInterval?) {
+        guard interval != autoReloadInterval else { return }
+        autoReloadInterval = interval
+        scheduleAutoReload()
+        didChange.send()
+    }
+
+    private func scheduleAutoReload() {
+        autoReloadTimer?.invalidate()
+        autoReloadTimer = nil
+        guard let interval = autoReloadInterval, interval > 0 else { return }
+        let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.loadedWebView != nil, !self.isLoading else { return }
+                self.reload()
+            }
+        }
+        timer.tolerance = interval / 10
+        autoReloadTimer = timer
+    }
+
+    /// What a space sets for every page in it, looked up by identity.
+    struct SpaceOverrides {
+        var userAgent: String?
+        var defaultZoom: String?
+    }
+
+    /// Set by the session, which knows which space an identity belongs to.
+    static var spaceOverrides: ((Space.Identity) -> SpaceOverrides?)?
+
+    var overrides: SpaceOverrides? { Self.spaceOverrides?(identity) }
+
+    /// When the page last changed its title, so a tab that changed while it
+    /// was out of sight can say so. Compared with `lastActiveAt`: a change
+    /// after the tab was last looked at is unread.
+    private(set) var titleChangedAt: Date?
+
+    var hasUnreadChange: Bool {
+        guard let titleChangedAt else { return false }
+        return titleChangedAt > lastActiveAt
+    }
+
+    func setColorTag(_ tag: TabColorTag?) {
+        guard tag != colorTag else { return }
+        colorTag = tag
+        didChange.send()
+    }
+
+    /// Records a title change the page made. Public so the sidebar's unread
+    /// dot can be exercised without a web view.
+    func noteTitleChanged(_ title: String?) {
+        guard let title, !title.isEmpty, title != pageTitle else { return }
+        titleChangedAt = .now
+    }
+
+    /// A PDF the tab is showing in its own viewer instead of a web page.
+    ///
+    /// The document is fetched as a WebKit download of the navigation's
+    /// response, so it carries the tab's cookies, and shown in `documentView`
+    /// over the web view. While it is set, the tab's address and title are
+    /// the document's, whatever the web view underneath reports.
+    private(set) var document: TabDocument?
+    private(set) var documentView: PDFDocumentView?
+    private var inlineDownload: InlinePDFDownload?
+
+    /// The tab is on Kylmora's own new-tab page, which is drawn in the
+    /// window rather than loaded; the web view underneath stays blank.
+    private(set) var showsStartPage = false
+    private(set) var startPageView: StartPageView?
+    /// The web view's blank first document stands in for the start page, so
+    /// going back to it brings the start page back rather than a white page.
+    private var blankIsStartPage = false
+
+    /// Whatever is drawn over the web view for this tab: a document it is
+    /// showing, or the start page. Nil for an ordinary web page.
+    var contentOverlay: NSView? {
+        if let documentView { return documentView }
+        if showsStartPage {
+            if let startPageView { return startPageView }
+            let view = StartPageView()
+            startPageView = view
+            return view
+        }
+        return nil
+    }
+
     /// The address the user asked for, held until that navigation commits.
     ///
     /// Only ever set from `load(_:)`, which is reached from the omnibox, a
@@ -507,7 +635,9 @@ final class Tab: Identifiable {
     /// which produce no navigation callbacks at all. Both behaviours were
     /// verified rather than assumed.
     var displayURL: URL {
-        pendingUserURL ?? loadedWebView?.backForwardList.currentItem?.url ?? url
+        if let document { return document.url }
+        if showsStartPage { return StartPage.url }
+        return pendingUserURL ?? loadedWebView?.backForwardList.currentItem?.url ?? url
     }
 
     /// What the sidebar shows: the name the user gave this tab, then the page
@@ -519,6 +649,12 @@ final class Tab: Identifiable {
         if failure != nil, let failedURL {
             return TabNaming.displayTitle(customName: customName, pageTitle: nil, url: failedURL)
         }
+        if let document {
+            return TabNaming.displayTitle(customName: customName, pageTitle: document.title, url: document.url)
+        }
+        if showsStartPage {
+            return TabNaming.displayTitle(customName: customName, pageTitle: StartPage.title, url: StartPage.url)
+        }
         return TabNaming.displayTitle(customName: customName, pageTitle: pageTitle, url: url)
     }
 
@@ -528,6 +664,8 @@ final class Tab: Identifiable {
     var customName: String? { TabNameStore.shared.name(for: id) }
 
     init(url: URL, identity: Space.Identity) {
+        showsStartPage = StartPage.isStartPage(url)
+        blankIsStartPage = showsStartPage
         self.url = url
         self.identity = identity
     }
@@ -536,6 +674,8 @@ final class Tab: Identifiable {
     /// until the tab is shown, so restoring twenty tabs costs twenty small
     /// objects rather than twenty content processes.
     init(restoring snapshot: SessionSnapshot.Tab, identity: Space.Identity) {
+        showsStartPage = StartPage.isStartPage(snapshot.url)
+        blankIsStartPage = showsStartPage
         self.url = snapshot.url
         self.pageTitle = snapshot.title
         self.identity = identity
@@ -549,24 +689,36 @@ final class Tab: Identifiable {
         self.explicitlyKeepsAwake = snapshot.keepsAwake ?? false
         self.explicitlyKeepsInSidebar = snapshot.keepsInSidebar ?? false
         self.isLocked = snapshot.isLocked ?? false
+        self.colorTag = snapshot.colorTag.flatMap(TabColorTag.init(rawValue:))
+        self.note = snapshot.note
+        self.emoji = snapshot.emoji
+        self.autoReloadInterval = snapshot.autoReloadSeconds.map { TimeInterval($0) }
         TabNameStore.shared.restore(snapshot.customName, for: id)
+        scheduleAutoReload()
     }
 
     /// The state needed to bring this tab back after a relaunch.
     func snapshot() -> SessionSnapshot.Tab {
         SessionSnapshot.Tab(
-            url: url,
-            title: pageTitle,
+            url: document?.url ?? url,
+            title: document?.title ?? pageTitle,
             groupID: groupID,
             customName: TabNameStore.shared.name(for: id),
             pinnedSiteID: pinnedSiteID,
-            interactionState: loadedWebView?.interactionState as? Data ?? savedInteractionState as? Data,
+            // A PDF was never a WebKit navigation, so the web view's saved
+            // state belongs to the page underneath; restoring the address
+            // fetches the document again.
+            interactionState: document != nil ? nil : (loadedWebView?.interactionState as? Data ?? savedInteractionState as? Data),
             lastActiveAt: lastActiveAt,
             // Written only when set, so a session file does not grow a pair of
             // `false`s on every tab the user never touched.
             keepsAwake: explicitlyKeepsAwake ? true : nil,
             keepsInSidebar: explicitlyKeepsInSidebar ? true : nil,
-            isLocked: isLocked ? true : nil
+            isLocked: isLocked ? true : nil,
+            colorTag: colorTag?.rawValue,
+            note: note,
+            autoReloadSeconds: autoReloadInterval.map { Int($0) },
+            emoji: emoji
         )
     }
 
@@ -586,7 +738,11 @@ final class Tab: Identifiable {
         let webView = WebEnvironment.shared.makeWebView(identity: identity)
         attach(webView)
 
-        if let savedInteractionState {
+        if showsStartPage {
+            // The start page is drawn over the web view; WebKit gets a blank
+            // document so there is a page to navigate away from.
+            webView.load(URLRequest(url: URL(string: "about:blank")!))
+        } else if let savedInteractionState {
             isRestoringDocument = true
             webView.interactionState = savedInteractionState
         } else {
@@ -630,7 +786,14 @@ final class Tab: Identifiable {
     private func observe(_ webView: WKWebView) {
         webView.publisher(for: \.url, options: [.initial, .new])
             .sink { [weak self] url in
-                guard let self, let url else { return }
+                guard let self, let url, self.document == nil, !self.showsStartPage else { return }
+                if self.blankIsStartPage, url.absoluteString == "about:blank" {
+                    self.showsStartPage = true
+                    self.url = StartPage.url
+                    self.pageTitle = nil
+                    self.didChange.send()
+                    return
+                }
                 self.url = url
                 self.didChange.send()
             }
@@ -638,7 +801,8 @@ final class Tab: Identifiable {
 
         webView.publisher(for: \.title, options: [.initial, .new])
             .sink { [weak self] title in
-                guard let self else { return }
+                guard let self, self.document == nil, !self.showsStartPage else { return }
+                self.noteTitleChanged(title)
                 self.pageTitle = title
                 self.didChange.send()
                 if let title, !title.isEmpty, self.reportedVisitURL == self.url {
@@ -655,8 +819,9 @@ final class Tab: Identifiable {
 
         webView.publisher(for: \.isLoading, options: [.initial, .new])
             .sink { [weak self] isLoading in
-                self?.isLoading = isLoading
-                self?.didChange.send()
+                guard let self, self.document == nil else { return }
+                self.isLoading = isLoading
+                self.didChange.send()
             }
             .store(in: &cancellables)
 
@@ -677,6 +842,22 @@ final class Tab: Identifiable {
     // MARK: - Navigation
 
     func load(_ url: URL) {
+        clearDocument()
+        if StartPage.isStartPage(url) {
+            showsStartPage = true
+            blankIsStartPage = true
+            self.url = url
+            pendingUserURL = nil
+            failure = nil
+            failedURL = nil
+            isLoading = false
+            didChange.send()
+            return
+        }
+        if showsStartPage {
+            showsStartPage = false
+            startPageView = nil
+        }
         self.url = url
         pendingUserURL = url
         failedURL = nil
@@ -703,6 +884,15 @@ final class Tab: Identifiable {
     }
 
     func reload() {
+        if showsStartPage { return }
+        // A document is fetched again from its address; the web view
+        // underneath has nothing to do with it.
+        if let document {
+            let target = document.url
+            clearDocument()
+            load(target)
+            return
+        }
         // A failed load leaves nothing to reload, so retry the address itself.
         if failure != nil, let loadedWebView {
             let target = failedURL ?? url
@@ -714,7 +904,19 @@ final class Tab: Identifiable {
         }
         loadedWebView?.reload()
     }
-    func goBack() { loadedWebView?.goBack() }
+    /// Back from a document returns to the page under it, which is what
+    /// WebKit still shows: the document was never in its history.
+    func goBack() {
+        if showsStartPage { return }
+        if document != nil {
+            clearDocument()
+            if let webURL = loadedWebView?.url { url = webURL }
+            pageTitle = loadedWebView?.title
+            didChange.send()
+            return
+        }
+        loadedWebView?.goBack()
+    }
     func goForward() { loadedWebView?.goForward() }
     func stopLoading() { loadedWebView?.stopLoading() }
 
@@ -726,9 +928,85 @@ final class Tab: Identifiable {
         // A navigation that begins after the restore committed is the user's
         // own, whatever started it; only the restore itself is silent.
         if !isRestoringDocument { suppressesNextVisit = false }
-        guard failure != nil else { return }
+        // A new page replaces whatever document was showing.
+        let hadDocument = document != nil
+        clearDocument()
+        guard failure != nil || hadDocument else { return }
         failure = nil
         didChange.send()
+    }
+
+    // MARK: - Documents
+
+    /// Starts showing the PDF at `url`, whose bytes arrive through
+    /// `adoptInlineDownload`.
+    func beginDocument(at url: URL) {
+        inlineDownload = nil
+        document = TabDocument(url: url, title: TabDocument.title(for: url), state: .loading)
+        self.url = url
+        pendingUserURL = nil
+        failure = nil
+        failedURL = nil
+        isLoading = true
+        let view = documentView ?? PDFDocumentView()
+        documentView = view
+        view.showLoading(url: url)
+        didChange.send()
+    }
+
+    /// Takes a download with a delegate the caller made.
+    func adoptInlineDownload(_ download: WKDownload, using fetch: InlinePDFDownload) {
+        inlineDownload = fetch
+        download.delegate = fetch
+    }
+
+    /// Takes the WebKit download that carries the document's bytes.
+    func adoptInlineDownload(_ download: WKDownload, for url: URL) {
+        let fetch = InlinePDFDownload(
+            url: url,
+            onFinish: { [weak self] file in self?.documentArrived(at: file, from: url) },
+            onFail: { [weak self] error in self?.documentFailed(error, from: url) }
+        )
+        inlineDownload = fetch
+        download.delegate = fetch
+    }
+
+    /// The document's bytes are on disk; show them, or say why not.
+    func documentArrived(at file: URL, from url: URL) {
+        guard document?.url == url else { return }
+        guard let pdf = PDFDocument(url: file) else {
+            documentFailed(TabDocument.Failure.unreadable, from: url)
+            return
+        }
+        document?.state = .ready(fileURL: file, pageCount: pdf.pageCount)
+        isLoading = false
+        documentView?.show(pdf, fileURL: file)
+        didChange.send()
+        // A document is a visit like any page.
+        reportedVisitURL = url
+        delegate?.tab(self, didVisit: url, title: displayTitle)
+    }
+
+    func documentFailed(_ error: any Error, from url: URL) {
+        guard document?.url == url else { return }
+        document?.state = .failed(error.localizedDescription)
+        isLoading = false
+        documentView?.showFailure("Could not open the PDF: \(error.localizedDescription)")
+        didChange.send()
+    }
+
+    /// Drops the document and its temporary file; the web view underneath
+    /// becomes the tab's content again.
+    func clearDocument() {
+        guard let document else { return }
+        if case .ready(let file, _) = document.state {
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        }
+        self.document = nil
+        inlineDownload = nil
+        documentView?.removeFromSuperview()
+        documentView = nil
+        isLoading = loadedWebView?.isLoading ?? false
     }
 
     fileprivate func navigationCommitted() {
@@ -796,6 +1074,9 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
     /// is one the browser could have shown inline.
     private var pendingDownloadURLs: Set<URL> = []
 
+    /// PDF responses turned into downloads so the tab can show them itself.
+    private var pendingDocumentURLs: Set<URL> = []
+
     init(tab: Tab) {
         self.tab = tab
     }
@@ -825,7 +1106,7 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         // Zoom is a property of the web view, not the navigation, so it is
         // set once the new page is the one on screen.
-        webView.pageZoom = SiteSettings.shared.pageZoom(for: webView.url)
+        webView.pageZoom = SiteSettings.shared.pageZoom(for: webView.url, spaceDefault: tab?.overrides?.defaultZoom)
         tab?.navigationCommitted()
     }
 
@@ -915,7 +1196,8 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
             // The per-site choices that ride on the navigation itself.
             preferences.allowsContentJavaScript = sites.allowsJavaScript(for: url)
             preferences.preferredContentMode = sites.prefersMobile(for: url) ? .mobile : .desktop
-            webView.customUserAgent = sites.userAgent(for: url)
+            // A per-site choice first, then the space's, then WebKit's own.
+            webView.customUserAgent = sites.userAgent(for: url) ?? tab?.overrides?.userAgent
             ContentBlocker.shared.applySiteChoice(for: url, to: webView.configuration.userContentController)
             SitePolicy.shared.apply(for: url, to: webView.configuration.userContentController, spaceIdentity: tab?.identity)
             BoostCoordinator.shared.apply(for: url, to: webView.configuration.userContentController)
@@ -1022,6 +1304,27 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
             decisionHandler(.download)
             return
         }
+        // A PDF for the tab itself: shown in Kylmora's viewer unless the
+        // site's setting says otherwise. The bytes come as a download of this
+        // same response, which is the one fetch that carries the tab's cookies.
+        if let tab, let responseURL, PDFViewing.isPDF(navigationResponse) {
+            switch SiteSettings.shared.pdfHandling(for: responseURL) {
+            case .viewer, .preview:
+                pendingDocumentURLs.insert(responseURL)
+                tab.beginDocument(at: responseURL)
+                decisionHandler(.download)
+                return
+            case .download:
+                guard SiteSettings.shared.allowsDownloads(for: responseURL) else {
+                    decisionHandler(.cancel)
+                    return
+                }
+                decisionHandler(.download)
+                return
+            case .webkit:
+                break
+            }
+        }
         let policy = DownloadManager.shared.policy(for: navigationResponse)
         if policy == .download, !SiteSettings.shared.allowsDownloads(for: responseURL) {
             decisionHandler(.cancel)
@@ -1037,6 +1340,25 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
 
     @MainActor
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        if let tab, let url = navigationResponse.response.url, pendingDocumentURLs.remove(url) != nil {
+            if SiteSettings.shared.pdfHandling(for: url) == .preview {
+                // Fetched the same way, then handed to whatever opens PDFs;
+                // the tab goes back to the page it was on.
+                let fetch = InlinePDFDownload(
+                    url: url,
+                    onFinish: { [weak tab] file in
+                        tab?.clearDocument()
+                        tab?.goBack()
+                        NSWorkspace.shared.open(file)
+                    },
+                    onFail: { [weak tab] error in tab?.documentFailed(error, from: url) }
+                )
+                tab.adoptInlineDownload(download, using: fetch)
+            } else {
+                tab.adoptInlineDownload(download, for: url)
+            }
+            return
+        }
         DownloadManager.shared.adopt(download)
     }
 }

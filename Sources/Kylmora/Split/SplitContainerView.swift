@@ -83,7 +83,7 @@ final class SplitContainerView: NSView {
         for id in layout.tabIDs {
             guard let pane = panes[id], let tab = byID[id] else { continue }
             tab.markActive()
-            pane.adopt(tab.webView())
+            pane.adopt(tab.webView(), document: tab.contentOverlay)
             pane.setSticky(isSticky?(id) ?? false)
         }
 

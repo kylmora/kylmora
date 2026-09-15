@@ -30,6 +30,14 @@ struct SyncArchive: Codable, Equatable, Sendable {
     var customSearchEngines: [SearchEngine]?
     var defaultSearchEngineID: String?
 
+    /// Recent history, newest first, when history sync is on. Absent in
+    /// archives written before it existed.
+    var history: [SyncVisit]?
+
+    /// Saved logins, only ever inside a passphrase-encrypted archive. Never
+    /// sent to CloudKit; see `strippingCredentials()`.
+    var credentials: [SyncCredential]?
+
     init(
         version: Int = currentVersion,
         deviceID: UUID = UUID(),
@@ -53,6 +61,49 @@ struct SyncArchive: Codable, Equatable, Sendable {
         self.customSearchEngines = customSearchEngines
         self.defaultSearchEngineID = defaultSearchEngineID
     }
+
+    /// The same archive without logins, for any store that is not encrypted
+    /// with the user's passphrase.
+    func strippingCredentials() -> SyncArchive {
+        var copy = self
+        copy.credentials = nil
+        return copy
+    }
+
+    /// How many visits an archive carries at most: enough for the omnibox to
+    /// rank by, small enough to travel.
+    static let historyLimit = 2000
+}
+
+/// One page visit, for history sync.
+struct SyncVisit: Codable, Equatable, Sendable {
+    var url: URL
+    var title: String
+    var visitedAt: Date
+
+    init(url: URL, title: String, visitedAt: Date) {
+        self.url = url
+        self.title = title
+        self.visitedAt = visitedAt
+    }
+
+    /// Two devices that saw the same page at the same second saw one visit.
+    var key: String { "\(url.absoluteString)|\(Int(visitedAt.timeIntervalSince1970))" }
+}
+
+/// One saved login, for password sync.
+struct SyncCredential: Codable, Equatable, Sendable {
+    var host: String
+    var username: String
+    var password: String
+
+    init(host: String, username: String, password: String) {
+        self.host = host
+        self.username = username
+        self.password = password
+    }
+
+    var key: String { "\(host)\u{0000}\(username)" }
 }
 
 /// A bookmark entry formatted for cross-device sync.

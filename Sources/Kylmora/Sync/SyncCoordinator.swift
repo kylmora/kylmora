@@ -183,7 +183,9 @@ final class SyncCoordinator: ObservableObject {
                 try await fileProvider.saveLocalArchive(localArchive, passphrase: passphrase)
 
                 if settings.syncService == .iCloud, let cloudKitProvider, await cloudKitProvider.isAvailable() {
-                    try? await cloudKitProvider.save(archive: localArchive)
+                    // CloudKit holds the archive as it is; logins go only
+                    // where the passphrase has encrypted them.
+                    try? await cloudKitProvider.save(archive: localArchive.strippingCredentials())
                 }
 
                 remoteArchives = await fileProvider.fetchRemoteArchives(excludingDeviceID: deviceID, passphrase: passphrase)
@@ -203,7 +205,9 @@ final class SyncCoordinator: ObservableObject {
                     remote: remote,
                     syncOpenTabs: settings.syncOpenTabs,
                     syncBookmarks: settings.syncBookmarks,
-                    syncSiteSettings: settings.syncSiteSettings
+                    syncSiteSettings: settings.syncSiteSettings,
+                    syncHistory: settings.syncHistory,
+                    syncPasswords: settings.syncPasswords && passphrase != nil
                 )
                 currentMerged = merged
                 if summary.hasChanges {
@@ -214,6 +218,8 @@ final class SyncCoordinator: ObservableObject {
                     totalSummary.addedBookmarks += summary.addedBookmarks
                     totalSummary.updatedSiteSettings += summary.updatedSiteSettings
                     totalSummary.addedRoutes += summary.addedRoutes
+                    totalSummary.addedVisits += summary.addedVisits
+                    totalSummary.addedCredentials += summary.addedCredentials
                 }
             }
 
@@ -229,6 +235,14 @@ final class SyncCoordinator: ObservableObject {
                     SiteSettings.shared.update { state in
                         state = updatedSites
                     }
+                }
+
+                if settings.syncHistory, totalSummary.addedVisits > 0, let history = currentMerged.history {
+                    await session.importSyncVisits(history)
+                }
+
+                if settings.syncPasswords, passphrase != nil, totalSummary.addedCredentials > 0, let credentials = currentMerged.credentials {
+                    Self.importCredentials(credentials)
                 }
 
                 session.showToast?(
@@ -301,6 +315,15 @@ final class SyncCoordinator: ObservableObject {
         session.mergeSnapshot(snapshot, mergeTabs: true)
     }
 
+    /// Adds logins from other devices that this Mac does not have. An
+    /// existing login keeps its own password.
+    static func importCredentials(_ credentials: [SyncCredential]) {
+        let existing = Set(KeychainPasswordStore.all().map { "\($0.host)\u{0000}\($0.username)" })
+        for credential in credentials where !existing.contains(credential.key) && !credential.password.isEmpty {
+            KeychainPasswordStore.save(host: credential.host, username: credential.username, password: credential.password)
+        }
+    }
+
     private func buildCurrentArchive() async -> SyncArchive {
         let sessionSnapshot = session.snapshot()
         let currentBookmarks = await session.allBookmarks()
@@ -311,7 +334,7 @@ final class SyncCoordinator: ObservableObject {
         let spaceRouting = SpaceRoutingStore().load().routes
         let searchEngines = settings.customSearchEngines
 
-        return SyncArchive(
+        var archive = SyncArchive(
             version: SyncArchive.currentVersion,
             deviceID: deviceID,
             deviceName: deviceName,
@@ -323,5 +346,15 @@ final class SyncCoordinator: ObservableObject {
             customSearchEngines: searchEngines,
             defaultSearchEngineID: settings.searchEngine.id
         )
+        if settings.syncHistory {
+            archive.history = await session.recentVisits()
+        }
+        // Logins only travel encrypted: no passphrase, no logins.
+        if settings.syncPasswords, !settings.syncPassphrase.isEmpty {
+            archive.credentials = KeychainPasswordStore.all().map {
+                SyncCredential(host: $0.host, username: $0.username, password: $0.password)
+            }
+        }
+        return archive
     }
 }

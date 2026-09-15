@@ -4,6 +4,36 @@ import WebKit
 
 /// Print, export, view source, and copy the page as text.
 extension BrowserWindowController {
+    // MARK: - Tab housekeeping
+
+    @objc func closeDuplicateTabs(_ sender: Any?) {
+        let closed = session.closeDuplicateTabs()
+        session.showToast?(Toast(
+            symbolName: "rectangle.on.rectangle.slash",
+            message: closed == 0 ? "No duplicate tabs" : "Closed \(closed) duplicate tab\(closed == 1 ? "" : "s")",
+            identity: "close-duplicates"
+        ))
+    }
+
+    @objc func sortTabsByTitle(_ sender: Any?) { session.sortTabs(by: .title) }
+    @objc func sortTabsByDomain(_ sender: Any?) { session.sortTabs(by: .domain) }
+    @objc func sortTabsByLastUsed(_ sender: Any?) { session.sortTabs(by: .lastUsed) }
+
+    // MARK: - Shortcuts
+
+    @objc func showShortcutCheatSheet(_ sender: Any?) {
+        let sheet = ShortcutCheatSheetWindowController()
+        cheatSheet = sheet
+        sheet.showWindow(nil)
+        sheet.window?.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: - Tab bar
+
+    @objc func toggleTabStrip(_ sender: Any?) {
+        Settings.shared.showsTabStrip.toggle()
+    }
+
     // MARK: - Printing
 
     @objc func printPage(_ sender: Any?) {

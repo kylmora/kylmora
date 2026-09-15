@@ -18,10 +18,13 @@ enum SyncMergePolicy {
         var addedBookmarks: Int = 0
         var updatedSiteSettings: Int = 0
         var addedRoutes: Int = 0
+        var addedVisits: Int = 0
+        var addedCredentials: Int = 0
 
         var hasChanges: Bool {
             addedSpaces > 0 || addedGroups > 0 || addedPinnedSites > 0 ||
-            addedTabs > 0 || addedBookmarks > 0 || updatedSiteSettings > 0 || addedRoutes > 0
+            addedTabs > 0 || addedBookmarks > 0 || updatedSiteSettings > 0 || addedRoutes > 0 ||
+            addedVisits > 0 || addedCredentials > 0
         }
     }
 
@@ -31,7 +34,9 @@ enum SyncMergePolicy {
         remote: SyncArchive,
         syncOpenTabs: Bool = true,
         syncBookmarks: Bool = true,
-        syncSiteSettings: Bool = true
+        syncSiteSettings: Bool = true,
+        syncHistory: Bool = false,
+        syncPasswords: Bool = false
     ) -> (merged: SyncArchive, summary: MergeSummary) {
         var summary = MergeSummary()
         var mergedSession = local.session
@@ -131,7 +136,35 @@ enum SyncMergePolicy {
             mergedSearchEngines.append(remoteEngine)
         }
 
-        let result = SyncArchive(
+        // 6. Merge history: every visit the other device saw that this one
+        // did not, newest kept when the cap is reached.
+        var mergedHistory = local.history
+        if syncHistory, let remoteHistory = remote.history {
+            var current = local.history ?? []
+            let seen = Set(current.map(\.key))
+            for visit in remoteHistory where !seen.contains(visit.key) {
+                current.append(visit)
+                summary.addedVisits += 1
+            }
+            current.sort { $0.visitedAt > $1.visitedAt }
+            mergedHistory = Array(current.prefix(SyncArchive.historyLimit))
+        }
+
+        // 7. Merge logins: a login this device does not have is added; one it
+        // has keeps the local password, so a change made here is never
+        // overwritten by a stale copy from elsewhere.
+        var mergedCredentials = local.credentials
+        if syncPasswords, let remoteCredentials = remote.credentials {
+            var current = local.credentials ?? []
+            let seen = Set(current.map(\.key))
+            for credential in remoteCredentials where !seen.contains(credential.key) {
+                current.append(credential)
+                summary.addedCredentials += 1
+            }
+            mergedCredentials = current
+        }
+
+        var result = SyncArchive(
             version: SyncArchive.currentVersion,
             deviceID: local.deviceID,
             deviceName: local.deviceName,
@@ -143,6 +176,8 @@ enum SyncMergePolicy {
             customSearchEngines: mergedSearchEngines,
             defaultSearchEngineID: local.defaultSearchEngineID ?? remote.defaultSearchEngineID
         )
+        result.history = mergedHistory
+        result.credentials = mergedCredentials
 
         return (result, summary)
     }

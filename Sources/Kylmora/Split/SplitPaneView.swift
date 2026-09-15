@@ -122,27 +122,46 @@ final class SplitPaneView: NSView {
     /// Every pane of a visible split is a live page, which is the whole point of
     /// the feature: a pane showing a suspended tab's placeholder while its
     /// neighbour renders would be worse than not splitting at all.
-    func adopt(_ webView: WKWebView) {
-        guard webView !== self.webView else { return }
+    func adopt(_ webView: WKWebView, document: NSView? = nil) {
+        if webView !== self.webView {
+            self.webView?.removeFromSuperview()
+            self.webView = webView
 
-        self.webView?.removeFromSuperview()
-        self.webView = webView
-
-        webView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(webView, positioned: .below, relativeTo: unsplitButton)
-        NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: topAnchor),
-            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
+            webView.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(webView, positioned: .below, relativeTo: unsplitButton)
+            NSLayoutConstraint.activate([
+                webView.topAnchor.constraint(equalTo: topAnchor),
+                webView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                webView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                webView.bottomAnchor.constraint(equalTo: bottomAnchor)
+            ])
+        }
+        if document !== documentView {
+            documentView?.removeFromSuperview()
+            documentView = document
+            if let document {
+                document.translatesAutoresizingMaskIntoConstraints = false
+                addSubview(document, positioned: .below, relativeTo: unsplitButton)
+                NSLayoutConstraint.activate([
+                    document.topAnchor.constraint(equalTo: topAnchor),
+                    document.leadingAnchor.constraint(equalTo: leadingAnchor),
+                    document.trailingAnchor.constraint(equalTo: trailingAnchor),
+                    document.bottomAnchor.constraint(equalTo: bottomAnchor)
+                ])
+            }
+        }
     }
+
+    /// A tab's document viewer, shown over its page while the tab has one.
+    private weak var documentView: NSView?
 
     /// Hands the web view back without unloading it, so a tab leaving a split
     /// keeps its page for whatever shows it next.
     func releaseWebView() {
         webView?.removeFromSuperview()
         webView = nil
+        documentView?.removeFromSuperview()
+        documentView = nil
     }
 
     func setFocused(_ focused: Bool) {

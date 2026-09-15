@@ -314,11 +314,13 @@ final class GeneralSettingsViewController: NSViewController {
 
 /// What a new tab shows.
 enum NewTabTarget: String, CaseIterable, Sendable {
+    case kylmora
     case startPage
     case homepage
 
     var title: String {
         switch self {
+        case .kylmora: return "Kylmora start page"
         case .startPage: return "Search engine start page"
         case .homepage: return "Homepage"
         }

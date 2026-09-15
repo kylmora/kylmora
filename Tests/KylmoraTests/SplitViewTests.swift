@@ -491,7 +491,7 @@ struct SplitViewTests {
         #expect(ids.contains("equalize-split"))
 
         let stickyCmd = commands.first(where: { $0.id == "toggle-sticky-pane" })
-        #expect(stickyCmd?.shortcut == "⌥⌘S")
+        #expect(stickyCmd?.shortcut == "⌥⇧⌘P")
 
         let undoCmd = commands.first(where: { $0.id == "undo-split" })
         #expect(undoCmd?.shortcut == "⌥⌘Z")

@@ -12,6 +12,13 @@ public enum ShortcutCategory: String, CaseIterable, Codable, Sendable {
 
 /// Helper for formatting key equivalents and modifier flags for human display.
 public enum ShortcutFormatter {
+    /// A chord reads as its two strokes: "⌘K, T".
+    public static func format(key: String, modifiers: NSEvent.ModifierFlags, secondKey: String?) -> String {
+        let first = format(key: key, modifiers: modifiers)
+        guard let secondKey, !secondKey.isEmpty else { return first }
+        return first + ", " + format(key: secondKey, modifiers: [])
+    }
+
     public static func format(key: String, modifiers: NSEvent.ModifierFlags) -> String {
         var str = ""
         let mods = modifiers.intersection(.deviceIndependentFlagsMask)
@@ -48,11 +55,19 @@ public struct CustomShortcut: Codable, Equatable, Sendable {
     /// Explicitly unbound: the action has no shortcut (distinct from "no
     /// override", which falls back to the factory default).
     public var isCleared: Bool
+    /// A chord's second stroke, pressed on its own after the first: "⌘K,
+    /// then T". Nil for an ordinary shortcut.
+    public var secondKey: String?
 
-    public init(key: String, modifiers: NSEvent.ModifierFlags, isCleared: Bool = false) {
+    private enum CodingKeys: String, CodingKey {
+        case key, modifierFlagsRaw, isCleared, secondKey
+    }
+
+    public init(key: String, modifiers: NSEvent.ModifierFlags, isCleared: Bool = false, secondKey: String? = nil) {
         self.key = key
         self.modifierFlagsRaw = modifiers.intersection(.deviceIndependentFlagsMask).rawValue
         self.isCleared = isCleared
+        self.secondKey = secondKey.flatMap { $0.isEmpty ? nil : $0.lowercased() }
     }
 
     public init(from decoder: Decoder) throws {
@@ -60,14 +75,17 @@ public struct CustomShortcut: Codable, Equatable, Sendable {
         self.key = try container.decode(String.self, forKey: .key)
         self.modifierFlagsRaw = try container.decode(UInt.self, forKey: .modifierFlagsRaw)
         self.isCleared = try container.decodeIfPresent(Bool.self, forKey: .isCleared) ?? false
+        self.secondKey = try container.decodeIfPresent(String.self, forKey: .secondKey)
     }
 
     public var modifiers: NSEvent.ModifierFlags {
         NSEvent.ModifierFlags(rawValue: modifierFlagsRaw)
     }
 
+    public var isChord: Bool { secondKey != nil }
+
     public var displayString: String {
-        ShortcutFormatter.format(key: key, modifiers: modifiers)
+        ShortcutFormatter.format(key: key, modifiers: modifiers, secondKey: secondKey)
     }
 }
 

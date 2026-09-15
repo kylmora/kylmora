@@ -3,6 +3,9 @@ import AppKit
 /// The Browsing pane: the small switches that shape everyday use.
 @MainActor
 final class BrowsingSettingsViewController: NSViewController {
+    private let densityPopUp = NSPopUpButton()
+    private let tabStripCheckbox = NSButton(checkboxWithTitle: "Show a tab bar above the page", target: nil, action: nil)
+    private let toolbarStack = NSStackView()
     private let settings: Settings
     private let session: BrowserSession?
     private let https = NSButton(checkboxWithTitle: "Automatic HTTPS upgrade", target: nil, action: nil)
@@ -91,11 +94,28 @@ final class BrowsingSettingsViewController: NSViewController {
         sidebarHoverDelayPopUp.action = #selector(changed)
 
         form.addSection("Sidebar and window")
+        densityPopUp.addItems(withTitles: SidebarDensity.allCases.map(\.title))
+        densityPopUp.target = self
+        densityPopUp.action = #selector(densityChanged)
+        form.addRow("Sidebar density", SettingsForm.fill(densityPopUp))
+        tabStripCheckbox.target = self
+        tabStripCheckbox.action = #selector(tabStripChanged)
+        form.addRow("", tabStripCheckbox)
         form.addRow("Sidebar display", SettingsForm.fill(sidebarModePopUp))
         form.addRow("Sidebar position", SettingsForm.fill(sidebarPositionPopUp))
         form.addRow("Hover reveal delay", SettingsForm.fill(sidebarHoverDelayPopUp))
         form.addNote("Icons-only mode leaves a compact vertical strip that expands to full width on hover. Hover delay prevents accidental reveals when moving the cursor across the edge.")
         form.addRow("", compactButtons)
+
+        form.addSection("Toolbar buttons")
+        toolbarStack.orientation = .vertical
+        toolbarStack.alignment = .leading
+        toolbarStack.spacing = 4
+        form.addRow("", toolbarStack)
+        let resetToolbar = NSButton(title: "Restore Default Toolbar", target: self, action: #selector(resetToolbar))
+        resetToolbar.bezelStyle = .rounded
+        form.addContinuation(resetToolbar)
+        form.addNote("Untick a button to take it off the bar above the page; the arrows change the order. The navigation buttons and the address stay.")
 
         form.addSection("Picture in Picture")
         form.addRow("", autoPictureInPicture)
@@ -150,6 +170,9 @@ final class BrowsingSettingsViewController: NSViewController {
     }
 
     private func reload() {
+        densityPopUp.selectItem(at: SidebarDensity.allCases.firstIndex(of: settings.sidebarDensity) ?? 1)
+        tabStripCheckbox.state = settings.showsTabStrip ? .on : .off
+        rebuildToolbarRows()
         https.state = settings.upgradesToHTTPS ? .on : .off
         fullAddress.state = settings.showsFullAddress ? .on : .off
         unicodeDomains.state = settings.showsUnicodeDomains ? .on : .off
@@ -180,6 +203,64 @@ final class BrowsingSettingsViewController: NSViewController {
         webPanelEnabled.state = settings.webPanelEnabled ? .on : .off
         webPanelAlwaysOnTop.state = settings.webPanelAlwaysOnTop ? .on : .off
         webPanelAlwaysOnTop.isEnabled = settings.webPanelEnabled
+    }
+
+    /// One row per button: a checkbox for shown, arrows for order.
+    private func rebuildToolbarRows() {
+        toolbarStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let layout = settings.toolbarLayout
+        let names = layout.fullOrder()
+        for (index, name) in names.enumerated() {
+            let check = NSButton(checkboxWithTitle: name, target: self, action: #selector(toolbarVisibilityChanged(_:)))
+            check.state = layout.hidden.contains(name) ? .off : .on
+            check.identifier = NSUserInterfaceItemIdentifier(name)
+            check.widthAnchor.constraint(equalToConstant: 180).isActive = true
+            let symbol = NSImageView(image: NSImage(systemSymbolName: ToolbarLayout.catalog.first { $0.label == name }?.symbolName ?? "questionmark", accessibilityDescription: nil)!)
+            symbol.contentTintColor = .secondaryLabelColor
+            let up = NSButton(image: NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "Move \(name) up")!, target: self, action: #selector(toolbarMoveUp(_:)))
+            up.isBordered = false
+            up.identifier = NSUserInterfaceItemIdentifier(name)
+            up.isEnabled = index > 0
+            let down = NSButton(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "Move \(name) down")!, target: self, action: #selector(toolbarMoveDown(_:)))
+            down.isBordered = false
+            down.identifier = NSUserInterfaceItemIdentifier(name)
+            down.isEnabled = index < names.count - 1
+            let row = NSStackView(views: [symbol, check, up, down])
+            row.orientation = .horizontal
+            row.spacing = 6
+            toolbarStack.addArrangedSubview(row)
+        }
+    }
+
+    @objc private func toolbarVisibilityChanged(_ sender: NSButton) {
+        guard let name = sender.identifier?.rawValue else { return }
+        var layout = settings.toolbarLayout
+        layout.setHidden(name, sender.state == .off)
+        settings.toolbarLayout = layout
+    }
+
+    @objc private func toolbarMoveUp(_ sender: NSButton) { moveToolbarButton(sender, by: -1) }
+    @objc private func toolbarMoveDown(_ sender: NSButton) { moveToolbarButton(sender, by: 1) }
+
+    private func moveToolbarButton(_ sender: NSButton, by delta: Int) {
+        guard let name = sender.identifier?.rawValue else { return }
+        var layout = settings.toolbarLayout
+        layout.move(name, by: delta)
+        settings.toolbarLayout = layout
+        rebuildToolbarRows()
+    }
+
+    @objc private func resetToolbar() {
+        settings.toolbarLayout = .default
+        rebuildToolbarRows()
+    }
+
+    @objc private func tabStripChanged() {
+        settings.showsTabStrip = tabStripCheckbox.state == .on
+    }
+
+    @objc private func densityChanged() {
+        settings.sidebarDensity = SidebarDensity.allCases[densityPopUp.indexOfSelectedItem]
     }
 
     @objc private func changed() {

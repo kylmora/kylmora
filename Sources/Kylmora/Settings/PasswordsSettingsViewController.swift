@@ -14,6 +14,9 @@ final class PasswordsSettingsViewController: NSViewController {
     private let submitAutomatically = NSButton(checkboxWithTitle: "Submit form automatically", target: nil, action: nil)
     private let useTouchID = NSButton(checkboxWithTitle: "Use Touch ID", target: nil, action: nil)
     private var manager: PasswordsManagerWindowController?
+    private let identityAutofill = NSButton(checkboxWithTitle: "AutoFill names, addresses and contact details", target: nil, action: nil)
+    private let cardAutofill = NSButton(checkboxWithTitle: "AutoFill payment cards", target: nil, action: nil)
+    private var autofillManager: AutofillManagerWindowController?
     /// The rows only Keychain AutoFill uses, and the rows only "Others" uses,
     /// so the pane can swap one set for the other when the provider changes.
     private var autofillRows: [SettingsFormRow] = []
@@ -69,6 +72,18 @@ final class PasswordsSettingsViewController: NSViewController {
             linkRows.append(row)
         }
 
+        form.addSection("Identities and cards")
+        for box in [identityAutofill, cardAutofill] {
+            box.target = self
+            box.action = #selector(toggleChanged)
+        }
+        form.addRow("", identityAutofill)
+        form.addRow("", cardAutofill)
+        let manageAutofill = NSButton(title: "Manage Identities & Cards\u{2026}", target: self, action: #selector(manageAutofill))
+        manageAutofill.bezelStyle = .rounded
+        form.addContinuation(manageAutofill)
+        form.addNote("Click into a form and Kylmora fills the fields it recognises from your first identity. Cards are filled only on secure pages, after Touch ID when that is on above, and never submitted; the security code is never stored.")
+
         reload()
     }
 
@@ -83,6 +98,8 @@ final class PasswordsSettingsViewController: NSViewController {
         offerSave.state = settings.passwordOfferSave ? .on : .off
         submitAutomatically.state = settings.passwordSubmitAutomatically ? .on : .off
         useTouchID.state = settings.passwordUsesTouchID ? .on : .off
+        identityAutofill.state = settings.formAutofillEnabled ? .on : .off
+        cardAutofill.state = settings.cardAutofillEnabled ? .on : .off
         syncProvider()
     }
 
@@ -109,6 +126,15 @@ final class PasswordsSettingsViewController: NSViewController {
         settings.passwordOfferSave = offerSave.state == .on
         settings.passwordSubmitAutomatically = submitAutomatically.state == .on
         settings.passwordUsesTouchID = useTouchID.state == .on
+        settings.formAutofillEnabled = identityAutofill.state == .on
+        settings.cardAutofillEnabled = cardAutofill.state == .on
+    }
+
+    @objc private func manageAutofill() {
+        let controller = autofillManager ?? AutofillManagerWindowController()
+        autofillManager = controller
+        controller.showWindow(self)
+        controller.window?.makeKeyAndOrderFront(self)
     }
 
     @objc private func managePasswords() {

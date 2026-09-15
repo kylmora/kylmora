@@ -127,16 +127,16 @@ struct TabResourceMonitorTests {
         #expect(controller.numberOfRows(in: NSTableView()) >= 1)
     }
 
-    @Test("CommandCatalog and ShortcutManager register task-manager with ⌥⌘U")
+    @Test("CommandCatalog and ShortcutManager register task-manager with ⇧⌘U")
     func taskManagerShortcuts() {
         let command = CommandCatalog.all.first { $0.id == "task-manager" }
         #expect(command != nil)
-        #expect(command?.shortcut == "⌥⌘U")
+        #expect(command?.shortcut == "⇧⌘U")
 
         let definition = ShortcutManager.shared.definitions.first { $0.id == "task-manager" }
         #expect(definition != nil)
         #expect(definition?.defaultKey == "u")
-        let expectedModifiers: NSEvent.ModifierFlags = [.command, .option]
+        let expectedModifiers: NSEvent.ModifierFlags = [.command, .shift]
         #expect(definition?.defaultModifiers == expectedModifiers)
     }
 }

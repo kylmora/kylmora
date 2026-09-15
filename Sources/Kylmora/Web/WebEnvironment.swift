@@ -135,6 +135,7 @@ final class WebEnvironment {
         SitePolicy.shared.attach(configuration.userContentController)
         // Save and fill logins from the macOS Keychain.
         PasswordAutofill.shared.attach(configuration.userContentController)
+        FormAutofill.shared.attach(configuration.userContentController)
         // Site Boosts (custom CSS, JS, and Universal Dark Mode).
         BoostCoordinator.shared.attach(configuration.userContentController)
         // Link hints and Vim-style keyboard navigation.

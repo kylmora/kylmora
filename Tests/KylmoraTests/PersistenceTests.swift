@@ -232,6 +232,7 @@ struct SettingsTests {
         let settings = makeSettings()
         settings.searchEngine = .google
         #expect(settings.searchEngine == .google)
+        settings.newTabTarget = .startPage
         #expect(settings.newTabURL == SearchEngine.google.homeURL)
 
         UserDefaults.standard.removeObject(forKey: "searchEngineIdentifier")

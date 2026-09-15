@@ -52,6 +52,8 @@ bundle: build $(ICON)
 	@cp "$(ICON)" "$(APP_BUNDLE)/Contents/Resources/"
 	@printf 'APPL????' > "$(APP_BUNDLE)/Contents/PkgInfo"
 	@cp "$(BIN)" "$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)"
+	@# Not "kylmora": the file system is case-insensitive and that is the app binary.
+	@cp Tools/kylmora "$(APP_BUNDLE)/Contents/MacOS/kylmora-cli" && chmod +x "$(APP_BUNDLE)/Contents/MacOS/kylmora-cli"
 ifeq ($(strip $(DEV_ID)),)
 	@codesign --force --sign - --identifier "$(BUNDLE_ID)" \
 		--entitlements "$(ENTITLEMENTS)" "$(APP_BUNDLE)" >/dev/null 2>&1 \

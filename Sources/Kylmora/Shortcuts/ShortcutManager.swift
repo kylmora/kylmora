@@ -58,7 +58,7 @@ final class ShortcutManager {
             category: .tabs,
             selector: #selector(BrowserWindowController.duplicateActiveTab(_:)),
             defaultKey: "d",
-            defaultModifiers: [.command, .shift]
+            defaultModifiers: [.command, .shift, .option]
         ),
         ShortcutDefinition(
             id: "new-little-arc",
@@ -98,7 +98,7 @@ final class ShortcutManager {
             category: .tabs,
             selector: #selector(BrowserWindowController.splitStacked(_:)),
             defaultKey: "h",
-            defaultModifiers: [.command, .option]
+            defaultModifiers: [.command, .option, .shift]
         ),
         ShortcutDefinition(
             id: "split-grid",
@@ -224,7 +224,7 @@ final class ShortcutManager {
             category: .appearance,
             selector: #selector(BrowserWindowController.toggleSidebarPosition(_:)),
             defaultKey: "s",
-            defaultModifiers: [.command, .option]
+            defaultModifiers: [.command, .shift, .control]
         ),
         ShortcutDefinition(
             id: "toggle-compact",
@@ -301,6 +301,22 @@ final class ShortcutManager {
             defaultModifiers: [.command, .option]
         ),
         ShortcutDefinition(
+            id: "keyboard-shortcuts",
+            title: "Keyboard Shortcuts",
+            category: .tools,
+            selector: #selector(BrowserWindowController.showShortcutCheatSheet(_:)),
+            defaultKey: "/",
+            defaultModifiers: [.command]
+        ),
+        ShortcutDefinition(
+            id: "toggle-tab-bar",
+            title: "Show / Hide Tab Bar",
+            category: .appearance,
+            selector: #selector(BrowserWindowController.toggleTabStrip(_:)),
+            defaultKey: "b",
+            defaultModifiers: [.command, .control]
+        ),
+        ShortcutDefinition(
             id: "print-page",
             title: "Print Page",
             category: .tools,
@@ -339,6 +355,22 @@ final class ShortcutManager {
             selector: #selector(BrowserWindowController.toggleTranslationPopover(_:)),
             defaultKey: "t",
             defaultModifiers: [.command, .option]
+        ),
+        ShortcutDefinition(
+            id: "annotate-visible-area",
+            title: "Capture and Annotate Visible Area",
+            category: .tools,
+            selector: #selector(BrowserWindowController.annotateVisibleArea(_:)),
+            defaultKey: "3",
+            defaultModifiers: [.command, .option, .control]
+        ),
+        ShortcutDefinition(
+            id: "annotate-full-page",
+            title: "Capture and Annotate Full Page",
+            category: .tools,
+            selector: #selector(BrowserWindowController.annotateFullPage(_:)),
+            defaultKey: "4",
+            defaultModifiers: [.command, .option, .control]
         ),
         ShortcutDefinition(
             id: "capture-visible-area",
@@ -402,7 +434,7 @@ final class ShortcutManager {
             category: .tools,
             selector: #selector(BrowserWindowController.readAloudCurrentPage(_:)),
             defaultKey: "s",
-            defaultModifiers: [.command, .option]
+            defaultModifiers: [.command, .option, .shift]
         ),
         ShortcutDefinition(
             id: "search-bookmarks",
@@ -434,7 +466,7 @@ final class ShortcutManager {
             category: .tools,
             selector: #selector(AppDelegate.lockBrowser(_:)),
             defaultKey: "l",
-            defaultModifiers: [.command, .option]
+            defaultModifiers: [.command, .control]
         ),
         ShortcutDefinition(
             id: "task-manager",
@@ -442,14 +474,14 @@ final class ShortcutManager {
             category: .tools,
             selector: #selector(BrowserWindowController.openTaskManager(_:)),
             defaultKey: "u",
-            defaultModifiers: [.command, .option]
+            defaultModifiers: [.command, .shift]
         )
     ]
 
     init(store: ShortcutStore = .shared) {
         self.store = store
         store.onChange = { [weak self] in
-            self?.apply(to: NSApp.mainMenu)
+            self?.apply(to: NSApplication.shared.mainMenu)
             self?.onChange?()
         }
     }
@@ -459,17 +491,50 @@ final class ShortcutManager {
     }
 
     func effectiveShortcut(for id: String) -> (key: String, modifiers: NSEvent.ModifierFlags)? {
-        guard let def = definition(for: id) else { return nil }
         if let custom = store.shortcut(for: id) {
             guard !custom.isCleared else { return nil }
             return (custom.key, custom.modifiers)
         }
+        guard let def = definition(for: id) else { return nil }
         return (def.defaultKey, def.defaultModifiers)
+    }
+
+    /// The chord's second stroke, when the shortcut is one.
+    func secondKey(for id: String) -> String? {
+        store.shortcut(for: id)?.secondKey
     }
 
     func displayString(for id: String) -> String {
         guard let shortcut = effectiveShortcut(for: id) else { return "" }
-        return ShortcutFormatter.format(key: shortcut.key, modifiers: shortcut.modifiers)
+        return ShortcutFormatter.format(key: shortcut.key, modifiers: shortcut.modifiers, secondKey: secondKey(for: id))
+    }
+
+    /// Every shortcut the menus cannot carry, for the dispatcher: chords on
+    /// built-in actions, and anything bound to a custom command.
+    struct Binding: Equatable {
+        let id: String
+        let key: String
+        let modifiers: NSEvent.ModifierFlags
+        let secondKey: String?
+        let selector: Selector?
+    }
+
+    var dispatcherBindings: [Binding] {
+        store.customShortcuts.compactMap { id, custom in
+            guard !custom.isCleared, !custom.key.isEmpty else { return nil }
+            let selector = definition(for: id)?.selector
+            let isCommand = id.hasPrefix(AutomationService.commandPrefix)
+            guard custom.isChord || isCommand else { return nil }
+            guard selector != nil || isCommand else { return nil }
+            return Binding(id: id, key: custom.key, modifiers: custom.modifiers, secondKey: custom.secondKey, selector: selector)
+        }
+    }
+
+    /// Binds a chord: the leader stroke, then `secondKey` on its own.
+    func setChord(id: String, key: String, modifiers: NSEvent.ModifierFlags, secondKey: String) {
+        store.set(CustomShortcut(key: key.lowercased(), modifiers: modifiers, secondKey: secondKey), for: id)
+        apply(to: NSApplication.shared.mainMenu)
+        onChange?()
     }
 
     func isCustomized(id: String) -> Bool {
@@ -479,13 +544,13 @@ final class ShortcutManager {
     func setShortcut(id: String, key: String, modifiers: NSEvent.ModifierFlags) {
         let custom = CustomShortcut(key: key.lowercased(), modifiers: modifiers)
         store.set(custom, for: id)
-        apply(to: NSApp.mainMenu)
+        apply(to: NSApplication.shared.mainMenu)
         onChange?()
     }
 
     func resetShortcut(id: String) {
         store.remove(id: id)
-        apply(to: NSApp.mainMenu)
+        apply(to: NSApplication.shared.mainMenu)
         onChange?()
     }
 
@@ -493,13 +558,13 @@ final class ShortcutManager {
     /// user records a new one or resets to the factory default.
     func clearShortcut(id: String) {
         store.set(CustomShortcut(key: "", modifiers: [], isCleared: true), for: id)
-        apply(to: NSApp.mainMenu)
+        apply(to: NSApplication.shared.mainMenu)
         onChange?()
     }
 
     func resetAll() {
         store.removeAll()
-        apply(to: NSApp.mainMenu)
+        apply(to: NSApplication.shared.mainMenu)
         onChange?()
     }
 
@@ -518,6 +583,15 @@ final class ShortcutManager {
         return nil
     }
 
+    /// The custom command, if any, bound to this combination.
+    func conflictingCommand(key: String, modifiers: NSEvent.ModifierFlags, excluding: String? = nil) -> String? {
+        let cleanMods = modifiers.intersection(.deviceIndependentFlagsMask)
+        return store.customShortcuts.first { id, custom in
+            id != excluding && id.hasPrefix(AutomationService.commandPrefix) && !custom.isCleared
+                && custom.key == key.lowercased() && custom.modifiers.intersection(.deviceIndependentFlagsMask) == cleanMods
+        }?.key
+    }
+
     /// Recursively updates all matching menu items in the main menu to reflect custom shortcuts.
     func apply(to menu: NSMenu?) {
         guard let menu else { return }
@@ -532,7 +606,9 @@ final class ShortcutManager {
 
             guard let action = item.action else { continue }
             guard let def = definitions.first(where: { $0.selector == action }) else { continue }
-            if let current = effectiveShortcut(for: def.id) {
+            // A chord's leader must not fire the menu item on its own; the
+            // dispatcher waits for the second stroke.
+            if let current = effectiveShortcut(for: def.id), secondKey(for: def.id) == nil {
                 item.keyEquivalent = current.key
                 item.keyEquivalentModifierMask = current.modifiers
             } else {

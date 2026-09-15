@@ -34,6 +34,10 @@ final class BrowserSession {
     /// a toast stays a side effect the model can do without.
     var showToast: ((Toast) -> Void)?
 
+    /// A page finished loading in a tab. Fired before history decides whether
+    /// to record it, so rules see private tabs too.
+    var onVisit: ((Tab, URL) -> Void)?
+
     /// Rules that decide which space a URL opens in. Loaded once; inert until
     /// the user writes a rule.
     let routing = SpaceRoutingService()
@@ -112,6 +116,12 @@ final class BrowserSession {
 
         NetworkConfigManager.shared.spaceProxyResolver = { [weak self] identity in
             self?.spaces.first(where: { $0.identity == identity })?.customProxy
+        }
+        // A tab knows its identity, not its space; this is how it asks for
+        // the space's user agent and starting zoom.
+        Tab.spaceOverrides = { [weak self] identity in
+            guard let space = self?.spaces.first(where: { $0.identity == identity }) else { return nil }
+            return Tab.SpaceOverrides(userAgent: space.userAgent, defaultZoom: space.defaultZoom)
         }
     }
 
@@ -253,6 +263,44 @@ final class BrowserSession {
         scheduleSave()
     }
 
+    /// The engine this space searches with: its own, or the one in Settings.
+    func searchEngine(for space: Space) -> SearchEngine {
+        if let id = space.searchEngineID, let engine = settings.searchEngines.first(where: { $0.id == id }) {
+            return engine
+        }
+        return settings.searchEngine(isPrivate: space.isPrivate)
+    }
+
+    func setSearchEngineID(_ id: String?, for space: Space) {
+        guard id != space.searchEngineID else { return }
+        space.searchEngineID = id
+        changes.send(.spaces)
+        scheduleSave()
+    }
+
+    func setUserAgent(_ userAgent: String?, for space: Space) {
+        let trimmed = userAgent?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        guard value != space.userAgent else { return }
+        space.userAgent = value
+        changes.send(.spaces)
+        scheduleSave()
+    }
+
+    func setSleepMinutes(_ minutes: Int?, for space: Space) {
+        guard minutes != space.sleepMinutes else { return }
+        space.sleepMinutes = minutes
+        changes.send(.spaces)
+        scheduleSave()
+    }
+
+    func setDefaultZoom(_ zoom: String?, for space: Space) {
+        guard zoom != space.defaultZoom else { return }
+        space.defaultZoom = zoom
+        changes.send(.spaces)
+        scheduleSave()
+    }
+
     func setCustomProxy(_ proxy: ProxySettings?, for space: Space) {
         guard proxy != space.customProxy else { return }
         space.customProxy = proxy
@@ -353,6 +401,11 @@ final class BrowserSession {
 
     /// Commits a rename from the sidebar's inline editor. An empty value clears
     /// the name and the tab falls back to its page title.
+    /// Tags a tab with a colour, or clears it.
+    func setColorTag(_ tag: TabColorTag?, for tab: Tab) {
+        tab.setColorTag(tag)
+    }
+
     func rename(_ tab: Tab, to name: String) {
         let outcome = TabNameStore.shared.rename(tab.id, to: name)
         guard outcome != .unchanged else { return }
@@ -494,6 +547,78 @@ final class BrowserSession {
         for tab in tabsToClose {
             closeTab(tab)
         }
+    }
+
+    /// Closes every tab whose address another tab in the space already
+    /// shows, keeping the first of each (and the active one when it is
+    /// among them). Locked and pinned tabs stay. Returns how many closed.
+    @discardableResult
+    func closeDuplicateTabs(in space: Space? = nil) -> Int {
+        let space = space ?? activeSpace
+        var seen: Set<String> = []
+        var duplicates: [Tab] = []
+        // The active tab is looked at first so it is the one kept.
+        let ordered = space.tabs.sorted { a, _ in a.id == space.activeTabID }
+        for tab in ordered {
+            let key = tab.displayURL.absoluteString
+            if seen.contains(key) {
+                if !tab.isLocked, !isPinned(tab) { duplicates.append(tab) }
+            } else {
+                seen.insert(key)
+            }
+        }
+        guard !duplicates.isEmpty else { return 0 }
+        closeTabs(duplicates)
+        return duplicates.count
+    }
+
+    /// The tabs in the space whose address another tab there also shows:
+    /// every copy but the first, and the first too, so both are marked.
+    func duplicateTabIDs(in space: Space? = nil) -> Set<Tab.ID> {
+        let space = space ?? activeSpace
+        var byAddress: [String: [Tab.ID]] = [:]
+        for tab in space.tabs {
+            byAddress[tab.displayURL.absoluteString, default: []].append(tab.id)
+        }
+        return Set(byAddress.values.filter { $0.count > 1 }.flatMap { $0 })
+    }
+
+    /// How a space's tabs can be put in order.
+    enum TabSortOrder: String, CaseIterable {
+        case title, domain, lastUsed
+
+        var title: String {
+            switch self {
+            case .title: return "Title"
+            case .domain: return "Domain"
+            case .lastUsed: return "Last Used"
+            }
+        }
+    }
+
+    /// Reorders the space's tabs. Stable, so tabs that compare equal keep
+    /// their order.
+    func sortTabs(by order: TabSortOrder, in space: Space? = nil) {
+        let space = space ?? activeSpace
+        let indexed = space.tabs.enumerated()
+        let sorted = indexed.sorted { a, b in
+            let lhs = a.element, rhs = b.element
+            switch order {
+            case .title:
+                let result = lhs.displayTitle.localizedCaseInsensitiveCompare(rhs.displayTitle)
+                return result == .orderedSame ? a.offset < b.offset : result == .orderedAscending
+            case .domain:
+                let left = lhs.displayURL.host()?.replacingOccurrences(of: "www.", with: "") ?? ""
+                let right = rhs.displayURL.host()?.replacingOccurrences(of: "www.", with: "") ?? ""
+                let result = left.localizedCaseInsensitiveCompare(right)
+                return result == .orderedSame ? a.offset < b.offset : result == .orderedAscending
+            case .lastUsed:
+                return lhs.lastActiveAt == rhs.lastActiveAt ? a.offset < b.offset : lhs.lastActiveAt > rhs.lastActiveAt
+            }
+        }.map(\.element)
+        guard space.replaceTabs(with: sorted) else { return }
+        changes.send(.tabs)
+        scheduleSave()
     }
 
     /// Closes all unpinned tabs in the given space.
@@ -1460,6 +1585,11 @@ final class BrowserSession {
         return (try? await database.suggestions(matching: prefix, limit: limit)) ?? []
     }
 
+    func topSites(limit: Int = 8) async -> [HistoryEntry] {
+        guard let database else { return [] }
+        return (try? await database.topSites(limit: limit)) ?? []
+    }
+
     func recentHistory(limit: Int = 100) async -> [HistoryEntry] {
         guard let database else { return [] }
         return (try? await database.recentHistory(limit: limit)) ?? []
@@ -1789,7 +1919,11 @@ final class BrowserSession {
                     bookmarkFolder: space.bookmarkFolder,
                     enabledExtensionIDs: space.enabledExtensionIDs.map(Array.init),
                     passwordVaultAccount: space.passwordVaultAccount,
-                    customProxy: space.customProxy
+                    customProxy: space.customProxy,
+                    searchEngineID: space.searchEngineID,
+                    userAgent: space.userAgent,
+                    sleepMinutes: space.sleepMinutes,
+                    defaultZoom: space.defaultZoom
                 )
             },
             activeSpaceIndex: spaces.firstIndex { $0.id == activeSpaceID } ?? 0
@@ -1832,7 +1966,11 @@ final class BrowserSession {
                 bookmarkFolder: stored.bookmarkFolder,
                 enabledExtensionIDs: stored.enabledExtensionIDs.map(Set.init),
                 passwordVaultAccount: stored.passwordVaultAccount,
-                customProxy: stored.customProxy
+                customProxy: stored.customProxy,
+                searchEngineID: stored.searchEngineID,
+                userAgent: stored.userAgent,
+                sleepMinutes: stored.sleepMinutes,
+                defaultZoom: stored.defaultZoom
             )
             WebEnvironment.shared.setFonts(space.look.fonts, for: space.identity)
             let groups = (stored.groups ?? []).map {
@@ -1956,6 +2094,20 @@ final class BrowserSession {
     }
 
     /// Imports sync bookmarks into the database and reloads bookmarks.
+    /// The newest visits, for the sync archive. Nothing when history is
+    /// off, so a device that keeps no history contributes none.
+    func recentVisits(limit: Int = SyncArchive.historyLimit) async -> [SyncVisit] {
+        guard let database, !settings.historyDisabled else { return [] }
+        return (try? await database.recentVisits(limit: limit)) ?? []
+    }
+
+    /// Visits from other devices; the ones already here are skipped.
+    @discardableResult
+    func importSyncVisits(_ visits: [SyncVisit]) async -> Int {
+        guard let database, !visits.isEmpty else { return 0 }
+        return (try? await database.mergeVisits(visits)) ?? 0
+    }
+
     func importSyncBookmarks(_ items: [SyncBookmark]) async {
         guard let database, !items.isEmpty else { return }
         let tuples = items.map { ($0.url, $0.title, $0.folder, $0.created) }
@@ -2008,6 +2160,7 @@ extension BrowserSession: TabDelegate {
     }
 
     func tab(_ tab: Tab, didVisit url: URL, title: String) {
+        onVisit?(tab, url)
         guard let database, !settings.historyDisabled, !tab.isPrivate else { return }
         let key = AddressFormatter.display(url)
         Task { try? await database.recordVisit(url: url, title: title, key: key) }

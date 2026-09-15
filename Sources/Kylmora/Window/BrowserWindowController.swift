@@ -21,6 +21,8 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     private var siteSettingsPopover: NSPopover?
     private var shieldPopover: NSPopover?
     private var translationPopover: NSPopover?
+    /// The screenshot editor, kept while it is open.
+    var screenshotEditor: ScreenshotEditorWindowController?
     private var readingListPopover: NSPopover?
     private var bookmarkManagerPopover: NSPopover?
     /// The small windows links from other apps open in. Owned here because this
@@ -48,6 +50,10 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     private var zenModeSavedState: (mode: SidebarMode, compactEnabled: Bool)?
     /// The top bar's bookmark button, whose glyph follows the page.
     private weak var bookmarkButton: IconButton?
+    /// Every button the top bar can show, before the layout picks and orders.
+    private var topBarActions: [TopBarAction] = []
+    /// The shortcut cheat sheet, kept while it is open.
+    var cheatSheet: ShortcutCheatSheetWindowController?
     private let webPanel: WebPanelViewController
     private var webPanelSplitItem: NSSplitViewItem?
     private var tabOverviewController: TabOverviewGridViewController?
@@ -331,6 +337,14 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         }
     }
 
+    /// Puts the buttons the layout asks for on the bar, in its order.
+    func applyToolbarLayout() {
+        let bar = content.topBar
+        bar.setActions(Settings.shared.toolbarLayout.arrange(topBarActions, label: \.label))
+        bookmarkButton = bar.actionButton(labelled: "Add Bookmark") as? IconButton
+        content.updateTopBar()
+    }
+
     /// The top bar repeats commands the menu already owns, so it calls the same
     /// methods rather than reaching into the session a second way.
     private func wireTopBar() {
@@ -348,7 +362,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             guard let self,
                   let url = URLResolver.resolve(
                     text,
-                    using: Settings.shared.searchEngine(isPrivate: self.session.activeSpace.isPrivate)
+                    using: self.session.searchEngine(for: self.session.activeSpace)
                   )
             else { return }
             if let tab = self.session.activeTab {
@@ -394,8 +408,11 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
                 self?.showExtensionsMenu()
             })
         }
-        bar.setActions(actions)
-        bookmarkButton = bar.actionButton(labelled: "Add Bookmark") as? IconButton
+        topBarActions = actions
+        applyToolbarLayout()
+        NotificationCenter.default.addObserver(forName: .toolbarLayoutDidChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyToolbarLayout() }
+        }
         if #available(macOS 15.4, *) {
             ExtensionManager.shared.popupAnchor = { [weak bar] in bar?.actionButton(labelled: "Extensions") }
         }
@@ -883,7 +900,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
 
         commandBar.searchEngineProvider = { [weak self] in
             guard let self else { return .duckDuckGo }
-            return Settings.shared.searchEngine(isPrivate: self.session.activeSpace.isPrivate)
+            return self.session.searchEngine(for: self.session.activeSpace)
         }
         commandBar.resultsProvider = { [weak self] query in
             guard let self else { return [] }
@@ -891,7 +908,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             let sources = settings.suggestionSources
             let history = sources.history ? await self.session.historySuggestions(matching: query, limit: 12) : []
             let activeID = self.session.activeTab?.id
-            let engine = settings.searchEngine(isPrivate: self.session.activeSpace.isPrivate)
+            let engine = self.session.searchEngine(for: self.session.activeSpace)
             let search = engine.url(for: query.trimmingCharacters(in: .whitespacesAndNewlines))
                 .map { SearchCandidate(engineName: engine.name, url: $0) }
 
@@ -917,7 +934,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
                 )
             }
 
-            let commands = CommandCatalog.all
+            let commands = CommandCatalog.all + AutomationService.shared.paletteCommands
 
             return CommandRanker.rank(
                 query: query,
@@ -1096,7 +1113,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         if commandBar.isOpen {
             commandBar.toggle()
         } else {
-            let initialText = session.activeTab.map { AddressFormatter.display($0.url) } ?? ""
+            let initialText = session.activeTab.map { $0.showsStartPage ? "" : AddressFormatter.display($0.url) } ?? ""
             commandBar.open(text: initialText, openInNewTab: false)
         }
         updateCompactSidebarForCommandBar()
@@ -1655,6 +1672,14 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         performScreenshot(scope: .fullPage, destination: .copyToClipboard)
     }
 
+    @objc func annotateVisibleArea(_ sender: Any?) {
+        performScreenshot(scope: .visible, destination: .annotate)
+    }
+
+    @objc func annotateFullPage(_ sender: Any?) {
+        performScreenshot(scope: .fullPage, destination: .annotate)
+    }
+
     func performScreenshot(scope: ScreenshotScope, destination: ScreenshotDestination) {
         guard let tab = session.activeTab, let webView = tab.currentWebView else { return }
         ScreenshotService.flashFeedback(in: webView)
@@ -1684,6 +1709,20 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
                         symbolName: "doc.on.clipboard.fill",
                         message: scope == .fullPage ? "Full page screenshot copied to clipboard" : "Screenshot copied to clipboard"
                     ))
+                case .annotate:
+                    let editor = ScreenshotEditorWindowController(image: image, tabTitle: tab.displayTitle, pageURL: tab.url)
+                    editor.onSaved = { [weak self] fileURL in
+                        self?.session.showToast?(Toast(
+                            symbolName: "camera.fill",
+                            message: "Screenshot saved",
+                            action: Toast.Action(title: "Show") { NSWorkspace.shared.activateFileViewerSelecting([fileURL]) }
+                        ))
+                    }
+                    editor.onCopied = { [weak self] in
+                        self?.session.showToast?(Toast(symbolName: "doc.on.clipboard.fill", message: "Screenshot copied to clipboard"))
+                    }
+                    screenshotEditor = editor
+                    editor.showWindow(nil)
                 }
             } catch {
                 session.showToast?(Toast(
@@ -1694,7 +1733,17 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         }
     }
 
+    /// Runs a palette command by id, for the URL scheme. Returns whether
+    /// the id named one.
+    @discardableResult
+    func runPaletteCommand(_ id: String) -> Bool {
+        guard CommandCatalog.all.contains(where: { $0.id == id }) || id.hasPrefix(AutomationService.commandPrefix) else { return false }
+        executeCommand(id)
+        return true
+    }
+
     private func executeCommand(_ id: String) {
+        if AutomationService.shared.runCommand(id: id, tab: session.activeTab) { return }
         switch id {
         case "capture-visible-area":
             captureVisibleArea(nil)
@@ -1704,6 +1753,10 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             captureFullPage(nil)
         case "copy-full-page":
             copyFullPageToClipboard(nil)
+        case "annotate-visible-area":
+            annotateVisibleArea(nil)
+        case "annotate-full-page":
+            annotateFullPage(nil)
         case "toggle-mouse-gestures":
             Settings.shared.mouseGesturesEnabled.toggle()
             let enabled = Settings.shared.mouseGesturesEnabled
@@ -1790,6 +1843,20 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             copyMarkdownLink(nil)
         case "copy-title-url":
             copyTitleAndURL(nil)
+        case "automations":
+            (NSApp.delegate as? AppDelegate)?.showSettings(nil, on: .automations)
+        case "toggle-tab-bar":
+            toggleTabStrip(nil)
+        case "keyboard-shortcuts":
+            showShortcutCheatSheet(nil)
+        case "close-duplicate-tabs":
+            closeDuplicateTabs(nil)
+        case "sort-tabs-title":
+            sortTabsByTitle(nil)
+        case "sort-tabs-domain":
+            sortTabsByDomain(nil)
+        case "sort-tabs-last-used":
+            sortTabsByLastUsed(nil)
         case "print-page":
             printPage(nil)
         case "export-pdf":

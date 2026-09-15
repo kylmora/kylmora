@@ -18,12 +18,46 @@ enum SiteBehaviourScripts {
             WKUserScript(source: nativeVideoPlayer, injectionTime: .atDocumentStart, forMainFrameOnly: false),
             WKUserScript(source: antiFingerprinting, injectionTime: .atDocumentStart, forMainFrameOnly: false),
             WKUserScript(source: hostileBehaviourBlocker, injectionTime: .atDocumentStart, forMainFrameOnly: false),
+            WKUserScript(source: clipboardRead, injectionTime: .atDocumentStart, forMainFrameOnly: false),
+            WKUserScript(source: referrer, injectionTime: .atDocumentStart, forMainFrameOnly: true),
             WKUserScript(source: autoplaySweep, injectionTime: .atDocumentEnd, forMainFrameOnly: false),
             WKUserScript(source: reader, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         ]
     }
 
     private static let policy = "((window.__kylmoraSite || {})"
+
+    /// Reading the clipboard refused where the site says so: the async
+    /// clipboard API rejects, and the paste event carries no data.
+    static let clipboardRead = """
+    (function () {
+      var setting = \(policy).clipboardRead || "allow");
+      if (setting !== "deny" || !navigator.clipboard) { return; }
+      var refused = function () { return Promise.reject(new DOMException("Reading the clipboard is blocked by a website setting.", "NotAllowedError")); };
+      try {
+        Object.defineProperty(navigator.clipboard, "readText", { value: refused, configurable: true });
+        Object.defineProperty(navigator.clipboard, "read", { value: refused, configurable: true });
+      } catch (e) {}
+      document.addEventListener("paste", function (event) {
+        if (event.target && (event.target.isContentEditable || /^(input|textarea)$/i.test(event.target.tagName))) { return; }
+        event.stopImmediatePropagation();
+      }, true);
+    })();
+    """
+
+    /// No referrer leaves the page where the site says so: a meta referrer
+    /// policy is set before anything the page loads can carry one.
+    static let referrer = """
+    (function () {
+      var setting = \(policy).referrer || "default");
+      if (setting !== "none") { return; }
+      var meta = document.createElement("meta");
+      meta.name = "referrer";
+      meta.content = "no-referrer";
+      var head = document.head || document.documentElement;
+      if (head) { head.insertBefore(meta, head.firstChild); }
+    })();
+    """
 
     /// `play()` without a user gesture is refused according to the setting.
     static let autoplay = """

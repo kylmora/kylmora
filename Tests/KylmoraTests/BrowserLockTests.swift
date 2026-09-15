@@ -90,16 +90,16 @@ struct BrowserLockTests {
         NotificationCenter.default.removeObserver(token)
     }
 
-    @Test("CommandCatalog and ShortcutManager register lock-browser with ⌥⌘L")
+    @Test("CommandCatalog and ShortcutManager register lock-browser with ⌃⌘L")
     func lockCommandCatalog() {
         let command = CommandCatalog.all.first { $0.id == "lock-browser" }
         #expect(command != nil)
-        #expect(command?.shortcut == "⌥⌘L")
+        #expect(command?.shortcut == "⌃⌘L")
 
         let definition = ShortcutManager.shared.definitions.first { $0.id == "lock-browser" }
         #expect(definition != nil)
         #expect(definition?.defaultKey == "l")
-        let expectedModifiers: NSEvent.ModifierFlags = [.command, .option]
+        let expectedModifiers: NSEvent.ModifierFlags = [.command, .control]
         #expect(definition?.defaultModifiers == expectedModifiers)
     }
 }

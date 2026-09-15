@@ -59,6 +59,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         suspender.start()
         self.suspender = suspender
 
+        // Rules act on tabs from here on: page loads, idle tabs, media,
+        // downloads.
+        AutomationService.shared.start(session: session)
+        // Chords and custom-command keys, which the menus cannot carry.
+        ShortcutDispatcher.shared.install()
+        // After an update, once: what version this is and where its notes are.
+        WhatsNew.presentIfNeeded(on: controller.window)
+
         // Live folders poll on their own timers from here on. Started after
         // the window exists, so the first results land in a sidebar that can
         // show them.
@@ -364,6 +372,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         guard let session else { return }
         for url in urls {
             if WebAppManager.shared.handleURLScheme(url) {
+                continue
+            }
+            if let command = CommandURL(url: url) {
+                command.perform(in: session, window: mainWindowController)
                 continue
             }
             if let link = IPhoneLink.parse(urlScheme: url) {

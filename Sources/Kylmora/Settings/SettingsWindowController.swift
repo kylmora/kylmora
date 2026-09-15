@@ -42,6 +42,7 @@ final class SettingsWindowController: NSWindowController {
         case search
         case spaces
         case shortcuts
+        case automations
         case privacy
         case passwords
         case websites
@@ -53,7 +54,7 @@ final class SettingsWindowController: NSWindowController {
 
         var group: PaneGroup {
             switch self {
-            case .general, .browsing, .search, .spaces, .shortcuts: return .browsing
+            case .general, .browsing, .search, .spaces, .shortcuts, .automations: return .browsing
             case .privacy, .passwords, .websites: return .privacy
             case .extensions, .importData, .sync: return .content
             case .advanced, .about: return .system
@@ -66,6 +67,7 @@ final class SettingsWindowController: NSWindowController {
             case .importData: return "Import"
             case .browsing: return "Browsing"
             case .shortcuts: return "Shortcuts"
+            case .automations: return "Automations"
             case .passwords: return "Passwords"
             case .privacy: return "Privacy"
             case .search: return "Search"
@@ -87,6 +89,7 @@ final class SettingsWindowController: NSWindowController {
             case .importData: return "Bring bookmarks, history and passwords over from another browser."
             case .browsing: return "The sidebar, the top bar, and how pages behave as you read them."
             case .shortcuts: return "Every keyboard shortcut, and what you have changed."
+            case .automations: return "Which Space a link opens in, and rules that act on tabs when something happens."
             case .passwords: return "Saved logins, autofill, and the manager you use."
             case .privacy: return "Tracking, cookies, website data and what is blocked."
             case .search: return "Your search engine, suggestions, and private-window search."
@@ -110,6 +113,7 @@ final class SettingsWindowController: NSWindowController {
             case .search: return ["engine", "google", "duckduckgo", "suggestions"]
             case .spaces: return ["colour", "color", "gradient", "border", "wash", "workspace"]
             case .shortcuts: return ["keyboard", "keys", "bindings", "hotkey"]
+            case .automations: return ["rules", "routing", "route", "trigger", "action", "when", "idle", "shortcut", "applescript", "automation"]
             case .privacy: return ["cookies", "tracking", "trackers", "ads", "blocker", "history", "clear"]
             case .passwords: return ["logins", "autofill", "keychain", "touch id"]
             case .websites: return ["permissions", "camera", "microphone", "location", "notifications", "sound"]
@@ -136,6 +140,7 @@ final class SettingsWindowController: NSWindowController {
             case .importData: return "square.and.arrow.down"
             case .browsing: return "menubar.rectangle"
             case .shortcuts: return "keyboard"
+            case .automations: return "bolt.horizontal"
             case .passwords: return "key"
             case .privacy: return "hand.raised"
             case .search: return "magnifyingglass"
@@ -162,6 +167,7 @@ final class SettingsWindowController: NSWindowController {
             case .search: return NSColor(srgbRed: 0.25, green: 0.72, blue: 0.70, alpha: 1)
             case .spaces: return NSColor(srgbRed: 0.36, green: 0.74, blue: 0.47, alpha: 1)
             case .shortcuts: return NSColor(srgbRed: 0.56, green: 0.72, blue: 0.32, alpha: 1)
+            case .automations: return NSColor(srgbRed: 0.76, green: 0.66, blue: 0.28, alpha: 1)
             case .privacy: return NSColor(srgbRed: 0.91, green: 0.45, blue: 0.32, alpha: 1)
             case .passwords: return NSColor(srgbRed: 0.93, green: 0.62, blue: 0.24, alpha: 1)
             case .websites: return NSColor(srgbRed: 0.90, green: 0.76, blue: 0.28, alpha: 1)
@@ -474,6 +480,7 @@ final class SettingsWindowController: NSWindowController {
         case .importData: return ImportSettingsViewController(session: session)
         case .browsing: return BrowsingSettingsViewController(settings: settings, session: session)
         case .shortcuts: return ShortcutsSettingsViewController()
+        case .automations: return AutomationsSettingsViewController(session: session)
         case .passwords: return PasswordsSettingsViewController(settings: settings, session: session)
         case .privacy: return PrivacySettingsViewController(settings: settings, session: session)
         case .search: return SearchSettingsViewController(settings: settings)

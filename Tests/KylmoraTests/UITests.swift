@@ -1016,7 +1016,7 @@ struct SidebarContextMenuTests {
             "Keep Awake", "Lock", "Keep in Sidebar", "Sleep Now", "Archive Now", "-",
             "Open as Split", "Duplicate", "-",
             "New Group with Tab", "Move to Space", "-",
-            "Rename\u{2026}", "-",
+            "Rename\u{2026}", "Colour Tag", "Auto Reload", "Add Note\u{2026}", "Set Emoji\u{2026}", "-",
             "Close", "Close Other Tabs", "Close Tabs Below", "Close All Tabs in Space"
         ])
     }

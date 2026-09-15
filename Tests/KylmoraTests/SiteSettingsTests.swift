@@ -205,7 +205,7 @@ struct SitePolicyScriptTests {
 
     @Test("Every category on the pane has options, a default among them, a glyph and a line of instruction")
     func everyCategoryIsComplete() {
-        #expect(SiteSettingCategory.allCases.count == 25)
+        #expect(SiteSettingCategory.allCases.count == 29)
         for category in SiteSettingCategory.allCases {
             #expect(!category.options.isEmpty, Comment(rawValue: category.title))
             #expect(category.option(category.builtInDefault) != nil, Comment(rawValue: category.title))
@@ -343,5 +343,52 @@ struct PictureInPictureReportTests {
         _ = try await webView.callAsyncJavaScript(leave, arguments: [:], in: nil, contentWorld: .page)
         for _ in 0..<20 where tab.isInPictureInPicture { try await Task.sleep(for: .milliseconds(50)) }
         #expect(tab.isInPictureInPicture == false)
+    }
+}
+
+@Suite("Images, clipboard reading and referrer as site settings")
+@MainActor
+struct ExtraSiteSettingsTests {
+    @Test("Blocking images on a site becomes an image rule for that site; a default block has exceptions")
+    func imageRules() throws {
+        let file = FileManager.default.temporaryDirectory.appending(path: "sites-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let settings = SiteSettings(file: file)
+        settings.update { $0.set("block", for: "heavy.example", in: .images) }
+        var rules = settings.siteRules()
+        let imageRule = try #require(rules.first { ($0["trigger"] as? [String: Any])?["resource-type"] as? [String] == ["image"] })
+        #expect(((imageRule["trigger"] as? [String: Any])?["if-domain"] as? [String]) == ["*heavy.example"])
+        #expect((imageRule["action"] as? [String: Any])?["type"] as? String == "block")
+
+        settings.update {
+            $0.defaults[.images] = "block"
+            $0.set("allow", for: "photos.example", in: .images)
+        }
+        rules = settings.siteRules()
+        let defaultRule = try #require(rules.first { ($0["trigger"] as? [String: Any])?["resource-type"] as? [String] == ["image"] })
+        #expect(((defaultRule["trigger"] as? [String: Any])?["unless-domain"] as? [String]) == ["*photos.example"])
+    }
+
+    @Test("Clipboard and referrer choices reach the page policy, and the scripts act on them")
+    func policyAndScripts() {
+        let file = FileManager.default.temporaryDirectory.appending(path: "sites-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let settings = SiteSettings(file: file)
+        settings.update {
+            $0.set("deny", for: "paste.example", in: .clipboardRead)
+            $0.set("none", for: "quiet.example", in: .referrer)
+        }
+        let policy = settings.policy(for: URL(string: "https://paste.example/")!)
+        #expect(policy["clipboardRead"] == "deny")
+        #expect(policy["referrer"] == "default")
+        #expect(settings.policy(for: URL(string: "https://quiet.example/")!)["referrer"] == "none")
+        #expect(SiteBehaviourScripts.clipboardRead.contains("readText"))
+        #expect(SiteBehaviourScripts.referrer.contains("no-referrer"))
+        #expect(SiteBehaviourScripts.all.count >= 14)
+        for category in [SiteSettingCategory.images, .clipboardRead, .referrer] {
+            #expect(!category.title.isEmpty)
+            #expect(NSImage(systemSymbolName: category.symbolName, accessibilityDescription: nil) != nil)
+            #expect(category.options.contains { $0.id == category.builtInDefault })
+        }
     }
 }

@@ -132,6 +132,48 @@ actor BrowserDatabase {
         return items.count
     }
 
+    /// The newest visits, one row each, for sync.
+    func recentVisits(limit: Int) throws -> [SyncVisit] {
+        try database.query(
+            "SELECT url, title, visited_at FROM visits ORDER BY visited_at DESC LIMIT ?;",
+            [.integer(Int64(limit))]
+        ) { row in
+            guard let text = row.text(0), let url = URL(string: text) else { return nil }
+            return SyncVisit(url: url, title: row.text(1) ?? "", visitedAt: Date(timeIntervalSince1970: row.double(2)))
+        }.compactMap { $0 }
+    }
+
+    /// Visits from another device. One that is already here, same page at
+    /// the same second, is skipped, so syncing twice adds nothing twice.
+    /// Returns how many were new.
+    @discardableResult
+    func mergeVisits(_ visits: [SyncVisit]) throws -> Int {
+        guard !visits.isEmpty else { return 0 }
+        var added = 0
+        try database.execute("BEGIN;")
+        do {
+            for visit in visits {
+                let stamp = visit.visitedAt.timeIntervalSince1970
+                let existing = try database.query(
+                    "SELECT COUNT(*) FROM visits WHERE url = ? AND ABS(visited_at - ?) < 1;",
+                    [.text(visit.url.absoluteString), .double(stamp)]
+                ) { $0.integer(0) }.first ?? 0
+                if existing > 0 { continue }
+                try database.run(
+                    "INSERT INTO visits (url, key, title, visited_at) VALUES (?, ?, ?, ?);",
+                    [.text(visit.url.absoluteString), .text(AddressFormatter.display(visit.url).lowercased()),
+                     .text(visit.title), .double(stamp)]
+                )
+                added += 1
+            }
+            try database.execute("COMMIT;")
+        } catch {
+            try? database.execute("ROLLBACK;")
+            throw error
+        }
+        return added
+    }
+
     /// Corrects the title of the most recent visit to `url`. A page's title
     /// commonly arrives after the load that recorded the visit, which would
     /// otherwise carry the host as its title for good.
@@ -155,6 +197,11 @@ actor BrowserDatabase {
             where: "key LIKE ? ESCAPE '\\'",
             parameters: [.text(escapeLike(needle) + "%"), .integer(Int64(limit))]
         )
+    }
+
+    /// The most visited pages, one per address, for the start page.
+    func topSites(limit: Int = 8) throws -> [HistoryEntry] {
+        try group(where: "1 = 1", parameters: [.integer(Int64(limit))])
     }
 
     func recentHistory(limit: Int = 100) throws -> [HistoryEntry] {

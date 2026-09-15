@@ -36,6 +36,9 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane,
     private var filteredDefinitions: [ShortcutDefinition] = []
     private var recordingDefinitionID: String?
     private var keyMonitor: Any?
+    /// A stroke just recorded, waiting a moment for a chord's second key.
+    private var pendingStroke: (key: String, modifiers: NSEvent.ModifierFlags)?
+    private var chordTimer: Timer?
 
     init(manager: ShortcutManager = .shared) {
         self.manager = manager
@@ -365,11 +368,22 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane,
             }
 
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard let chars = event.charactersIgnoringModifiers, !chars.isEmpty else { return nil }
+
+            // A plain key right after a recorded stroke makes it a chord:
+            // "⌘K, then T".
+            if let pending = self.pendingStroke, flags.isEmpty, chars.count == 1, chars.first!.isLetter || chars.first!.isNumber {
+                self.chordTimer?.invalidate()
+                self.pendingStroke = nil
+                self.manager.setChord(id: targetID, key: pending.key, modifiers: pending.modifiers, secondKey: chars.lowercased())
+                self.stopRecording()
+                return nil
+            }
+
             // Require at least one modifier flag, unless the key itself is a
             // function/special key (arrows, F-keys live in U+F700-U+F8FF and
             // arrive with no device-independent flags set).
-            guard let chars = event.charactersIgnoringModifiers, !chars.isEmpty,
-                  (!flags.isEmpty || chars.unicodeScalars.contains(where: { (0xF700...0xF8FF).contains($0.value) })) else {
+            guard !flags.isEmpty || chars.unicodeScalars.contains(where: { (0xF700...0xF8FF).contains($0.value) }) else {
                 return nil
             }
 
@@ -392,7 +406,13 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane,
                 self.manager.setShortcut(id: targetID, key: key, modifiers: flags)
             }
 
-            self.stopRecording()
+            // Keep listening a moment: a second plain key turns this into a
+            // chord, silence leaves it as it is.
+            self.pendingStroke = (key, flags)
+            self.chordTimer?.invalidate()
+            self.chordTimer = Timer.scheduledTimer(withTimeInterval: ShortcutDispatcher.chordWindow, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.stopRecording() }
+            }
             return nil
         }
     }
@@ -402,6 +422,9 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane,
             NSEvent.removeMonitor(monitor)
             keyMonitor = nil
         }
+        chordTimer?.invalidate()
+        chordTimer = nil
+        pendingStroke = nil
         recordingDefinitionID = nil
         tableView.reloadData()
     }

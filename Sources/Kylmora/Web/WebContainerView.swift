@@ -14,6 +14,7 @@ final class WebContainerView: NSView {
     var onNewTab: (() -> Void)?
 
     private weak var current: WKWebView?
+    private weak var currentDocument: NSView?
     private let errorPage = ErrorPageView()
     private let emptyState = NSStackView()
 
@@ -66,8 +67,11 @@ final class WebContainerView: NSView {
     ///   - webView: the page to show, or nil when there is no tab.
     ///   - failure: shown instead of the page when the load failed.
     ///   - url: the address the failure refers to.
-    func show(_ webView: WKWebView?, failure: NavigationFailure?, url: URL?, onRetry: (() -> Void)?) {
+    ///   - document: a viewer shown over the page, for a tab that is showing
+    ///     a document rather than a web page.
+    func show(_ webView: WKWebView?, document: NSView? = nil, failure: NavigationFailure?, url: URL?, onRetry: (() -> Void)?) {
         swapWebView(webView)
+        swapDocument(document)
 
         emptyState.isHidden = webView != nil
 
@@ -79,6 +83,21 @@ final class WebContainerView: NSView {
             errorPage.isHidden = true
         }
     }
+
+    private func swapDocument(_ document: NSView?) {
+        guard document !== currentDocument else { return }
+        currentDocument?.removeFromSuperview()
+        currentDocument = document
+        guard let document else { return }
+        document.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(document, positioned: .below, relativeTo: errorPage)
+        pin(document)
+        reveal(document)
+        window?.makeFirstResponder(document)
+    }
+
+    /// The view on top for the tab: its document if it has one, else its page.
+    var visibleContent: NSView? { currentDocument ?? current }
 
     private func swapWebView(_ webView: WKWebView?) {
         guard webView !== current else { return }

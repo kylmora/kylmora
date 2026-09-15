@@ -77,9 +77,10 @@ enum Style {
         /// text in a 28-point pill still has seven points above and below it,
         /// so the rows read as a list rather than a stack of buttons, and
         /// eight more of them fit on a screen.
-        static let rowHeight: CGFloat = 32
+        /// Set by the sidebar density in Settings; 32 is the regular one.
+        @MainActor static var rowHeight: CGFloat { Settings.shared.sidebarDensity.rowHeight }
         /// The filled rounded rectangle drawn behind the selected row.
-        static let rowPillHeight: CGFloat = 28
+        @MainActor static var rowPillHeight: CGFloat { Settings.shared.sidebarDensity.pillHeight }
         /// A reference pill radius is 9 on a 34-point pill; the same
         /// proportion on a 28-point one. A larger radius like 14 looked right
         /// at that bigger size, but turns a pill this short into a capsule.

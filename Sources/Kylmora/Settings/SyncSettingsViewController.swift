@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 /// The Sync pane in Settings: enables and configures cross-device sync via Apple iCloud,
 /// manages manual JSON backup and restore, and provides one-click migration from Arc.
 @MainActor
-final class SyncSettingsViewController: NSViewController {
+final class SyncSettingsViewController: NSViewController, NSTextFieldDelegate {
     private let coordinator: SyncCoordinator?
     private let settings: Settings
     private var statusSubscription: AnyCancellable?
@@ -19,6 +19,9 @@ final class SyncSettingsViewController: NSViewController {
     private let syncOpenTabsCheckbox = NSButton(checkboxWithTitle: "Sync open tabs", target: nil, action: nil)
     private let syncBookmarksCheckbox = NSButton(checkboxWithTitle: "Sync bookmarks", target: nil, action: nil)
     private let syncSiteSettingsCheckbox = NSButton(checkboxWithTitle: "Sync website settings and rules", target: nil, action: nil)
+    private let syncHistoryCheckbox = NSButton(checkboxWithTitle: "Sync history (the last 2,000 visits)", target: nil, action: nil)
+    private let syncPasswordsCheckbox = NSButton(checkboxWithTitle: "Sync passwords (needs a passphrase)", target: nil, action: nil)
+    private let passphraseField = NSSecureTextField()
 
     // Folder location
     private let locationLabel = NSTextField(labelWithString: "iCloud Drive (Automatic)")
@@ -101,6 +104,21 @@ final class SyncSettingsViewController: NSViewController {
         syncSiteSettingsCheckbox.target = self
         syncSiteSettingsCheckbox.action = #selector(syncSiteSettingsChanged)
         form.addContinuation(syncSiteSettingsCheckbox)
+
+        syncHistoryCheckbox.target = self
+        syncHistoryCheckbox.action = #selector(syncHistoryChanged)
+        form.addContinuation(syncHistoryCheckbox)
+
+        syncPasswordsCheckbox.target = self
+        syncPasswordsCheckbox.action = #selector(syncPasswordsChanged)
+        form.addContinuation(syncPasswordsCheckbox)
+
+        passphraseField.placeholderString = "Passphrase every device shares"
+        passphraseField.target = self
+        passphraseField.action = #selector(passphraseChanged)
+        passphraseField.delegate = self
+        form.addRow("Encryption passphrase", SettingsForm.fill(passphraseField))
+        form.addNote("With a passphrase, the archive is encrypted end to end before it leaves this Mac. Passwords are only ever included in an encrypted archive, and never in CloudKit; the other Macs need the same passphrase to read it.")
 
         form.addSeparator()
 
@@ -196,10 +214,16 @@ final class SyncSettingsViewController: NSViewController {
         syncOpenTabsCheckbox.state = settings.syncOpenTabs ? .on : .off
         syncBookmarksCheckbox.state = settings.syncBookmarks ? .on : .off
         syncSiteSettingsCheckbox.state = settings.syncSiteSettings ? .on : .off
+        syncHistoryCheckbox.state = settings.syncHistory ? .on : .off
+        syncPasswordsCheckbox.state = settings.syncPasswords ? .on : .off
+        if passphraseField.stringValue != settings.syncPassphrase { passphraseField.stringValue = settings.syncPassphrase }
 
         syncOpenTabsCheckbox.isEnabled = enabled
         syncBookmarksCheckbox.isEnabled = enabled
         syncSiteSettingsCheckbox.isEnabled = enabled
+        syncHistoryCheckbox.isEnabled = enabled
+        syncPasswordsCheckbox.isEnabled = enabled && !settings.syncPassphrase.isEmpty
+        passphraseField.isEnabled = enabled
         syncNowButton.isEnabled = enabled
 
         if !settings.syncCustomDirectory.isEmpty {
@@ -275,6 +299,23 @@ final class SyncSettingsViewController: NSViewController {
 
     @objc private func syncSiteSettingsChanged() {
         settings.syncSiteSettings = syncSiteSettingsCheckbox.state == .on
+    }
+
+    @objc private func syncHistoryChanged() {
+        settings.syncHistory = syncHistoryCheckbox.state == .on
+    }
+
+    @objc private func syncPasswordsChanged() {
+        settings.syncPasswords = syncPasswordsCheckbox.state == .on
+    }
+
+    @objc private func passphraseChanged() {
+        settings.syncPassphrase = passphraseField.stringValue
+        syncPasswordsCheckbox.isEnabled = enableSyncCheckbox.state == .on && !settings.syncPassphrase.isEmpty
+        if settings.syncPassphrase.isEmpty {
+            syncPasswordsCheckbox.state = .off
+            settings.syncPasswords = false
+        }
     }
 
     @objc private func syncNowClicked() {
@@ -454,3 +495,9 @@ final class SyncSettingsViewController: NSViewController {
     }
 }
 
+extension SyncSettingsViewController {
+    func controlTextDidChange(_ notification: Notification) {
+        guard (notification.object as? NSTextField) === passphraseField else { return }
+        passphraseChanged()
+    }
+}

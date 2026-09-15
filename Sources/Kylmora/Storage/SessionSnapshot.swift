@@ -37,6 +37,14 @@ struct SessionSnapshot: Codable, Equatable {
         /// sessions written before the lock existed -- which restore unlocked,
         /// the only safe direction: a lock nobody set is a tab nobody can shut.
         var isLocked: Bool?
+        /// The colour the user tagged the tab with. Absent when untagged.
+        var colorTag: String?
+        /// A note the user attached. Absent when there is none.
+        var note: String?
+        /// Seconds between automatic reloads. Absent when the tab does not.
+        var autoReloadSeconds: Int?
+        /// An emoji in place of the favicon. Absent when there is none.
+        var emoji: String?
     }
 
     struct Space: Codable, Equatable {
@@ -78,6 +86,11 @@ struct SessionSnapshot: Codable, Equatable {
         var enabledExtensionIDs: [UUID]?
         var passwordVaultAccount: String?
         var customProxy: ProxySettings?
+        /// Per-space overrides added later; absent means "follow Settings".
+        var searchEngineID: String?
+        var userAgent: String?
+        var sleepMinutes: Int?
+        var defaultZoom: String?
 
         init(
             name: String,
@@ -98,7 +111,11 @@ struct SessionSnapshot: Codable, Equatable {
             bookmarkFolder: String? = nil,
             enabledExtensionIDs: [UUID]? = nil,
             passwordVaultAccount: String? = nil,
-            customProxy: ProxySettings? = nil
+            customProxy: ProxySettings? = nil,
+            searchEngineID: String? = nil,
+            userAgent: String? = nil,
+            sleepMinutes: Int? = nil,
+            defaultZoom: String? = nil
         ) {
             self.name = name
             self.symbolName = symbolName
@@ -119,6 +136,10 @@ struct SessionSnapshot: Codable, Equatable {
             self.enabledExtensionIDs = enabledExtensionIDs
             self.passwordVaultAccount = passwordVaultAccount
             self.customProxy = customProxy
+            self.searchEngineID = searchEngineID
+            self.userAgent = userAgent
+            self.sleepMinutes = sleepMinutes
+            self.defaultZoom = defaultZoom
         }
     }
 

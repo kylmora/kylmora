@@ -35,6 +35,10 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
     case nativeVideoPlayer
     case antiFingerprinting
     case blockHostileBehaviour
+    case pdfDocuments
+    case images
+    case clipboardRead
+    case referrer
 
     struct Option: Equatable, Sendable, Identifiable {
         let id: String
@@ -68,6 +72,10 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .nativeVideoPlayer: return "Native Video Player"
         case .antiFingerprinting: return "Anti-Fingerprinting"
         case .blockHostileBehaviour: return "Hostile Behaviour Protection"
+        case .pdfDocuments: return "PDF Documents"
+        case .images: return "Images"
+        case .clipboardRead: return "Clipboard Reading"
+        case .referrer: return "Referrer"
         }
     }
 
@@ -98,6 +106,10 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .nativeVideoPlayer: return "play.rectangle.fill"
         case .antiFingerprinting: return "shield.lefthalf.filled"
         case .blockHostileBehaviour: return "hand.raised.slash.fill"
+        case .pdfDocuments: return "doc.richtext.fill"
+        case .images: return "photo.fill"
+        case .clipboardRead: return "doc.on.clipboard.fill"
+        case .referrer: return "arrow.turn.up.left"
         }
     }
 
@@ -105,7 +117,8 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         switch self {
         case .readerMode, .popups, .camera, .microphone, .notifications, .webFonts, .pictureInPicture: return .systemGray
         case .autoPlay, .pageZoom: return .systemOrange
-        case .downloads, .sslCheck: return .systemIndigo
+        case .downloads, .sslCheck, .pdfDocuments, .images: return .systemIndigo
+        case .clipboardRead, .referrer: return .systemGreen
         case .screenSharing, .location, .userAgent, .externalApps: return .systemBlue
         case .contentBlockers, .trackingPrevention, .antiFingerprinting, .blockHostileBehaviour: return .systemGreen
         case .cookies: return .systemBrown
@@ -144,6 +157,10 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .nativeVideoPlayer: return "Use native HTML5 video player (Vinegar-style: PiP, background playback, no tracking) on the websites below:"
         case .antiFingerprinting: return "Protect against device fingerprinting and canvas tracking on the websites below:"
         case .blockHostileBehaviour: return "Protect against text un-selectability, context menu disabling, and clipboard snooping on the websites below:"
+        case .pdfDocuments: return "Choose how PDF documents from the websites below are opened:"
+        case .images: return "Allow or block images on the websites below:"
+        case .clipboardRead: return "Allow or deny reading the clipboard on the websites below:"
+        case .referrer: return "Send or withhold the referring page on the websites below:"
         }
     }
 
@@ -206,6 +223,16 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
                 Option(id: "on", title: "Protect (Force Selection & Unblock Right-Click)"),
                 Option(id: "off", title: "Site Default (Allow Restrictions)")
             ]
+        case .pdfDocuments:
+            return [
+                Option(id: "viewer", title: "Kylmora's Viewer"),
+                Option(id: "webkit", title: "WebKit's Viewer"),
+                Option(id: "download", title: "Download"),
+                Option(id: "preview", title: "Open in Preview")
+            ]
+        case .images: return [Option(id: "allow", title: "Allow"), Option(id: "block", title: "Block")]
+        case .clipboardRead: return [Option(id: "allow", title: "Allow"), Option(id: "deny", title: "Deny")]
+        case .referrer: return [Option(id: "default", title: "Send (Default)"), Option(id: "none", title: "Never Send")]
         }
     }
 
@@ -232,6 +259,10 @@ enum SiteSettingCategory: String, CaseIterable, Codable, Sendable {
         case .nativeVideoPlayer: return "on"
         case .antiFingerprinting: return "on"
         case .blockHostileBehaviour: return "on"
+        case .pdfDocuments: return "viewer"
+        case .images: return "allow"
+        case .clipboardRead: return "allow"
+        case .referrer: return "default"
         }
     }
 
@@ -398,7 +429,9 @@ final class SiteSettings {
             "pictureInPicture": resolve(.pictureInPicture, for: url),
             "nativeVideoPlayer": resolve(.nativeVideoPlayer, for: url),
             "antiFingerprinting": resolve(.antiFingerprinting, for: url),
-            "blockHostileBehaviour": resolve(.blockHostileBehaviour, for: url)
+            "blockHostileBehaviour": resolve(.blockHostileBehaviour, for: url),
+            "clipboardRead": resolve(.clipboardRead, for: url),
+            "referrer": resolve(.referrer, for: url)
         ]
     }
 
@@ -408,6 +441,24 @@ final class SiteSettings {
 
     func allowsPopups(for url: URL?) -> Bool { resolve(.popups, for: url) == "allow" }
     func allowsDownloads(for url: URL?) -> Bool { resolve(.downloads, for: url) == "allow" }
+
+    /// The zoom a page starts at: the site's own setting if it has one,
+    /// else the space's default when given, else the global default.
+    func pageZoom(for url: URL?, spaceDefault: String?) -> CGFloat {
+        if let spaceDefault, let value = Double(spaceDefault),
+           let host = url?.host(), state.sites[.pageZoom]?[host] == nil {
+            return CGFloat(value)
+        }
+        if let spaceDefault, let value = Double(spaceDefault), url?.host() == nil {
+            return CGFloat(value)
+        }
+        return pageZoom(for: url)
+    }
+
+    /// How a PDF from `url` is opened. An unknown stored value means the viewer.
+    func pdfHandling(for url: URL?) -> PDFViewing.Handling {
+        PDFViewing.Handling(rawValue: resolve(.pdfDocuments, for: url)) ?? .viewer
+    }
     func blocksContent(for url: URL?) -> Bool { resolve(.contentBlockers, for: url) == "on" }
     func allowsJavaScript(for url: URL?) -> Bool { resolve(.javaScript, for: url) == "on" }
     func prefersMobile(for url: URL?) -> Bool { resolve(.compatibilityMode, for: url) == "mobile" }
@@ -442,6 +493,16 @@ final class SiteSettings {
             rules.append(["trigger": trigger, "action": ["type": "block-cookies"]])
         } else if !strictHosts.isEmpty {
             rules.append(["trigger": domainTrigger(strictHosts, extra: ["load-type": ["third-party"]]), "action": ["type": "block-cookies"]])
+        }
+        // Images, the same way as fonts: a block on the site's own pages.
+        let imageHosts = state.sites[.images]?.filter { $0.value == "block" }.map(\.key).sorted() ?? []
+        if state.defaultOption(for: .images) == "block" {
+            let allowed = state.sites[.images]?.filter { $0.value == "allow" }.map(\.key).sorted() ?? []
+            var trigger: [String: Any] = ["url-filter": ".*", "resource-type": ["image"]]
+            if !allowed.isEmpty { trigger["unless-domain"] = allowed.map { "*" + $0 } }
+            rules.append(["trigger": trigger, "action": ["type": "block"]])
+        } else if !imageHosts.isEmpty {
+            rules.append(["trigger": domainTrigger(imageHosts, extra: ["resource-type": ["image"]]), "action": ["type": "block"]])
         }
         let fontHosts = state.sites[.webFonts]?.filter { $0.value == "block" }.map(\.key).sorted() ?? []
         if state.defaultOption(for: .webFonts) == "block" {

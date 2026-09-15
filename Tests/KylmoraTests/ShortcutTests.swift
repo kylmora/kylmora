@@ -73,7 +73,7 @@ struct ShortcutTests {
         // 1. Defaults verification
         #expect(manager.displayString(for: "copy-url") == "⇧⌘C")
         #expect(manager.displayString(for: "pin-tab") == "⇧⌘P")
-        #expect(manager.displayString(for: "duplicate-tab") == "⇧⌘D")
+        #expect(manager.displayString(for: "duplicate-tab") == "⌥⇧⌘D")
         #expect(manager.displayString(for: "new-tab") == "⌘T")
         #expect(manager.displayString(for: "close-tab") == "⌘W")
         #expect(!manager.isCustomized(id: "copy-url"))

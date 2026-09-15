@@ -159,6 +159,9 @@ struct SearchEngineTests {
         settings.privateSearchEngine = .duckDuckGo
         #expect(settings.searchEngine(isPrivate: true) == .duckDuckGo)
         #expect(settings.searchEngine(isPrivate: false) == wiki)
+        // With the search engine's page chosen for new tabs, a private one
+        // opens on the private engine's page.
+        settings.newTabTarget = .startPage
         #expect(settings.newTabURL(isPrivate: true) == SearchEngine.duckDuckGo.homeURL)
 
         var sources = settings.suggestionSources

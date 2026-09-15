@@ -143,6 +143,19 @@ final class Space: Identifiable {
     /// Space-specific network proxy override. When nil or disabled, browser global proxy settings apply.
     var customProxy: ProxySettings?
 
+    /// The search engine this space's omnibox uses, by id, or nil for the
+    /// one in Settings.
+    var searchEngineID: String?
+    /// A user agent for every page in this space, or nil for the default.
+    /// A per-site choice in Websites still wins over it.
+    var userAgent: String?
+    /// Minutes before a background tab here sleeps: nil follows Settings,
+    /// 0 never sleeps.
+    var sleepMinutes: Int?
+    /// The zoom pages here start at, as a `SiteSettings` zoom step such as
+    /// "1.25", or nil for the default. A per-site zoom still wins over it.
+    var defaultZoom: String?
+
     /// Effective proxy settings for this space: space-specific if enabled, otherwise global.
     var effectiveProxy: ProxySettings? {
         if let custom = customProxy, custom.enabled {
@@ -182,7 +195,11 @@ final class Space: Identifiable {
         bookmarkFolder: String? = nil,
         enabledExtensionIDs: Set<UUID>? = nil,
         passwordVaultAccount: String? = nil,
-        customProxy: ProxySettings? = nil
+        customProxy: ProxySettings? = nil,
+        searchEngineID: String? = nil,
+        userAgent: String? = nil,
+        sleepMinutes: Int? = nil,
+        defaultZoom: String? = nil
     ) {
         self.name = name
         self.identity = identity
@@ -195,6 +212,17 @@ final class Space: Identifiable {
         self.enabledExtensionIDs = enabledExtensionIDs
         self.passwordVaultAccount = passwordVaultAccount
         self.customProxy = customProxy
+        self.searchEngineID = searchEngineID
+        self.userAgent = userAgent
+        self.sleepMinutes = sleepMinutes
+        self.defaultZoom = defaultZoom
+    }
+
+    /// The idle time before a tab here sleeps, or nil for never; falls back
+    /// to `global` when the space has no say.
+    func sleepDelay(global: TimeInterval?) -> TimeInterval? {
+        guard let sleepMinutes else { return global }
+        return sleepMinutes > 0 ? TimeInterval(sleepMinutes) * 60 : nil
     }
 
     var activeTab: Tab? {
@@ -231,6 +259,15 @@ final class Space: Identifiable {
 
     func setActiveTabID(_ id: Tab.ID?) {
         activeTabID = id
+    }
+
+    /// Puts the same tabs in a new order. Refused unless `ordered` is exactly
+    /// the tabs already here, so a sort can never add or lose one.
+    @discardableResult
+    func replaceTabs(with ordered: [Tab]) -> Bool {
+        guard ordered.count == tabs.count, Set(ordered.map(\.id)) == Set(tabs.map(\.id)) else { return false }
+        tabs = ordered
+        return true
     }
 
     // MARK: - Groups

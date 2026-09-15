@@ -401,6 +401,19 @@ final class SidebarViewController: NSViewController {
                 self?.refreshNowPlaying()
             }
         }
+
+        // A new density means new row heights, so every row is rebuilt.
+        NotificationCenter.default.addObserver(
+            forName: .sidebarDensityDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.tableView.rowHeight = Style.Metrics.rowHeight
+                self.reloadTabs()
+            }
+        }
     }
 
     private func findActiveMediaTab() -> Tab? {
@@ -887,7 +900,11 @@ final class SidebarViewController: NSViewController {
         NSApp.sendAction(#selector(BrowserWindowController.clearCurrentSpaceData(_:)), to: nil, from: self)
     }
 
+    /// Recomputed on every rebuild; cheap, tens of tabs.
+    private var duplicateIDs: Set<Tab.ID> = []
+
     private func reloadTabs() {
+        duplicateIDs = session.duplicateTabIDs(in: shownSpace)
         if previewSpace == nil { ensureContentAtRest() }
         rebuildRows()
         tableView.reloadData()
@@ -1035,6 +1052,10 @@ final class SidebarViewController: NSViewController {
     /// timer counting how long it has been read -- true of the clock, and a lie
     /// about what the badge means.
     private func idleText(for tab: Tab) -> String? {
+        // A tab that reloads itself says so in the badge's place; so does one
+        // that another tab duplicates.
+        if tab.autoReloadInterval != nil { return "↻" }
+        if duplicateIDs.contains(tab.id) { return "⧉" }
         guard settings.tabIdleBadgeMode.showsBadge(isAsleep: tab.isAsleep),
               !session.visibleTabIDs.contains(tab.id)
         else { return nil }
@@ -1042,6 +1063,8 @@ final class SidebarViewController: NSViewController {
     }
 
     private func idleSpoken(for tab: Tab) -> String? {
+        if tab.autoReloadInterval != nil { return "reloads automatically" }
+        if duplicateIDs.contains(tab.id) { return "another tab shows the same page" }
         guard idleText(for: tab) != nil else { return nil }
         return TabIdleLabel.spoken(for: tab.idleDuration())
     }
@@ -1077,7 +1100,7 @@ final class SidebarViewController: NSViewController {
         cell.indentation = Style.Metrics.sidebarInset + FolderTree.indent(forDepth: depth)
         cell.configure(TabRowContent(
             title: tab.displayTitle,
-            address: tab.url.absoluteString,
+            address: tab.note.map { "\(tab.url.absoluteString)\n\($0)" } ?? tab.url.absoluteString,
             isLoading: tab.isLoading,
             isAsleep: tab.isAsleep,
             isFailed: tab.failure != nil,
@@ -1087,7 +1110,10 @@ final class SidebarViewController: NSViewController {
             keepsInSidebar: tab.keepsInSidebar,
             isLocked: tab.isLocked,
             isPlayingAudio: tab.isPlayingAudio,
-            isMuted: tab.isMuted
+            isMuted: tab.isMuted,
+            colorTag: tab.colorTag,
+            hasUnreadChange: tab.hasUnreadChange && !session.visibleTabIDs.contains(tab.id),
+            emoji: tab.emoji
         ))
         cell.onToggleMute = { [weak tab] in
             tab?.toggleMute()
@@ -1420,6 +1446,43 @@ final class SidebarViewController: NSViewController {
         menu.addItem(move)
         menu.addItem(.separator())
         add("Rename\u{2026}", #selector(renameTabFromMenu(_:)), symbol: "pencil")
+        let colour = NSMenuItem(title: "Colour Tag", action: nil, keyEquivalent: "")
+        colour.image = NSImage(systemSymbolName: "circle.lefthalf.filled", accessibilityDescription: nil)
+        let colours = NSMenu()
+        let none = NSMenuItem(title: "None", action: #selector(setTabColorFromMenu(_:)), keyEquivalent: "")
+        none.target = self
+        none.representedObject = [tab]
+        none.state = tab.colorTag == nil ? .on : .off
+        colours.addItem(none)
+        for tag in TabColorTag.allCases {
+            let item = NSMenuItem(title: tag.title, action: #selector(setTabColorFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = [tab, tag.rawValue]
+            item.image = tag.dotImage()
+            item.state = tab.colorTag == tag ? .on : .off
+            colours.addItem(item)
+        }
+        colour.submenu = colours
+        menu.addItem(colour)
+        let reloadItem = NSMenuItem(title: "Auto Reload", action: nil, keyEquivalent: "")
+        reloadItem.image = NSImage(systemSymbolName: "arrow.clockwise.circle", accessibilityDescription: nil)
+        let intervals = NSMenu()
+        let off = NSMenuItem(title: "Off", action: #selector(setAutoReloadFromMenu(_:)), keyEquivalent: "")
+        off.target = self
+        off.representedObject = [tab]
+        off.state = tab.autoReloadInterval == nil ? .on : .off
+        intervals.addItem(off)
+        for seconds in Tab.autoReloadChoices {
+            let item = NSMenuItem(title: Self.autoReloadTitle(seconds), action: #selector(setAutoReloadFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = [tab, seconds]
+            item.state = tab.autoReloadInterval == seconds ? .on : .off
+            intervals.addItem(item)
+        }
+        reloadItem.submenu = intervals
+        menu.addItem(reloadItem)
+        add(tab.note == nil ? "Add Note\u{2026}" : "Edit Note\u{2026}", #selector(editNoteFromMenu(_:)), symbol: "note.text")
+        add(tab.emoji == nil ? "Set Emoji\u{2026}" : "Change Emoji\u{2026}", #selector(editEmojiFromMenu(_:)), symbol: "face.smiling")
         menu.addItem(.separator())
         // Greyed rather than hidden. A Close that has gone missing looks like
         // a bug in the menu; a Close that is there and cannot be pressed,
@@ -1655,6 +1718,61 @@ final class SidebarViewController: NSViewController {
               pair.count == 2, let tab = pair[0] as? Tab, let space = pair[1] as? Space
         else { return }
         session.move(tab, toSpace: space)
+    }
+
+    static func autoReloadTitle(_ seconds: TimeInterval) -> String {
+        seconds < 60 ? "Every \(Int(seconds)) seconds" : "Every \(Int(seconds / 60)) minute\(seconds == 60 ? "" : "s")"
+    }
+
+    @objc private func setAutoReloadFromMenu(_ sender: Any?) {
+        guard let payload = (sender as? NSMenuItem)?.representedObject as? [Any],
+              let tab = payload.first as? Tab else { return }
+        let seconds = payload.count > 1 ? payload[1] as? TimeInterval : nil
+        tab.setAutoReload(every: seconds)
+        session.showToast?(Toast(
+            symbolName: "arrow.clockwise.circle",
+            message: seconds.map { "Reloading \(Self.autoReloadTitle($0).lowercased())" } ?? "Auto reload off",
+            identity: "auto-reload"
+        ))
+    }
+
+    @objc private func editEmojiFromMenu(_ sender: Any?) {
+        guard let tab = tab(from: sender) else { return }
+        let alert = NSAlert()
+        alert.messageText = "Emoji for This Tab"
+        alert.informativeText = "Shown in place of the favicon. Leave it empty to go back to the favicon."
+        alert.addButton(withTitle: "Set")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
+        field.stringValue = tab.emoji ?? ""
+        field.placeholderString = "🚀"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        tab.setEmoji(field.stringValue)
+    }
+
+    @objc private func editNoteFromMenu(_ sender: Any?) {
+        guard let tab = tab(from: sender) else { return }
+        let alert = NSAlert()
+        alert.messageText = tab.note == nil ? "Add a Note" : "Edit the Note"
+        alert.informativeText = "Shown when you hover the tab. Leave it empty to remove the note."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.stringValue = tab.note ?? ""
+        field.placeholderString = "Why this tab is open"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        tab.setNote(field.stringValue)
+    }
+
+    @objc private func setTabColorFromMenu(_ sender: Any?) {
+        guard let payload = (sender as? NSMenuItem)?.representedObject as? [Any],
+              let tab = payload.first as? Tab else { return }
+        let tag = (payload.count > 1 ? payload[1] as? String : nil).flatMap(TabColorTag.init(rawValue:))
+        session.setColorTag(tag, for: tab)
     }
 
     @objc private func renameTabFromMenu(_ sender: Any?) {
