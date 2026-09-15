@@ -3,7 +3,7 @@ import AppKit
 /// The Websites pane: a list of per-site settings on the left, and for the
 /// chosen one, its default and the sites that differ from it.
 @MainActor
-final class WebsitesSettingsViewController: NSViewController {
+final class WebsitesSettingsViewController: NSViewController, SettingsWidePane {
     private let categories = SiteSettingCategory.allCases
     private let categoryTable = NSTableView()
     private let sitesTable = NSTableView()
@@ -12,6 +12,10 @@ final class WebsitesSettingsViewController: NSViewController {
     private let removeButton = NSButton(title: "", target: nil, action: nil)
     private var category: SiteSettingCategory = .pageZoom
     private var hosts: [String] = []
+    /// The sites table stands at the height of its rows. It used to be tied to
+    /// the height of the category list beside it, which meant twenty categories
+    /// of empty banded rows under one configured website.
+    private var sitesHeight: NSLayoutConstraint?
 
     /// The page in front, whose site the plus button adds.
     var currentPageURL: (() -> URL?)?
@@ -40,10 +44,10 @@ final class WebsitesSettingsViewController: NSViewController {
         categoryTable.backgroundColor = .clear
         categoryTable.dataSource = self
         categoryTable.delegate = self
-        let categoryScroll = NSScrollView()
+        let categoryScroll = PassingScrollView()
         categoryScroll.documentView = categoryTable
         categoryScroll.drawsBackground = false
-        categoryScroll.hasVerticalScroller = true
+        categoryScroll.hasVerticalScroller = false
         categoryScroll.translatesAutoresizingMaskIntoConstraints = false
         categoryScroll.heightAnchor.constraint(
             equalToConstant: CGFloat(categories.count) * categoryTable.rowHeight + 4
@@ -53,14 +57,16 @@ final class WebsitesSettingsViewController: NSViewController {
         left.orientation = .vertical
         left.alignment = .leading
         left.spacing = 6
-        let leftBox = boxed(left, padding: 8)
-        leftBox.widthAnchor.constraint(equalToConstant: 230).isActive = true
+        let leftBox = boxed(left, padding: Style.SettingsUI.cardPadding)
+        // Wide enough for the longest category. At 230 "Tab Sleeping & Archiving"
+        // was cut off mid-word.
+        leftBox.widthAnchor.constraint(equalToConstant: 268).isActive = true
 
         // Right: the default, and the sites.
         let defaultLabel = NSTextField(labelWithString: "Default setting for all websites:")
         defaultPopUp.target = self
         defaultPopUp.action = #selector(defaultChanged)
-        let defaultRow = NSStackView(views: [defaultLabel, NSView(), defaultPopUp])
+        let defaultRow = NSStackView(views: [defaultLabel, NSView(), SettingsForm.fill(defaultPopUp)])
         defaultRow.orientation = .horizontal
         defaultRow.alignment = .centerY
         defaultRow.translatesAutoresizingMaskIntoConstraints = false
@@ -82,41 +88,61 @@ final class WebsitesSettingsViewController: NSViewController {
         // The site names take whatever width is left; the setting column
         // keeps its own, so it is never squeezed out of the table.
         sitesTable.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
-        sitesTable.rowHeight = 26
+        sitesTable.rowHeight = 28
         sitesTable.style = .plain
-        sitesTable.usesAlternatingRowBackgroundColors = true
+        // Banding on rows that are not there is what filled the plate with
+        // three hundred points of empty grey stripes.
+        sitesTable.usesAlternatingRowBackgroundColors = false
+        sitesTable.gridStyleMask = []
+        sitesTable.backgroundColor = .clear
         sitesTable.dataSource = self
         sitesTable.delegate = self
-        let sitesScroll = NSScrollView()
+        let sitesScroll = PassingScrollView()
         sitesScroll.documentView = sitesTable
-        sitesScroll.hasVerticalScroller = true
-        sitesScroll.borderType = .bezelBorder
+        sitesScroll.hasVerticalScroller = false
+        sitesScroll.drawsBackground = false
+        sitesScroll.borderType = .noBorder
         sitesScroll.translatesAutoresizingMaskIntoConstraints = false
-        sitesScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
-        sitesScroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        let sitesTall = sitesScroll.heightAnchor.constraint(equalToConstant: 120)
+        sitesTall.isActive = true
+        sitesHeight = sitesTall
 
         let add = NSButton(image: NSImage(systemSymbolName: "plus", accessibilityDescription: "Add the current website")!,
                            target: self, action: #selector(addSite))
-        add.bezelStyle = .smallSquare
+        add.isBordered = false
+        add.contentTintColor = Style.Colors.secondaryText
         add.setAccessibilityLabel("Add the current website")
         removeButton.image = NSImage(systemSymbolName: "minus", accessibilityDescription: "Remove the selected website")
-        removeButton.bezelStyle = .smallSquare
+        removeButton.isBordered = false
+        removeButton.contentTintColor = Style.Colors.secondaryText
         removeButton.target = self
         removeButton.action = #selector(removeSite)
         removeButton.setAccessibilityLabel("Remove the selected website")
         removeButton.isEnabled = false
+        // Drawn at a size you can hit: the minus was a hairline.
+        for button in [add, removeButton] {
+            button.image = button.image?.withSymbolConfiguration(
+                NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+            )
+        }
         let buttons = NSStackView(views: [add, removeButton])
         buttons.orientation = .horizontal
-        buttons.spacing = 0
+        buttons.spacing = 6
 
-        let right = NSStackView(views: [defaultRow, line, instruction, sitesScroll, buttons])
+        // Whatever height the right plate has over its content goes here,
+        // under the buttons, so the plate stands as tall as the list beside
+        // it without the table growing to fill it.
+        let slack = NSView()
+        slack.translatesAutoresizingMaskIntoConstraints = false
+        slack.setContentHuggingPriority(.init(1), for: .vertical)
+
+        let right = NSStackView(views: [defaultRow, line, instruction, sitesScroll, buttons, slack])
         right.orientation = .vertical
         right.alignment = .leading
         right.spacing = 12
         right.setCustomSpacing(16, after: line)
-        // The table takes the height the list on the left sets.
         right.distribution = .fill
-        let rightBox = boxed(right, padding: 20)
+        let rightBox = boxed(right, padding: Style.SettingsUI.cardPadding)
         rightBox.setContentHuggingPriority(.defaultLow, for: .horizontal)
         NSLayoutConstraint.activate([
             defaultRow.widthAnchor.constraint(equalTo: right.widthAnchor),
@@ -135,23 +161,26 @@ final class WebsitesSettingsViewController: NSViewController {
         columns.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(columns)
         NSLayoutConstraint.activate([
-            columns.topAnchor.constraint(equalTo: view.topAnchor, constant: 20),
-            columns.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            columns.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            columns.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -20),
-            leftBox.heightAnchor.constraint(equalTo: rightBox.heightAnchor)
+            // The two plates share a bottom edge. A short box beside a tall
+            // column looked like something had failed to load into it.
+            rightBox.heightAnchor.constraint(greaterThanOrEqualTo: leftBox.heightAnchor),
+            // No inset of its own: the window gives every pane the same gutter,
+            // and a pane that adds twenty more sits further in than its
+            // neighbours for no reason anyone can see.
+            columns.topAnchor.constraint(equalTo: view.topAnchor),
+            columns.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            columns.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            columns.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
     }
 
     /// A rounded, slightly lighter plate, as the screen this is modelled on
     /// draws its two halves.
     private func boxed(_ content: NSStackView, padding: CGFloat) -> NSView {
-        let box = NSView()
-        box.translatesAutoresizingMaskIntoConstraints = false
-        box.wantsLayer = true
-        box.layer?.cornerRadius = 10
-        box.layer?.cornerCurve = .continuous
-        box.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+        let box = SettingsPlateView()
+        box.fill = Style.Colors.settingsGlass
+        box.stroke = Style.Colors.settingsCardStroke
+        box.cornerRadius = Style.SettingsUI.cardRadius
         content.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(content)
         NSLayoutConstraint.activate([
@@ -184,6 +213,9 @@ final class WebsitesSettingsViewController: NSViewController {
         }
         hosts = state.configuredHosts(for: category)
         sitesTable.reloadData()
+        let header = sitesTable.headerView?.frame.height ?? 0
+        let rows = CGFloat(hosts.count) * (sitesTable.rowHeight + sitesTable.intercellSpacing.height)
+        sitesHeight?.constant = max(90, header + rows + 4)
         removeButton.isEnabled = sitesTable.selectedRow >= 0
     }
 
@@ -239,6 +271,10 @@ final class WebsitesSettingsViewController: NSViewController {
 }
 
 extension WebsitesSettingsViewController: NSTableViewDataSource, NSTableViewDelegate {
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        SettingsTableRow()
+    }
+
     func numberOfRows(in tableView: NSTableView) -> Int {
         tableView === categoryTable ? categories.count : hosts.count
     }
@@ -290,7 +326,7 @@ extension WebsitesSettingsViewController: NSTableViewDataSource, NSTableViewDele
         popUp.target = self
         popUp.action = #selector(siteOptionChanged(_:))
         popUp.setAccessibilityLabel("\(category.title) for \(host)")
-        return popUp
+        return SettingsForm.fill(popUp)
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {

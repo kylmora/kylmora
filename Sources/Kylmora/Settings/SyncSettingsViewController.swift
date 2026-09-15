@@ -30,6 +30,15 @@ final class SyncSettingsViewController: NSViewController {
     private let importButton = NSButton(title: "Import JSON Backup\u{2026}", target: nil, action: nil)
     private let importArcButton = NSButton(title: "Import Arc Sidebar\u{2026}", target: nil, action: nil)
 
+    // iPhone & iPad Companion (F-35)
+    private let enableInboxCheckbox = NSButton(checkboxWithTitle: "Monitor iCloud Inbox for links from iPhone & iPad", target: nil, action: nil)
+    private let inboxDefaultSpacePopUp = NSPopUpButton()
+    private let inboxTargetModePopUp = NSPopUpButton()
+    private let inboxNotifyCheckbox = NSButton(checkboxWithTitle: "Show notification when a link is received from iPhone", target: nil, action: nil)
+    private let inboxAutoCreateSpaceCheckbox = NSButton(checkboxWithTitle: "Automatically create 'Read Later' space if missing", target: nil, action: nil)
+    private let revealInboxButton = NSButton(title: "Reveal iCloud Inbox in Finder", target: nil, action: nil)
+    private let exportShortcutButton = NSButton(title: "Export Apple Shortcut\u{2026}", target: nil, action: nil)
+
     init(coordinator: SyncCoordinator?, settings: Settings = .shared) {
         self.coordinator = coordinator
         self.settings = settings
@@ -138,7 +147,46 @@ final class SyncSettingsViewController: NSViewController {
 
         form.addSeparator()
 
-        // 6. Privacy Note
+        // 6. iPhone Companion (F-35)
+        enableInboxCheckbox.target = self
+        enableInboxCheckbox.action = #selector(enableInboxChanged)
+        form.addRow("iPhone Companion", enableInboxCheckbox)
+        form.addNote("Send links from Safari, Twitter, Reddit, or any iOS app via the Share Sheet directly into a chosen Space in Kylmora.")
+
+        inboxDefaultSpacePopUp.target = self
+        inboxDefaultSpacePopUp.action = #selector(inboxDefaultSpaceChanged)
+        form.addRow("Default Space", inboxDefaultSpacePopUp)
+
+        inboxTargetModePopUp.target = self
+        inboxTargetModePopUp.action = #selector(inboxTargetModeChanged)
+        form.addRow("Open Links As", inboxTargetModePopUp)
+
+        inboxNotifyCheckbox.target = self
+        inboxNotifyCheckbox.action = #selector(inboxNotifyChanged)
+        form.addContinuation(inboxNotifyCheckbox)
+
+        inboxAutoCreateSpaceCheckbox.target = self
+        inboxAutoCreateSpaceCheckbox.action = #selector(inboxAutoCreateSpaceChanged)
+        form.addContinuation(inboxAutoCreateSpaceCheckbox)
+
+        revealInboxButton.target = self
+        revealInboxButton.action = #selector(revealInboxClicked)
+        revealInboxButton.bezelStyle = .rounded
+
+        exportShortcutButton.target = self
+        exportShortcutButton.action = #selector(exportShortcutClicked)
+        exportShortcutButton.bezelStyle = .rounded
+
+        let companionStack = NSStackView(views: [revealInboxButton, exportShortcutButton])
+        companionStack.orientation = .horizontal
+        companionStack.spacing = 8
+        companionStack.alignment = .centerY
+        form.addRow("iOS Setup", companionStack)
+        form.addNote("Exports the official 'Send to Kylmora' Apple Shortcut and setup guide to your iCloud Drive folder.")
+
+        form.addSeparator()
+
+        // 7. Privacy Note
         form.addNote("Zero-account architecture: all sync data is transmitted securely through your private Apple iCloud account with no external servers.")
     }
 
@@ -168,6 +216,39 @@ final class SyncSettingsViewController: NSViewController {
             statusLabel.stringValue = "Sync Disabled"
         } else {
             statusLabel.stringValue = "Ready"
+        }
+
+        // iPhone Companion (F-35)
+        let inboxEnabled = settings.iCloudInboxEnabled
+        enableInboxCheckbox.state = inboxEnabled ? .on : .off
+        inboxNotifyCheckbox.state = settings.iCloudInboxNotify ? .on : .off
+        inboxAutoCreateSpaceCheckbox.state = settings.iCloudInboxAutoCreateSpace ? .on : .off
+
+        inboxDefaultSpacePopUp.isEnabled = inboxEnabled
+        inboxTargetModePopUp.isEnabled = inboxEnabled
+        inboxNotifyCheckbox.isEnabled = inboxEnabled
+        inboxAutoCreateSpaceCheckbox.isEnabled = inboxEnabled
+
+        inboxDefaultSpacePopUp.removeAllItems()
+        inboxDefaultSpacePopUp.addItem(withTitle: "Read Later")
+        if let session = coordinator?.session {
+            for space in session.spaces where space.name != "Read Later" {
+                inboxDefaultSpacePopUp.addItem(withTitle: space.name)
+            }
+        }
+        inboxDefaultSpacePopUp.selectItem(withTitle: settings.iCloudInboxDefaultSpace)
+        if inboxDefaultSpacePopUp.selectedItem == nil {
+            inboxDefaultSpacePopUp.selectItem(withTitle: "Read Later")
+        }
+
+        inboxTargetModePopUp.removeAllItems()
+        inboxTargetModePopUp.addItem(withTitle: "New Tab")
+        inboxTargetModePopUp.addItem(withTitle: "Pinned Tile")
+        inboxTargetModePopUp.addItem(withTitle: "Little Arc Window")
+        switch settings.iCloudInboxTargetMode {
+        case "pinned": inboxTargetModePopUp.selectItem(withTitle: "Pinned Tile")
+        case "littleArc": inboxTargetModePopUp.selectItem(withTitle: "Little Arc Window")
+        default: inboxTargetModePopUp.selectItem(withTitle: "New Tab")
         }
     }
 
@@ -315,4 +396,61 @@ final class SyncSettingsViewController: NSViewController {
             }
         }
     }
+
+    // MARK: - iPhone Companion Actions (F-35)
+
+    @objc private func enableInboxChanged() {
+        settings.iCloudInboxEnabled = enableInboxCheckbox.state == .on
+        reload()
+    }
+
+    @objc private func inboxDefaultSpaceChanged() {
+        if let title = inboxDefaultSpacePopUp.titleOfSelectedItem {
+            settings.iCloudInboxDefaultSpace = title
+        }
+    }
+
+    @objc private func inboxTargetModeChanged() {
+        switch inboxTargetModePopUp.indexOfSelectedItem {
+        case 1: settings.iCloudInboxTargetMode = "pinned"
+        case 2: settings.iCloudInboxTargetMode = "littleArc"
+        default: settings.iCloudInboxTargetMode = "tab"
+        }
+    }
+
+    @objc private func inboxNotifyChanged() {
+        settings.iCloudInboxNotify = inboxNotifyCheckbox.state == .on
+    }
+
+    @objc private func inboxAutoCreateSpaceChanged() {
+        settings.iCloudInboxAutoCreateSpace = inboxAutoCreateSpaceCheckbox.state == .on
+    }
+
+    @objc private func revealInboxClicked() {
+        ICloudInboxCoordinator.shared.revealInboxInFinder()
+    }
+
+    @objc private func exportShortcutClicked() {
+        let savePanel = NSSavePanel()
+        savePanel.title = "Export Apple Shortcut for iPhone / iPad"
+        savePanel.nameFieldStringValue = "Send to Kylmora.shortcut"
+        savePanel.prompt = "Export"
+
+        savePanel.beginSheetModal(for: view.window ?? NSApp.mainWindow ?? NSWindow()) { response in
+            guard response == .OK, let destination = savePanel.url else { return }
+            do {
+                let parent = destination.deletingLastPathComponent()
+                try AppleShortcutHelper.exportShortcutBundle(to: parent)
+                let alert = NSAlert()
+                alert.messageText = "Shortcut Exported"
+                alert.informativeText = "Exported 'Send to Kylmora.shortcut' and setup instructions to \(parent.path()). Open this file on your iPhone or iPad to add it to your Shortcuts app!"
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            } catch {
+                let alert = NSAlert(error: error)
+                alert.runModal()
+            }
+        }
+    }
 }
+

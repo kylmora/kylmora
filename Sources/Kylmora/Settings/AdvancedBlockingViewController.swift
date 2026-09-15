@@ -148,6 +148,14 @@ final class AdvancedBlockingViewController: NSViewController {
         cookieCheckbox.state = settings.autoRejectCookieBanners ? .on : .off
         cookieCheckbox.font = .systemFont(ofSize: 13, weight: .medium)
 
+        let hostileCheckbox = NSButton(
+            checkboxWithTitle: "Block hostile page behaviour (force selectable text, unblock right-click, prevent clipboard snooping)",
+            target: self,
+            action: #selector(hostileBehaviourToggled(_:))
+        )
+        hostileCheckbox.state = settings.blockHostilePageBehaviour ? .on : .off
+        hostileCheckbox.font = .systemFont(ofSize: 13, weight: .medium)
+
         let divider = NSBox()
         divider.boxType = .separator
         divider.translatesAutoresizingMaskIntoConstraints = false
@@ -180,15 +188,16 @@ final class AdvancedBlockingViewController: NSViewController {
         document.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(list)
         scroll.documentView = document
+
         NSLayoutConstraint.activate([
             list.topAnchor.constraint(equalTo: document.topAnchor),
             list.leadingAnchor.constraint(equalTo: document.leadingAnchor),
             list.trailingAnchor.constraint(equalTo: document.trailingAnchor),
             list.bottomAnchor.constraint(equalTo: document.bottomAnchor),
-            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
+            list.widthAnchor.constraint(equalTo: document.widthAnchor)
         ])
 
-        let stack = NSStackView(views: [cookieCheckbox, divider, scroll])
+        let stack = NSStackView(views: [cookieCheckbox, hostileCheckbox, divider, scroll])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
@@ -202,6 +211,7 @@ final class AdvancedBlockingViewController: NSViewController {
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
             cookieCheckbox.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            hostileCheckbox.widthAnchor.constraint(equalTo: stack.widthAnchor),
             divider.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor)
         ])
@@ -212,6 +222,10 @@ final class AdvancedBlockingViewController: NSViewController {
     @objc private func cookieRejectToggled(_ sender: NSButton) {
         settings.autoRejectCookieBanners = sender.state == .on
         CookieConsentAutoReject.shared.preferencesChanged()
+    }
+
+    @objc private func hostileBehaviourToggled(_ sender: NSButton) {
+        settings.blockHostilePageBehaviour = sender.state == .on
     }
 
     private func makeRow(for list: FilterList, isOn: Bool) -> NSView {

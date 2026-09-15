@@ -1,29 +1,64 @@
 import AppKit
 
-/// The Settings window: a toolbar of icon tabs, the chosen pane's name as the
-/// window's title, and the pane below laid out as a form.
+/// The Settings window: a spine of coloured tiles, a canvas washed in the
+/// space's own colour, and the pane's cards floating on it.
 ///
-/// The classic macOS preferences shape, which is what Safari and Orion still
-/// use and what the user asked for. A source list was tried first; the
-/// toolbar spends less width on navigation and leaves the pane the whole
-/// window, which the form layout needs.
+/// Two earlier attempts at this window were thrown away for being the same
+/// window every Mac app has -- a toolbar over a form, then a source list over
+/// grouped cards under a header band. Both are perfectly good and neither is
+/// Kylmora's. What is here now follows from what the browser actually is: a
+/// thing you customise. So the window is painted in the colour of the space you
+/// are in, every pane has a hue you navigate by, and the miniature browser in
+/// the corner is both the preview and a second way to navigate -- point at the
+/// part you want to change.
+///
+/// What is deliberately absent: a header band. A hundred points of window
+/// carrying a title and a sentence is a hundred points not carrying settings.
+/// The pane's name is set small above its first card, where a name belongs.
 @MainActor
 final class SettingsWindowController: NSWindowController {
-    /// The panes, in toolbar order.
+    /// A group of panes. Drawn as air between tiles rather than as a heading:
+    /// three tiles with a gap above them read as a group without a word.
+    enum PaneGroup {
+        case browsing
+        case privacy
+        case content
+        case system
+
+        var title: String {
+            switch self {
+            case .browsing: return "Browsing"
+            case .privacy: return "Privacy"
+            case .content: return "Content"
+            case .system: return "System"
+            }
+        }
+    }
+
+    /// The panes, in spine order.
     enum Pane: Int, CaseIterable {
         case general
-        case importData
         case browsing
-        case shortcuts
-        case passwords
-        case privacy
         case search
         case spaces
-        case extensions
+        case shortcuts
+        case privacy
+        case passwords
         case websites
+        case extensions
+        case importData
         case sync
         case advanced
         case about
+
+        var group: PaneGroup {
+            switch self {
+            case .general, .browsing, .search, .spaces, .shortcuts: return .browsing
+            case .privacy, .passwords, .websites: return .privacy
+            case .extensions, .importData, .sync: return .content
+            case .advanced, .about: return .system
+            }
+        }
 
         var title: String {
             switch self {
@@ -41,6 +76,58 @@ final class SettingsWindowController: NSWindowController {
             case .advanced: return "Advanced"
             case .about: return "About"
             }
+        }
+
+        /// One line under the pane's name, saying what is on the page, so a
+        /// pane opens with an answer to "am I in the right place?" rather than
+        /// with a wall of controls.
+        var subtitle: String {
+            switch self {
+            case .general: return "What Kylmora opens with, downloads, and how tabs sleep."
+            case .importData: return "Bring bookmarks, history and passwords over from another browser."
+            case .browsing: return "The sidebar, the top bar, and how pages behave as you read them."
+            case .shortcuts: return "Every keyboard shortcut, and what you have changed."
+            case .passwords: return "Saved logins, autofill, and the manager you use."
+            case .privacy: return "Tracking, cookies, website data and what is blocked."
+            case .search: return "Your search engine, suggestions, and private-window search."
+            case .spaces: return "Each space's colour, look and window border."
+            case .extensions: return "Extensions you have installed and where to find more."
+            case .websites: return "Per-site permissions: zoom, camera, sound, notifications."
+            case .sync: return "Keep tabs, bookmarks and settings together across your Macs."
+            case .advanced: return "Developer tools, rendering and everything not settled elsewhere."
+            case .about: return "Version, updates, and who made this."
+            }
+        }
+
+
+        /// Words that should find this pane, beyond its name and its subtitle.
+        /// What someone types is the thing they want changed, not the heading
+        /// it happens to live under: "cookies" is Privacy, "dark" is General.
+        var searchTerms: [String] {
+            switch self {
+            case .general: return ["dark", "light", "appearance", "theme", "startup", "homepage", "downloads", "sleep", "archive"]
+            case .browsing: return ["sidebar", "toolbar", "top bar", "tabs", "split", "zoom", "reader"]
+            case .search: return ["engine", "google", "duckduckgo", "suggestions"]
+            case .spaces: return ["colour", "color", "gradient", "border", "wash", "workspace"]
+            case .shortcuts: return ["keyboard", "keys", "bindings", "hotkey"]
+            case .privacy: return ["cookies", "tracking", "trackers", "ads", "blocker", "history", "clear"]
+            case .passwords: return ["logins", "autofill", "keychain", "touch id"]
+            case .websites: return ["permissions", "camera", "microphone", "location", "notifications", "sound"]
+            case .extensions: return ["add-ons", "plugins", "webextension"]
+            case .importData: return ["safari", "chrome", "firefox", "bookmarks", "migrate"]
+            case .sync: return ["icloud", "devices", "backup"]
+            case .advanced: return ["developer", "inspector", "json", "experimental"]
+            case .about: return ["version", "update", "licence", "license", "credits"]
+            }
+        }
+
+        /// Whether this pane answers to what was typed in the rail's search.
+        func matches(_ query: String) -> Bool {
+            let query = query.trimmingCharacters(in: .whitespaces).lowercased()
+            guard !query.isEmpty else { return true }
+            if title.lowercased().contains(query) { return true }
+            if subtitle.lowercased().contains(query) { return true }
+            return searchTerms.contains { $0.contains(query) }
         }
 
         var symbolName: String {
@@ -61,25 +148,67 @@ final class SettingsWindowController: NSWindowController {
             }
         }
 
-        var itemIdentifier: NSToolbarItem.Identifier {
-            NSToolbarItem.Identifier("kylmora.settings.\(rawValue)")
-        }
-
-        init?(itemIdentifier: NSToolbarItem.Identifier) {
-            guard let pane = Pane.allCases.first(where: { $0.itemIdentifier == itemIdentifier }) else { return nil }
-            self = pane
+        /// The tile's colour, and the card edge and eyebrow on its page.
+        ///
+        /// Thirteen hues, walked around the wheel in rail order so neighbours
+        /// never collide, and grouped by meaning where it helps: the three
+        /// privacy panes are the warm end, the three content panes the cool.
+        /// You stop reading the spine after a week and start reaching for
+        /// "the orange one", which is the whole point of colouring it.
+        var accent: NSColor {
+            switch self {
+            case .general: return NSColor(srgbRed: 0.29, green: 0.56, blue: 0.92, alpha: 1)
+            case .browsing: return NSColor(srgbRed: 0.35, green: 0.70, blue: 0.90, alpha: 1)
+            case .search: return NSColor(srgbRed: 0.25, green: 0.72, blue: 0.70, alpha: 1)
+            case .spaces: return NSColor(srgbRed: 0.36, green: 0.74, blue: 0.47, alpha: 1)
+            case .shortcuts: return NSColor(srgbRed: 0.56, green: 0.72, blue: 0.32, alpha: 1)
+            case .privacy: return NSColor(srgbRed: 0.91, green: 0.45, blue: 0.32, alpha: 1)
+            case .passwords: return NSColor(srgbRed: 0.93, green: 0.62, blue: 0.24, alpha: 1)
+            case .websites: return NSColor(srgbRed: 0.90, green: 0.76, blue: 0.28, alpha: 1)
+            case .extensions: return NSColor(srgbRed: 0.60, green: 0.47, blue: 0.88, alpha: 1)
+            case .importData: return NSColor(srgbRed: 0.47, green: 0.52, blue: 0.90, alpha: 1)
+            case .sync: return NSColor(srgbRed: 0.42, green: 0.63, blue: 0.94, alpha: 1)
+            case .advanced: return NSColor(srgbRed: 0.55, green: 0.57, blue: 0.64, alpha: 1)
+            case .about: return NSColor(srgbRed: 0.85, green: 0.48, blue: 0.66, alpha: 1)
+            }
         }
     }
 
-    static let windowWidth: CGFloat = 860
-    private var widthPinned: Set<Pane> = []
-    private var keyboardParking: [Pane: NSView] = [:]
+    /// What a pane may assume it has to lay out in. Panes that size themselves
+    /// -- Shortcuts, Websites -- measure against this.
+    static let windowWidth: CGFloat = Style.SettingsUI.contentMaxWidth
 
     private let session: BrowserSession
     private let syncCoordinator: SyncCoordinator?
     private let settings: Settings
     private var panes: [Pane: NSViewController] = [:]
     private var shown: Pane?
+    private var keyboardParking: [Pane: NSView] = [:]
+
+    /// The size the window opens at, and the least it may be squeezed to.
+    ///
+    /// The floor is a constraint on the canvas as well as the window's
+    /// `minSize`. A window takes its size from its content view controller, and
+    /// nothing inside this one demands any particular width -- the spine is 66
+    /// points and the form is happy at any width at all -- so without a floor
+    /// here the window opens collapsed to a sliver. It did not before only by
+    /// accident: the header band's subtitle was a long sentence, and its
+    /// intrinsic width was holding the window open.
+    private static let openingSize = NSSize(width: 1060, height: 700)
+    private static let floorSize = NSSize(width: 880, height: 540)
+
+    private let root = NSViewController()
+    private let canvas = SettingsCanvasView()
+    private let spine = SettingsSpineView()
+    private let eyebrow = NSTextField(labelWithString: "")
+    private let scroll = NSScrollView()
+    private let pageBody = FlippedView()
+    /// The reading width a form is held to. Lifted for a pane that is a wide
+    /// thing in its own right -- a four-column table has nothing to gain from
+    /// being squeezed into a column and a great deal to lose.
+    private var readingWidth: NSLayoutConstraint?
+    private let paneContainer = FlippedView()
+
     /// Where "Set to Current Page" reads from.
     var currentPageURL: (() -> URL?)?
 
@@ -89,28 +218,140 @@ final class SettingsWindowController: NSWindowController {
         self.settings = settings
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: Self.windowWidth, height: 400),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(origin: .zero, size: SettingsWindowController.openingSize),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
+        // Kept for the Window menu and for VoiceOver, hidden from the window:
+        // the pane's name is already on the page.
         window.title = "Settings"
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
-        window.toolbarStyle = .preference
-        window.center()
+        window.minSize = SettingsWindowController.floorSize
 
         super.init(window: window)
 
-        let toolbar = NSToolbar(identifier: "kylmora.settings")
-        toolbar.delegate = self
-        toolbar.displayMode = .iconAndLabel
-        toolbar.allowsUserCustomization = false
-        window.toolbar = toolbar
+        buildLayout()
+        window.contentViewController = root
+        window.delegate = self
+        // After the content view controller, which would otherwise size the
+        // window to whatever its constraints happen to allow.
+        window.setContentSize(Self.openingSize)
+        window.setFrameAutosaveName("KylmoraSettings")
+        // Setting the autosave name restores the frame the window was last
+        // left at, which may be one a previous build saved while it was
+        // collapsed. A window that cannot be seen cannot be dragged back out,
+        // so anything under the floor is thrown away rather than restored.
+        if window.frame.width < Self.floorSize.width || window.frame.height < Self.floorSize.height {
+            window.setContentSize(Self.openingSize)
+        }
+        window.center()
         show(.general)
     }
 
     required init?(coder: NSCoder) {
         fatalError("SettingsWindowController is created in code only")
+    }
+
+    // MARK: - Layout
+
+    private func buildLayout() {
+        root.view = canvas
+
+        spine.onSelect = { [weak self] pane in self?.show(pane) }
+        spine.onSearch = { [weak self] query in self?.filter(by: query) }
+        spine.onAppearance = { [weak self] preference in
+            self?.settings.settingsWindowAppearance = preference
+            self?.applyAppearance()
+        }
+        canvas.addSubview(spine)
+        applyAppearance()
+
+        eyebrow.translatesAutoresizingMaskIntoConstraints = false
+        canvas.addSubview(eyebrow)
+
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.documentView = pageBody
+        canvas.addSubview(scroll)
+        pageBody.addSubview(paneContainer)
+
+        let gutter = Style.SettingsUI.detailGutter
+        let width = paneContainer.widthAnchor.constraint(
+            equalTo: pageBody.widthAnchor, constant: -gutter * 2
+        )
+        width.priority = .defaultHigh
+
+        NSLayoutConstraint.activate([
+            canvas.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.floorSize.width),
+            canvas.heightAnchor.constraint(greaterThanOrEqualToConstant: Self.floorSize.height),
+
+            spine.topAnchor.constraint(equalTo: canvas.topAnchor),
+            spine.leadingAnchor.constraint(equalTo: canvas.leadingAnchor),
+            spine.bottomAnchor.constraint(equalTo: canvas.bottomAnchor),
+
+            // Sixteen points of name, where a header band used to be a hundred.
+            eyebrow.leadingAnchor.constraint(equalTo: spine.trailingAnchor, constant: gutter),
+            eyebrow.trailingAnchor.constraint(lessThanOrEqualTo: canvas.trailingAnchor, constant: -gutter),
+            eyebrow.topAnchor.constraint(
+                equalTo: canvas.topAnchor,
+                constant: Style.SettingsUI.titlebarHeight + 4
+            ),
+
+            scroll.topAnchor.constraint(
+                equalTo: eyebrow.bottomAnchor,
+                constant: Style.SettingsUI.eyebrowGap
+            ),
+            scroll.leadingAnchor.constraint(equalTo: spine.trailingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: canvas.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: canvas.bottomAnchor),
+
+            pageBody.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            paneContainer.topAnchor.constraint(
+                equalTo: pageBody.topAnchor,
+                constant: Style.SettingsUI.paneTopGap
+            ),
+            paneContainer.bottomAnchor.constraint(equalTo: pageBody.bottomAnchor, constant: -32),
+            paneContainer.centerXAnchor.constraint(equalTo: pageBody.centerXAnchor),
+            paneContainer.leadingAnchor.constraint(greaterThanOrEqualTo: pageBody.leadingAnchor, constant: gutter),
+            width
+        ])
+
+        let reading = paneContainer.widthAnchor.constraint(
+            lessThanOrEqualToConstant: Style.SettingsUI.contentMaxWidth
+        )
+        reading.isActive = true
+        readingWidth = reading
+
+    }
+
+    /// The window's own appearance, from the choice at the foot of the spine.
+    ///
+    /// Set on the window rather than on `NSApp`: the application's appearance
+    /// is the General pane's business and every browser window's space has
+    /// the last word on its own. `nil` -- Automatic -- lets the window inherit
+    /// whatever the application is set to.
+    func applyAppearance() {
+        let preference = settings.settingsWindowAppearance
+        window?.appearance = preference.appearance
+        spine.showAppearance(preference)
+    }
+
+    /// Filters the list of panes. Nothing else.
+    ///
+    /// It used to open the pane as soon as the search narrowed to one, which
+    /// seemed helpful and made typing crawl: every keystroke that happened to
+    /// match a single pane built that pane's entire view controller, and some
+    /// of them are six hundred lines of controls. Filtering thirteen rows is
+    /// free; constructing Privacy is not. Press Return, or click, to open one.
+    private func filter(by query: String) {
+        spine.show(Pane.allCases.filter { $0.matches(query) })
     }
 
     // MARK: - Panes
@@ -132,80 +373,96 @@ final class SettingsWindowController: NSWindowController {
         window?.makeKeyAndOrderFront(sender)
     }
 
-    @objc private func paneChosen(_ sender: NSToolbarItem) {
-        guard let pane = Pane(itemIdentifier: sender.itemIdentifier) else { return }
-        show(pane)
-    }
-
     /// Switches panes from inside one: Advanced's "Manage Extensions".
     func select(_ pane: Pane) { show(pane) }
 
-    /// A pane whose height changed after it was shown (About, once the
-    /// update check has answered) asks the window to fit it again.
-    func paneDidResize() {
-        guard let shown else { return }
-        let pane = shown
-        self.shown = nil
-        show(pane)
-    }
+    /// Was how a pane asked the window to grow around it. The canvas scrolls
+    /// now, so a pane that gets taller simply gets taller.
+    func paneDidResize() {}
+
+    /// Puts the keyboard in the spine's search.
+    @objc func searchSettings(_ sender: Any?) { spine.focusSearch() }
+
+    /// The pane on screen, for a test that measures how panes are laid out.
+    var shownPaneView: NSView? { paneContainer.subviews.first }
+
+    /// A row in the list, for a test that wants to know how it is drawn.
+    func spineRow(for pane: Pane) -> SettingsSpineView.RowView? { spine.row(for: pane) }
 
     private func show(_ pane: Pane) {
-        guard let window else { return }
-        let controller = panes[pane] ?? make(pane)
-        panes[pane] = controller
-        window.toolbar?.selectedItemIdentifier = pane.itemIdentifier
+        spine.select(pane)
         guard pane != shown else { return }
         shown = pane
-        window.title = pane.title
 
-        // The pane's own height: the window grows and shrinks to fit each
-        // pane, as the classic preferences windows do, rather than every pane
-        // living in the tallest one's space.
+        let controller = panes[pane] ?? make(pane)
+        panes[pane] = controller
+        window?.title = "Settings \u{2014} \(pane.title)"
+
+        eyebrow.attributedStringValue = NSAttributedString(
+            string: pane.title.uppercased(),
+            attributes: [
+                .font: Style.Fonts.settingsGroup,
+                .foregroundColor: pane.accent,
+                .kern: 1.2
+            ]
+        )
+        // The pane's hue runs through its page: the eyebrow, and the edge down
+        // every card. It is the same colour as the tile you pressed, which is
+        // what ties the spine to what it opened.
+        (controller.view as? SettingsForm)?.accent = pane.accent
+        (controller.view as? SettingsScrollingPane)?.form.accent = pane.accent
+        canvas.accentHint = pane.accent
+        spine.accent = pane.accent
+
+        for view in paneContainer.subviews { view.removeFromSuperview() }
+        for child in root.children { child.removeFromParent() }
+        root.addChild(controller)
+
         let view = controller.view
+        readingWidth?.isActive = !(controller is SettingsWidePane)
         view.translatesAutoresizingMaskIntoConstraints = false
-        // The pane's own constraints size the window once it is the content
-        // view, so the pane is pinned to the one width here rather than
-        // each pane deciding.
-        if !widthPinned.contains(pane) {
-            widthPinned.insert(pane)
-            view.widthAnchor.constraint(equalToConstant: Self.windowWidth).isActive = true
-        }
-        view.frame.size.width = Self.windowWidth
-        view.layoutSubtreeIfNeeded()
-        // Never taller than the screen: a pane that outgrows it scrolls.
-        let screenHeight = (window.screen ?? NSScreen.main)?.visibleFrame.height ?? 900
-        let height = min(max(view.fittingSize.height, 200), screenHeight - 120)
+        paneContainer.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.topAnchor.constraint(equalTo: paneContainer.topAnchor),
+            view.leadingAnchor.constraint(equalTo: paneContainer.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: paneContainer.trailingAnchor),
+            view.bottomAnchor.constraint(equalTo: paneContainer.bottomAnchor)
+        ])
 
-        let wasVisible = window.isVisible
-        // The window takes its content controller's preferred size when one
-        // is set, so a pane narrower than the window would shrink it and the
-        // panes would jump about as the toolbar switched between them.
-        controller.preferredContentSize = NSSize(width: Self.windowWidth, height: height)
-        window.contentViewController = controller
-        var frame = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: Self.windowWidth, height: height))
-        frame.origin = window.frame.origin
-        frame.origin.y += window.frame.height - frame.height
-        window.setFrame(frame, display: true, animate: wasVisible)
-        // A pane arrives with nothing focused. Otherwise the first text
-        // field takes the keyboard and wears a focus ring before the user
-        // has touched anything, which reads as a field demanding input.
-        // Becoming key hands the keyboard to the first field in the key
-        // loop, and a field with the keyboard wears a focus ring. The pane
-        // is a form to read first, not a field to fill in, so the keyboard
-        // parks on an invisible view until a click or a Tab moves it.
+        // Every pane starts at its top. Carrying the last pane's scroll offset
+        // into a shorter one lands the reader in the middle of a page they have
+        // not seen.
+        scroll.documentView?.scroll(.zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
+
+        // A pane arrives with nothing focused. Otherwise the first text field
+        // takes the keyboard and wears a focus ring before the user has touched
+        // anything, which reads as a field demanding input.
         let parking = keyboardParking[pane] ?? {
             let parking = KeyboardParkingView()
             controller.view.addSubview(parking)
             keyboardParking[pane] = parking
             return parking
         }()
-        window.initialFirstResponder = parking
-        window.makeFirstResponder(parking)
+        window?.initialFirstResponder = parking
+        window?.makeFirstResponder(parking)
     }
 
     /// Nothing to see: a zero-size view that holds the keyboard.
     private final class KeyboardParkingView: NSView {
         override var acceptsFirstResponder: Bool { true }
+    }
+
+    /// Settings pages are read top-down, so every container here is flipped.
+    private final class FlippedView: NSView {
+        override var isFlipped: Bool { true }
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            translatesAutoresizingMaskIntoConstraints = false
+        }
+        required init?(coder: NSCoder) {
+            fatalError("FlippedView is created in code only")
+        }
     }
 
     private func make(_ pane: Pane) -> NSViewController {
@@ -233,34 +490,14 @@ final class SettingsWindowController: NSWindowController {
     }
 }
 
-// MARK: - The toolbar
-
-extension SettingsWindowController: NSToolbarDelegate {
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        Pane.allCases.map(\.itemIdentifier)
-    }
-
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
-    }
-
-    func toolbarSelectableItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
-    }
-
-    func toolbar(
-        _ toolbar: NSToolbar,
-        itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
-        willBeInsertedIntoToolbar flag: Bool
-    ) -> NSToolbarItem? {
-        guard let pane = Pane(itemIdentifier: itemIdentifier) else { return nil }
-        let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-        item.label = pane.title
-        item.paletteLabel = pane.title
-        item.image = NSImage(systemSymbolName: pane.symbolName, accessibilityDescription: pane.title)?
-            .withSymbolConfiguration(.init(pointSize: 20, weight: .regular))
-        item.target = self
-        item.action = #selector(paneChosen(_:))
-        return item
+extension SettingsWindowController: NSWindowDelegate {
+    /// Every switch the form put in front of a checkbox is observing it. The
+    /// window is kept alive between openings, so this is the one moment those
+    /// observers can be let go without the panes being rebuilt.
+    func windowWillClose(_ notification: Notification) {
+        for controller in panes.values {
+            (controller.view as? SettingsForm)?.stopObserving()
+            (controller.view as? SettingsScrollingPane)?.form.stopObserving()
+        }
     }
 }

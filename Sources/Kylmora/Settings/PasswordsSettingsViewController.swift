@@ -16,8 +16,8 @@ final class PasswordsSettingsViewController: NSViewController {
     private var manager: PasswordsManagerWindowController?
     /// The rows only Keychain AutoFill uses, and the rows only "Others" uses,
     /// so the pane can swap one set for the other when the provider changes.
-    private var autofillRows: [NSGridRow] = []
-    private var linkRows: [NSGridRow] = []
+    private var autofillRows: [SettingsFormRow] = []
+    private var linkRows: [SettingsFormRow] = []
 
     init(settings: Settings = .shared, session: BrowserSession) {
         self.settings = settings

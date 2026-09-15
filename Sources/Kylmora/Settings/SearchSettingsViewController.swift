@@ -48,16 +48,15 @@ final class SearchSettingsViewController: NSViewController {
         form.addNote("Kylmora can make any site with a search box into a search engine. Give it a keyword, then type "
             + "the keyword, a space and your search in the command bar.")
 
-        let boxes = [topHits, searchEngine, history, bookmarks, openTabs]
-        for box in boxes {
+        // One source to a row, under a heading, rather than five switches in
+        // a stack with the text trailing off after them.
+        form.addSection("Autocomplete suggestions")
+        for box in [topHits, searchEngine, history, bookmarks, openTabs] {
             box.target = self
             box.action = #selector(sourcesChanged)
+            form.addRow("", box)
         }
-        let stack = NSStackView(views: boxes)
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        form.addRow("Autocomplete suggestions", stack)
+        form.addNote("What the command bar offers as you type.")
     }
 
     /// The pop-ups list every engine, the user's own after the built-in ones.
@@ -67,10 +66,22 @@ final class SearchSettingsViewController: NSViewController {
             popUp.removeAllItems()
             popUp.addItems(withTitles: engines.map(\.name))
         }
-        if let index = engines.firstIndex(of: settings.searchEngine) { enginePopUp.selectItem(at: index) }
+        if let managedEngineID = EnterprisePolicyManager.shared.defaultSearchEngine {
+            if let index = engines.firstIndex(where: { $0.id.lowercased() == managedEngineID.lowercased() || $0.name.lowercased() == managedEngineID.lowercased() }) {
+                enginePopUp.selectItem(at: index)
+            }
+        } else if let index = engines.firstIndex(of: settings.searchEngine) {
+            enginePopUp.selectItem(at: index)
+        }
         if let index = engines.firstIndex(of: settings.chosenPrivateSearchEngine) { privatePopUp.selectItem(at: index) }
         sameInPrivate.state = settings.usesSameSearchEngineInPrivate ? .on : .off
         privatePopUp.isEnabled = !settings.usesSameSearchEngineInPrivate
+
+        if EnterprisePolicyManager.shared.isSearchEngineLocked {
+            enginePopUp.isEnabled = false
+            sameInPrivate.isEnabled = false
+            privatePopUp.isEnabled = false
+        }
 
         let sources = settings.suggestionSources
         topHits.state = sources.topHits ? .on : .off

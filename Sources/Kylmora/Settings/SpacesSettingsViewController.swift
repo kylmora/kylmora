@@ -30,29 +30,37 @@ final class SpacesSettingsViewController: NSViewController {
     private let showsBookmarksBar = NSButton(checkboxWithTitle: "Show bookmarks bar", target: nil, action: nil)
     private let defaultFont = NSPopUpButton()
     private let deleteButton = NSButton(title: "Delete Space\u{2026}", target: nil, action: nil)
+    private let privateButton = NSButton(title: "Create Private Space\u{2026}", target: nil, action: nil)
     private let detailLabel = NSTextField(labelWithString: "")
+    private let downloadsFolderLabel = NSTextField(labelWithString: "Default (Downloads)")
+    private let chooseDownloadsButton = NSButton(title: "Choose\u{2026}", target: nil, action: nil)
+    private let resetDownloadsButton = NSButton(title: "Reset", target: nil, action: nil)
+    private let bookmarkFolderField = NSTextField()
+    private let passwordVaultField = NSTextField()
     private var cancellables: Set<AnyCancellable> = []
 
     /// The rows shown only for a customised space, kept so they can be hidden
     /// while a plain appearance is selected. `fillRow` picks solid vs gradient;
     /// the theme-colour rows belong to Solid, the gradient rows to Gradient.
-    private var fillRow: NSGridRow?
-    private var themeColorRow: NSGridRow?
-    private var themeColorNoteRow: NSGridRow?
-    private var gradientColorsRow: NSGridRow?
-    private var gradientDirectionRow: NSGridRow?
-    private var gradientNoteRow: NSGridRow?
-    private var transparencyRow: NSGridRow?
-    private var transparencyNoteRow: NSGridRow?
+    private var fillRow: SettingsFormRow?
+    private var themeColorRow: SettingsFormRow?
+    private var themeColorNoteRow: SettingsFormRow?
+    private var gradientColorsRow: SettingsFormRow?
+    private var gradientDirectionRow: SettingsFormRow?
+    private var gradientNoteRow: SettingsFormRow?
+    private var transparencyRow: SettingsFormRow?
+    private var transparencyNoteRow: SettingsFormRow?
     /// The Window border row, its note and the hairline above it, shown only
     /// for a customised space (the rim is drawn in the space's own colours).
-    private var borderSeparatorRow: NSGridRow?
-    private var borderRow: NSGridRow?
-    private var borderNoteRow: NSGridRow?
+    private var borderSeparatorRow: SettingsFormRow?
+    private var borderRow: SettingsFormRow?
+    private var borderNoteRow: SettingsFormRow?
 
     /// Kept by identity, not by index: a delete or a reorder moves indices, and
     /// the editor must not silently start pointing at a different space.
     private var editing: Space?
+    /// The list is as tall as the spaces in it.
+    private var listHeight: NSLayoutConstraint?
 
     init(session: BrowserSession) {
         self.session = session
@@ -83,35 +91,57 @@ final class SpacesSettingsViewController: NSViewController {
         column.resizingMask = .autoresizingMask
         tableView.addTableColumn(column)
         tableView.headerView = nil
-        tableView.rowHeight = 28
-        tableView.style = .inset
+        tableView.rowHeight = 30
+        tableView.style = .plain
+        tableView.backgroundColor = .clear
+        tableView.gridStyleMask = []
+        tableView.intercellSpacing = NSSize(width: 0, height: 0)
         tableView.dataSource = self
         tableView.delegate = self
 
+        // On the card, not in a box on the card. The bezel and the scroller
+        // made a second card inside the first one, and dressing it as a control
+        // squeezed four spaces into a column 280 points wide.
         scrollView.documentView = tableView
-        scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
+        scrollView.hasVerticalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.heightAnchor.constraint(equalToConstant: 130).isActive = true
+        let listHeight = scrollView.heightAnchor.constraint(equalToConstant: 130)
+        listHeight.isActive = true
+        self.listHeight = listHeight
 
         let createButton = NSButton(title: "Create Space\u{2026}", target: self, action: #selector(createSpace))
-        let privateButton = NSButton(title: "Create Private Space\u{2026}", target: self, action: #selector(createPrivateSpace))
+        privateButton.target = self
+        privateButton.action = #selector(createPrivateSpace)
         // Delete sits with Create, under the list it acts on, rather than
         // stranded at the foot of the pane. Set apart from the create actions
         // so the destructive one is not next to them by a hair.
         deleteButton.target = self
         deleteButton.action = #selector(deleteSpace)
-        deleteButton.bezelStyle = .rounded
-        let buttons = NSStackView(views: [createButton, privateButton, deleteButton])
+        let privatePlate = SettingsControlPlate(privateButton, width: nil)
+        let buttons = NSStackView(views: [
+            SettingsControlPlate(createButton, width: nil),
+            privatePlate,
+            SettingsControlPlate(deleteButton, width: nil)
+        ])
         buttons.orientation = .horizontal
         buttons.spacing = 8
-        buttons.setCustomSpacing(20, after: privateButton)
+        // After the plate, not after the button inside it: custom spacing names
+        // an arranged view, and a button that has been dressed is no longer one.
+        buttons.setCustomSpacing(20, after: privatePlate)
 
-        let list = NSStackView(views: [SettingsForm.fill(scrollView), buttons])
+        let list = NSStackView(views: [scrollView, buttons])
         list.orientation = .vertical
         list.alignment = .leading
-        list.spacing = 8
-        form.addRow("Spaces", list)
+        list.distribution = .fill
+        list.spacing = 10
+        list.translatesAutoresizingMaskIntoConstraints = false
+        // The list runs the width of the card with its label above it: it is a
+        // list of things, not a value sitting in a control column.
+        form.addRow("Spaces", list, alignment: .top)
+        scrollView.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+        resizeList()
         form.addNote("Every space keeps its own cookies, logins and site data, so the same site can be signed in as a different account in each one. The window takes the colour of whichever space is in front.")
 
         form.addSeparator()
@@ -222,6 +252,39 @@ final class SpacesSettingsViewController: NSViewController {
         defaultFont.widthAnchor.constraint(equalToConstant: 290).isActive = true
         form.addRow("Default font", [defaultFont, customizeFonts])
         form.addNote("What a page is set in when it does not choose its own fonts.")
+
+        // Per-Space Extras (F-24)
+        form.addSeparator()
+
+        chooseDownloadsButton.target = self
+        chooseDownloadsButton.action = #selector(chooseDownloadsFolder)
+        chooseDownloadsButton.bezelStyle = .rounded
+        resetDownloadsButton.target = self
+        resetDownloadsButton.action = #selector(resetDownloadsFolder)
+        resetDownloadsButton.bezelStyle = .rounded
+        downloadsFolderLabel.font = .systemFont(ofSize: 12)
+        downloadsFolderLabel.textColor = .secondaryLabelColor
+        downloadsFolderLabel.lineBreakMode = .byTruncatingMiddle
+        downloadsFolderLabel.translatesAutoresizingMaskIntoConstraints = false
+        downloadsFolderLabel.widthAnchor.constraint(equalToConstant: 200).isActive = true
+        form.addRow("Downloads folder", [downloadsFolderLabel, chooseDownloadsButton, resetDownloadsButton])
+        form.addNote("Files downloaded from tabs in this space are saved here.")
+
+        bookmarkFolderField.placeholderString = "All Bookmarks (or enter folder name, e.g. Work)"
+        bookmarkFolderField.target = self
+        bookmarkFolderField.action = #selector(bookmarkFolderChanged)
+        bookmarkFolderField.translatesAutoresizingMaskIntoConstraints = false
+        bookmarkFolderField.widthAnchor.constraint(equalToConstant: 320).isActive = true
+        form.addRow("Bookmarks folder", bookmarkFolderField)
+        form.addNote("Folder of bookmarks displayed on this space's bookmarks bar.")
+
+        passwordVaultField.placeholderString = "Space name (e.g. Work, Personal)"
+        passwordVaultField.target = self
+        passwordVaultField.action = #selector(passwordVaultChanged)
+        passwordVaultField.translatesAutoresizingMaskIntoConstraints = false
+        passwordVaultField.widthAnchor.constraint(equalToConstant: 320).isActive = true
+        form.addRow("Password account", passwordVaultField)
+        form.addNote("Identifies this space's account in password autofill and vaults.")
     }
 
     // MARK: - State
@@ -231,11 +294,27 @@ final class SpacesSettingsViewController: NSViewController {
     func reload() {
         let keep = editing
         tableView.reloadData()
+        resizeList()
+        if EnterprisePolicyManager.shared.isPrivateBrowsingDisabled {
+            privateButton.isEnabled = false
+            privateButton.toolTip = "Private spaces are disabled by your organization"
+        } else {
+            privateButton.isEnabled = true
+            privateButton.toolTip = nil
+        }
         if let keep, session.spaces.contains(where: { $0 === keep }) {
             select(keep)
         } else {
             select(session.activeSpace)
         }
+    }
+
+    /// The list shows every space at once rather than four at a time behind a
+    /// scroller, up to the point where it would take over the page.
+    private func resizeList() {
+        let rows = CGFloat(session.spaces.count)
+            * (tableView.rowHeight + tableView.intercellSpacing.height)
+        listHeight?.constant = min(max(rows + 4, 38), 360)
     }
 
     /// Opens a space in the editor. Public so the space menu's "Space
@@ -262,6 +341,51 @@ final class SpacesSettingsViewController: NSViewController {
         } else {
             detailLabel.stringValue = "Its own cookies and logins. \(tabs)."
         }
+
+        if let path = space.downloadsDirectoryPath, !path.isEmpty {
+            downloadsFolderLabel.stringValue = (path as NSString).abbreviatingWithTildeInPath
+            resetDownloadsButton.isEnabled = true
+        } else {
+            downloadsFolderLabel.stringValue = "Default (Downloads)"
+            resetDownloadsButton.isEnabled = false
+        }
+        bookmarkFolderField.stringValue = space.bookmarkFolder ?? ""
+        passwordVaultField.stringValue = space.passwordVaultAccount ?? ""
+    }
+
+    @objc private func chooseDownloadsFolder() {
+        guard let space = editing else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Select Folder"
+        panel.message = "Choose downloads folder for \(space.name)"
+        if let currentPath = space.downloadsDirectoryPath {
+            panel.directoryURL = URL(fileURLWithPath: (currentPath as NSString).expandingTildeInPath)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        session.setDownloadsDirectoryPath(url.path(percentEncoded: false), for: space)
+        select(space)
+    }
+
+    @objc private func resetDownloadsFolder() {
+        guard let space = editing else { return }
+        session.setDownloadsDirectoryPath(nil, for: space)
+        select(space)
+    }
+
+    @objc private func bookmarkFolderChanged() {
+        guard let space = editing else { return }
+        let val = bookmarkFolderField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        session.setBookmarkFolder(val.isEmpty ? nil : val, for: space)
+    }
+
+    @objc private func passwordVaultChanged() {
+        guard let space = editing else { return }
+        let val = passwordVaultField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        session.setPasswordVaultAccount(val.isEmpty ? nil : val, for: space)
     }
 
     /// One line saying what the rim is, next to the button that edits it.
@@ -488,7 +612,13 @@ final class SpacesSettingsViewController: NSViewController {
     }
 
     @objc private func createSpace() { create(isPrivate: false) }
-    @objc private func createPrivateSpace() { create(isPrivate: true) }
+    @objc private func createPrivateSpace() {
+        guard !EnterprisePolicyManager.shared.isPrivateBrowsingDisabled else {
+            NSSound.beep()
+            return
+        }
+        create(isPrivate: true)
+    }
 
     private func create(isPrivate: Bool) {
         let name = isPrivate ? "Private" : "New Space"
@@ -567,6 +697,10 @@ final class SpacesSettingsViewController: NSViewController {
 // MARK: - The list
 
 extension SpacesSettingsViewController: NSTableViewDataSource, NSTableViewDelegate {
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        SettingsTableRow()
+    }
+
     func numberOfRows(in tableView: NSTableView) -> Int {
         session.spaces.count
     }

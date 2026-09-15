@@ -19,8 +19,13 @@ final class Settings {
         static let compactMode = "compactModeEnabled"
         static let compactHidesToolbar = "compactModeHidesToolbar"
         static let compactRevealsOnHover = "compactModeRevealsOnHover"
+        static let sidebarMode = "sidebarDisplayMode"
+        static let sidebarPosition = "sidebarPosition"
+        static let sidebarHoverDelay = "sidebarHoverDelay"
+        static let zenMode = "zenModeEnabled"
         static let spaceSwitchWraps = "spaceSwitchWrapsAround"
         static let appearance = "appearancePreference"
+        static let settingsAppearance = "settingsWindowAppearance"
         static let blocksAds = "contentBlockingBlocksAds"
         static let blocksCookieBanners = "contentBlockingBlocksCookieBanners"
         static let blocksTrackers = "contentBlockingBlocksTrackers"
@@ -43,6 +48,10 @@ final class Settings {
         static let crashReports = "crashReportPolicy"
         static let customUserAgent = "customUserAgent"
         static let autoUpdatesFilterLists = "autoUpdatesFilterLists"
+        static let automaticallyCheckForUpdates = "automaticallyCheckForUpdates"
+        static let automaticallyDownloadUpdates = "automaticallyDownloadUpdates"
+        static let skippedUpdateVersion = "skippedUpdateVersion"
+        static let lastUpdateCheckDate = "lastUpdateCheckDate"
         static let upgradesToHTTPS = "upgradesKnownHostsToHTTPS"
         static let showsFullAddress = "showsFullAddress"
         static let showsUnicodeDomains = "showsUnicodeDomains"
@@ -89,7 +98,50 @@ final class Settings {
         static let openCommandBarOnNewTab = "openCommandBarOnNewTab"
         static let userRulesText = "contentBlockingUserRulesText"
         static let customFilterLists = "contentBlockingCustomFilterLists"
+        static let mouseGestures = "mouseGesturesEnabled"
+        static let rockerGestures = "rockerGesturesEnabled"
+        static let gestureTrails = "gestureTrailsEnabled"
         static let autoRejectCookieBanners = "contentBlockingAutoRejectCookieBanners"
+        static let blockHostilePageBehaviour = "contentBlockingBlockHostilePageBehaviour"
+        static let clearWebsiteDataOnQuit = "clearWebsiteDataOnQuit"
+        static let websiteDataQuitAllowlist = "websiteDataQuitAllowlist"
+        static let autoPictureInPicture = "autoPictureInPictureOnTabSwitch"
+        static let showDevelopMenu = "showDevelopMenu"
+        static let linkHints = "linkHintsEnabled"
+        static let vimBindings = "vimBindingsEnabled"
+        static let browserLockEnabled = "browserLockEnabled"
+        static let browserLockMethod = "browserLockMethod"
+        static let browserLockOnLaunch = "browserLockOnLaunch"
+        static let browserLockIdleTimeout = "browserLockIdleTimeout"
+        static let dohProvider = "dohProvider"
+        static let dohCustomURL = "dohCustomURL"
+        static let proxySettings = "proxySettings"
+        static let antiFingerprintingEnabled = "antiFingerprintingEnabled"
+        static let canvasNoiseEnabled = "canvasNoiseEnabled"
+        static let audioNoiseEnabled = "audioNoiseEnabled"
+        static let hardwareMaskingEnabled = "hardwareMaskingEnabled"
+        static let contextMenuSearchSelection = "contextMenuSearchSelection"
+        static let contextMenuSearchSubmenu = "contextMenuSearchSubmenu"
+        static let contextMenuCopyCleanLink = "contextMenuCopyCleanLink"
+        static let contextMenuCaptureScreenshot = "contextMenuCaptureScreenshot"
+        static let contextMenuGlanceActions = "contextMenuGlanceActions"
+        static let contextMenuInspectElement = "contextMenuInspectElement"
+        static let contextMenuShareMenu = "contextMenuShareMenu"
+        static let contextMenuServicesMenu = "contextMenuServicesMenu"
+        static let contextMenuSpeechMenu = "contextMenuSpeechMenu"
+        static let contextMenuReloadPage = "contextMenuReloadPage"
+        static let contextMenuPrint = "contextMenuPrint"
+        static let contextMenuHiddenTitles = "contextMenuHiddenTitles"
+        static let iCloudInboxEnabled = "iCloudInboxEnabled"
+        static let iCloudInboxDefaultSpace = "iCloudInboxDefaultSpace"
+        static let iCloudInboxTargetMode = "iCloudInboxTargetMode"
+        static let iCloudInboxNotify = "iCloudInboxNotify"
+        static let iCloudInboxAutoCreateSpace = "iCloudInboxAutoCreateSpace"
+        static let webPanelEnabled = "webPanelEnabled"
+        static let webPanelAlwaysOnTop = "webPanelAlwaysOnTop"
+        static let cacheMode = "cacheMode"
+        static let ramCacheCapacityMB = "ramCacheCapacityMB"
+        static let clearDiskCacheOnQuit = "clearDiskCacheOnQuit"
     }
 
     private let defaults: UserDefaults
@@ -126,8 +178,13 @@ final class Settings {
             Key.compactMode: false,
             Key.compactHidesToolbar: false,
             Key.compactRevealsOnHover: true,
+            Key.sidebarMode: SidebarMode.expanded.rawValue,
+            Key.sidebarPosition: SidebarPosition.leading.rawValue,
+            Key.sidebarHoverDelay: 0.20,
+            Key.zenMode: false,
             Key.spaceSwitchWraps: true,
             Key.appearance: AppearancePreference.system.rawValue,
+            Key.settingsAppearance: AppearancePreference.system.rawValue,
             Key.blocksAds: true,
             Key.blocksCookieBanners: true,
             Key.blocksTrackers: true,
@@ -142,10 +199,14 @@ final class Settings {
             Key.trackerRemoval: TrackerRemoval.privateOnly.rawValue,
             Key.historyRetention: HistoryRetention.manually.rawValue,
             Key.cookieDeletion: CookieDeletion.manually.rawValue,
+            Key.clearWebsiteDataOnQuit: false,
+            Key.websiteDataQuitAllowlist: [String](),
             Key.historyDisabled: false,
             Key.crashReports: CrashReportPolicy.ask.rawValue,
             Key.customUserAgent: "",
             Key.autoUpdatesFilterLists: true,
+            Key.automaticallyCheckForUpdates: true,
+            Key.automaticallyDownloadUpdates: false,
             Key.upgradesToHTTPS: true,
             Key.showsFullAddress: true,
             Key.showsUnicodeDomains: false,
@@ -154,6 +215,7 @@ final class Settings {
             Key.externalLinkPresentation: ExternalLinkPresentation.tab.rawValue,
             Key.compactShowsButtons: true,
             Key.confirmsClosingPiP: true,
+            Key.autoPictureInPicture: true,
             Key.minimumFontSizeEnabled: false,
             Key.minimumFontSize: 9,
             Key.tabFocusesLinks: false,
@@ -183,8 +245,93 @@ final class Settings {
             Key.syncWebDAVUsername: "",
             Key.syncWebDAVPassword: "",
             Key.userRulesText: "",
-            Key.autoRejectCookieBanners: true
+            Key.autoRejectCookieBanners: true,
+            Key.blockHostilePageBehaviour: true,
+            Key.showDevelopMenu: true,
+            Key.mouseGestures: true,
+            Key.rockerGestures: true,
+            Key.gestureTrails: true,
+            Key.browserLockEnabled: false,
+            Key.browserLockMethod: BrowserLockMethod.touchIDOrPasscode.rawValue,
+            Key.browserLockOnLaunch: true,
+            Key.browserLockIdleTimeout: BrowserLockIdleTimeout.never.rawValue,
+            Key.dohProvider: "off",
+            Key.dohCustomURL: "",
+            Key.antiFingerprintingEnabled: true,
+            Key.canvasNoiseEnabled: true,
+            Key.audioNoiseEnabled: true,
+            Key.hardwareMaskingEnabled: true,
+            Key.contextMenuSearchSelection: true,
+            Key.contextMenuSearchSubmenu: true,
+            Key.contextMenuCopyCleanLink: true,
+            Key.contextMenuCaptureScreenshot: true,
+            Key.contextMenuGlanceActions: true,
+            Key.contextMenuInspectElement: true,
+            Key.contextMenuShareMenu: true,
+            Key.contextMenuServicesMenu: true,
+            Key.contextMenuSpeechMenu: true,
+            Key.contextMenuReloadPage: true,
+            Key.contextMenuPrint: true,
+            Key.contextMenuHiddenTitles: [String](),
+            Key.iCloudInboxEnabled: true,
+            Key.iCloudInboxDefaultSpace: "Read Later",
+            Key.iCloudInboxTargetMode: "tab",
+            Key.iCloudInboxNotify: true,
+            Key.iCloudInboxAutoCreateSpace: true,
+            Key.webPanelEnabled: true,
+            Key.webPanelAlwaysOnTop: true,
+            Key.cacheMode: CacheMode.standard.rawValue,
+            Key.ramCacheCapacityMB: RAMCacheCapacity.mb128.rawValue,
+            Key.clearDiskCacheOnQuit: false
         ])
+    }
+
+    var mouseGesturesEnabled: Bool {
+        get { defaults.object(forKey: Key.mouseGestures) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.mouseGestures)
+            NotificationCenter.default.post(name: .mouseGesturesSettingDidChange, object: nil)
+        }
+    }
+
+    var rockerGesturesEnabled: Bool {
+        get { defaults.object(forKey: Key.rockerGestures) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.rockerGestures)
+            NotificationCenter.default.post(name: .mouseGesturesSettingDidChange, object: nil)
+        }
+    }
+
+    var gestureTrailsEnabled: Bool {
+        get { defaults.object(forKey: Key.gestureTrails) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.gestureTrails)
+            NotificationCenter.default.post(name: .mouseGesturesSettingDidChange, object: nil)
+        }
+    }
+
+    var linkHintsEnabled: Bool {
+        get { defaults.object(forKey: Key.linkHints) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.linkHints)
+            NotificationCenter.default.post(name: .linkHintsSettingDidChange, object: nil)
+        }
+    }
+
+    var vimBindingsEnabled: Bool {
+        get { defaults.object(forKey: Key.vimBindings) as? Bool ?? false }
+        set {
+            defaults.set(newValue, forKey: Key.vimBindings)
+            NotificationCenter.default.post(name: .vimBindingsSettingDidChange, object: nil)
+        }
+    }
+
+    var showDevelopMenu: Bool {
+        get { defaults.object(forKey: Key.showDevelopMenu) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.showDevelopMenu)
+            NotificationCenter.default.post(name: .developMenuSettingDidChange, object: nil)
+        }
     }
 
     var trackerRemoval: TrackerRemoval {
@@ -205,6 +352,40 @@ final class Settings {
     var lastCookieDeletion: Date? {
         get { defaults.object(forKey: Key.lastCookieDeletion) as? Date }
         set { defaults.set(newValue, forKey: Key.lastCookieDeletion) }
+    }
+
+    /// Whether all website data is cleared when the application quits (preserving allow-listed sites).
+    var clearWebsiteDataOnQuit: Bool {
+        get { defaults.bool(forKey: Key.clearWebsiteDataOnQuit) }
+        set { defaults.set(newValue, forKey: Key.clearWebsiteDataOnQuit) }
+    }
+
+    /// Domains/hosts whose data is kept when clearing on quit.
+    var websiteDataQuitAllowlist: [String] {
+        get { defaults.stringArray(forKey: Key.websiteDataQuitAllowlist) ?? [] }
+        set { defaults.set(newValue, forKey: Key.websiteDataQuitAllowlist) }
+    }
+
+    func addToQuitAllowlist(_ host: String) {
+        let norm = SiteSettingsState.normalise(host)
+        guard !norm.isEmpty else { return }
+        var list = websiteDataQuitAllowlist
+        if !list.contains(norm) {
+            list.append(norm)
+            list.sort()
+            websiteDataQuitAllowlist = list
+        }
+    }
+
+    func removeFromQuitAllowlist(_ host: String) {
+        let norm = SiteSettingsState.normalise(host)
+        var list = websiteDataQuitAllowlist
+        list.removeAll { $0 == norm }
+        websiteDataQuitAllowlist = list
+    }
+
+    func isQuitAllowlisted(_ host: String) -> Bool {
+        WebsiteData.isHostAllowed(host, in: websiteDataQuitAllowlist)
     }
 
     /// Nothing visited is recorded while this is on.
@@ -231,6 +412,26 @@ final class Settings {
     var autoUpdatesFilterLists: Bool {
         get { defaults.bool(forKey: Key.autoUpdatesFilterLists) }
         set { defaults.set(newValue, forKey: Key.autoUpdatesFilterLists) }
+    }
+
+    var automaticallyCheckForUpdates: Bool {
+        get { defaults.bool(forKey: Key.automaticallyCheckForUpdates) }
+        set { defaults.set(newValue, forKey: Key.automaticallyCheckForUpdates) }
+    }
+
+    var automaticallyDownloadUpdates: Bool {
+        get { defaults.bool(forKey: Key.automaticallyDownloadUpdates) }
+        set { defaults.set(newValue, forKey: Key.automaticallyDownloadUpdates) }
+    }
+
+    var skippedUpdateVersion: String? {
+        get { defaults.string(forKey: Key.skippedUpdateVersion) }
+        set { defaults.set(newValue, forKey: Key.skippedUpdateVersion) }
+    }
+
+    var lastUpdateCheckDate: Date? {
+        get { defaults.object(forKey: Key.lastUpdateCheckDate) as? Date }
+        set { defaults.set(newValue, forKey: Key.lastUpdateCheckDate) }
     }
 
     // MARK: - General
@@ -318,6 +519,12 @@ final class Settings {
         set { defaults.set(newValue, forKey: Key.confirmsClosingPiP) }
     }
 
+    /// Automatically floating playing video in a Picture-in-Picture window when switching tabs or spaces.
+    var autoPictureInPicture: Bool {
+        get { defaults.bool(forKey: Key.autoPictureInPicture) }
+        set { defaults.set(newValue, forKey: Key.autoPictureInPicture) }
+    }
+
     // Spell checking is controlled through the standard Edit > Spelling and
     // Grammar menu, which WKWebView answers on the responder chain (see
     // MainMenu.spellingMenuItem). There is no Settings mirror: a stored flag
@@ -396,7 +603,12 @@ final class Settings {
 
     /// The page "Homepage" means. Nil until the user sets one.
     var homepageURL: URL? {
-        get { defaults.string(forKey: Key.homepage).flatMap { URL(string: $0) } }
+        get {
+            if let enterprise = EnterprisePolicyManager.shared.homepageURL {
+                return enterprise
+            }
+            return defaults.string(forKey: Key.homepage).flatMap { URL(string: $0) }
+        }
         set { defaults.set(newValue?.absoluteString, forKey: Key.homepage) }
     }
 
@@ -452,6 +664,16 @@ final class Settings {
         set { defaults.set(newValue, forKey: Key.autoRejectCookieBanners) }
     }
 
+    /// Whether hostile page behaviour (forcing text un-selectability, context menu disabling,
+    /// clipboard snooping) should be neutralized.
+    var blockHostilePageBehaviour: Bool {
+        get { defaults.object(forKey: Key.blockHostilePageBehaviour) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.blockHostilePageBehaviour)
+            NotificationCenter.default.post(name: .blockHostilePageBehaviourDidChange, object: self)
+        }
+    }
+
     /// Third-party filter lists subscribed to by URL.
     var customFilterLists: [CustomFilterList] {
         get {
@@ -468,7 +690,12 @@ final class Settings {
     }
 
     var searchEngine: SearchEngine {
-        get { engine(named: defaults.string(forKey: Key.searchEngine)) }
+        get {
+            if let managed = EnterprisePolicyManager.shared.defaultSearchEngine {
+                return engine(named: managed)
+            }
+            return engine(named: defaults.string(forKey: Key.searchEngine))
+        }
         set { defaults.set(newValue.id, forKey: Key.searchEngine) }
     }
 
@@ -595,6 +822,63 @@ final class Settings {
         set { defaults.set(newValue, forKey: Key.compactMode) }
     }
 
+    /// Current sidebar display mode.
+    var sidebarMode: SidebarMode {
+        get {
+            if let raw = defaults.string(forKey: Key.sidebarMode),
+               let mode = SidebarMode(rawValue: raw) {
+                return mode
+            }
+            if defaults.bool(forKey: Key.compactMode) {
+                return .compact
+            }
+            return .expanded
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: Key.sidebarMode)
+            defaults.set(newValue == .compact || newValue == .iconsOnly, forKey: Key.compactMode)
+            NotificationCenter.default.post(name: .sidebarModeDidChange, object: newValue)
+        }
+    }
+
+    /// Docking position of the sidebar (Left or Right).
+    var sidebarPosition: SidebarPosition {
+        get {
+            guard let raw = defaults.string(forKey: Key.sidebarPosition),
+                  let pos = SidebarPosition(rawValue: raw) else {
+                return .leading
+            }
+            return pos
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: Key.sidebarPosition)
+            NotificationCenter.default.post(name: .sidebarPositionDidChange, object: newValue)
+        }
+    }
+
+    /// Configurable hover delay before the sidebar reveals or expands on hover.
+    var sidebarHoverDelay: Double {
+        get {
+            guard defaults.object(forKey: Key.sidebarHoverDelay) != nil else {
+                return 0.20
+            }
+            return defaults.double(forKey: Key.sidebarHoverDelay)
+        }
+        set {
+            defaults.set(newValue, forKey: Key.sidebarHoverDelay)
+            NotificationCenter.default.post(name: .sidebarHoverDelayDidChange, object: newValue)
+        }
+    }
+
+    /// Zen Mode (Hide all UI).
+    var zenModeEnabled: Bool {
+        get { defaults.bool(forKey: Key.zenMode) }
+        set {
+            defaults.set(newValue, forKey: Key.zenMode)
+            NotificationCenter.default.post(name: .zenModeDidChange, object: newValue)
+        }
+    }
+
     /// The compact-mode preferences as one value. Reading it applies the
     /// system's Reduce Motion setting, which is not a preference of ours to
     /// store -- it may change while the app is running and the stored copy
@@ -604,6 +888,9 @@ final class Settings {
             var configuration = CompactModeConfiguration()
             configuration.hidesToolbar = defaults.bool(forKey: Key.compactHidesToolbar)
             configuration.revealsOnHover = defaults.bool(forKey: Key.compactRevealsOnHover)
+            configuration.sidebarEdge = sidebarPosition == .trailing ? .trailing : .leading
+            configuration.iconsOnlyCollapsed = (sidebarMode == .iconsOnly)
+            configuration.hoverDebounce = sidebarHoverDelay
             configuration.reducesMotion = NSWorkspace.shared
                 .accessibilityDisplayShouldReduceMotion
             return configuration
@@ -611,6 +898,8 @@ final class Settings {
         set {
             defaults.set(newValue.hidesToolbar, forKey: Key.compactHidesToolbar)
             defaults.set(newValue.revealsOnHover, forKey: Key.compactRevealsOnHover)
+            defaults.set(newValue.sidebarEdge == .trailing ? SidebarPosition.trailing.rawValue : SidebarPosition.leading.rawValue, forKey: Key.sidebarPosition)
+            defaults.set(newValue.hoverDebounce, forKey: Key.sidebarHoverDelay)
         }
     }
 
@@ -625,6 +914,16 @@ final class Settings {
     var appearance: AppearancePreference {
         get { AppearancePreference(storedValue: defaults.string(forKey: Key.appearance)) }
         set { defaults.set(newValue.rawValue, forKey: Key.appearance) }
+    }
+
+    /// The Settings window's own appearance, apart from the application's.
+    ///
+    /// Each space picks light or dark for its window; the Settings window is
+    /// nobody's space, so it gets a choice of its own. Automatic follows the
+    /// application, which in turn follows the Mac.
+    var settingsWindowAppearance: AppearancePreference {
+        get { AppearancePreference(storedValue: defaults.string(forKey: Key.settingsAppearance)) }
+        set { defaults.set(newValue.rawValue, forKey: Key.settingsAppearance) }
     }
 
     /// Applies the stored appearance to the whole application.
@@ -718,6 +1017,312 @@ final class Settings {
             defaults.set(newValue, forKey: Key.syncWebDAVPassword)
         }
     }
+
+    var browserLockEnabled: Bool {
+        get { defaults.bool(forKey: Key.browserLockEnabled) }
+        set {
+            defaults.set(newValue, forKey: Key.browserLockEnabled)
+            NotificationCenter.default.post(name: .browserLockSettingsDidChange, object: nil)
+        }
+    }
+
+    var browserLockMethod: BrowserLockMethod {
+        get {
+            guard let raw = defaults.string(forKey: Key.browserLockMethod),
+                  let method = BrowserLockMethod(rawValue: raw) else {
+                return .touchIDOrPasscode
+            }
+            return method
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: Key.browserLockMethod)
+            NotificationCenter.default.post(name: .browserLockSettingsDidChange, object: nil)
+        }
+    }
+
+    var browserLockOnLaunch: Bool {
+        get { defaults.bool(forKey: Key.browserLockOnLaunch) }
+        set {
+            defaults.set(newValue, forKey: Key.browserLockOnLaunch)
+            NotificationCenter.default.post(name: .browserLockSettingsDidChange, object: nil)
+        }
+    }
+
+    var browserLockIdleTimeout: BrowserLockIdleTimeout {
+        get {
+            let seconds = defaults.integer(forKey: Key.browserLockIdleTimeout)
+            return BrowserLockIdleTimeout(rawValue: seconds) ?? .never
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: Key.browserLockIdleTimeout)
+            NotificationCenter.default.post(name: .browserLockSettingsDidChange, object: nil)
+        }
+    }
+
+    var dohProvider: DoHProvider {
+        get {
+            if let enterpriseDoH = EnterprisePolicyManager.shared.dohURL {
+                return .custom(url: enterpriseDoH.absoluteString)
+            }
+            let key = defaults.string(forKey: Key.dohProvider) ?? "off"
+            let customURL = defaults.string(forKey: Key.dohCustomURL) ?? ""
+            return DoHProvider.from(key: key, customURL: customURL)
+        }
+        set {
+            defaults.set(newValue.key, forKey: Key.dohProvider)
+            if case .custom(let url) = newValue {
+                defaults.set(url, forKey: Key.dohCustomURL)
+            }
+            NetworkConfigManager.shared.applyDoH(provider: newValue)
+            NotificationCenter.default.post(name: .dohSettingDidChange, object: nil)
+        }
+    }
+
+    var dohCustomURL: String {
+        get { defaults.string(forKey: Key.dohCustomURL) ?? "" }
+        set {
+            defaults.set(newValue, forKey: Key.dohCustomURL)
+            if dohProvider.key == "custom" {
+                NetworkConfigManager.shared.applyDoH(provider: .custom(url: newValue))
+            }
+        }
+    }
+
+    var proxySettings: ProxySettings {
+        get {
+            guard let data = defaults.data(forKey: Key.proxySettings),
+                  let settings = try? JSONDecoder().decode(ProxySettings.self, from: data) else {
+                return ProxySettings()
+            }
+            return settings
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                defaults.set(data, forKey: Key.proxySettings)
+            }
+            NetworkConfigManager.shared.applyToAllStores()
+            NotificationCenter.default.post(name: .proxySettingDidChange, object: nil)
+        }
+    }
+
+    var antiFingerprintingEnabled: Bool {
+        get { defaults.object(forKey: Key.antiFingerprintingEnabled) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.antiFingerprintingEnabled)
+            NotificationCenter.default.post(name: .antiFingerprintingSettingDidChange, object: nil)
+        }
+    }
+
+    var canvasNoiseEnabled: Bool {
+        get { defaults.object(forKey: Key.canvasNoiseEnabled) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.canvasNoiseEnabled)
+            NotificationCenter.default.post(name: .antiFingerprintingSettingDidChange, object: nil)
+        }
+    }
+
+    var audioNoiseEnabled: Bool {
+        get { defaults.object(forKey: Key.audioNoiseEnabled) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.audioNoiseEnabled)
+            NotificationCenter.default.post(name: .antiFingerprintingSettingDidChange, object: nil)
+        }
+    }
+
+    var hardwareMaskingEnabled: Bool {
+        get { defaults.object(forKey: Key.hardwareMaskingEnabled) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.hardwareMaskingEnabled)
+            NotificationCenter.default.post(name: .antiFingerprintingSettingDidChange, object: nil)
+        }
+    }
+
+    var contextMenuSearchSelection: Bool {
+        get { defaults.object(forKey: Key.contextMenuSearchSelection) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.contextMenuSearchSelection)
+            NotificationCenter.default.post(name: .contextMenuSettingsDidChange, object: nil)
+        }
+    }
+
+    var contextMenuSearchSubmenu: Bool {
+        get { defaults.object(forKey: Key.contextMenuSearchSubmenu) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.contextMenuSearchSubmenu)
+            NotificationCenter.default.post(name: .contextMenuSettingsDidChange, object: nil)
+        }
+    }
+
+    var contextMenuCopyCleanLink: Bool {
+        get { defaults.object(forKey: Key.contextMenuCopyCleanLink) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.contextMenuCopyCleanLink)
+            NotificationCenter.default.post(name: .contextMenuSettingsDidChange, object: nil)
+        }
+    }
+
+    var contextMenuCaptureScreenshot: Bool {
+        get { defaults.object(forKey: Key.contextMenuCaptureScreenshot) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.contextMenuCaptureScreenshot)
+            NotificationCenter.default.post(name: .contextMenuSettingsDidChange, object: nil)
+        }
+    }
+
+    var contextMenuGlanceActions: Bool {
+        get { defaults.object(forKey: Key.contextMenuGlanceActions) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.contextMenuGlanceActions)
+            NotificationCenter.default.post(name: .contextMenuSettingsDidChange, object: nil)
+        }
+    }
+
+    var contextMenuInspectElement: Bool {
+        get { defaults.object(forKey: Key.contextMenuInspectElement) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.contextMenuInspectElement)
+            NotificationCenter.default.post(name: .contextMenuSettingsDidChange, object: nil)
+        }
+    }
+
+    var contextMenuShareMenu: Bool {
+        get { defaults.object(forKey: Key.contextMenuShareMenu) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.contextMenuShareMenu)
+            NotificationCenter.default.post(name: .contextMenuSettingsDidChange, object: nil)
+        }
+    }
+
+    var contextMenuServicesMenu: Bool {
+        get { defaults.object(forKey: Key.contextMenuServicesMenu) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.contextMenuServicesMenu)
+            NotificationCenter.default.post(name: .contextMenuSettingsDidChange, object: nil)
+        }
+    }
+
+    var contextMenuSpeechMenu: Bool {
+        get { defaults.object(forKey: Key.contextMenuSpeechMenu) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.contextMenuSpeechMenu)
+            NotificationCenter.default.post(name: .contextMenuSettingsDidChange, object: nil)
+        }
+    }
+
+    var contextMenuReloadPage: Bool {
+        get { defaults.object(forKey: Key.contextMenuReloadPage) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.contextMenuReloadPage)
+            NotificationCenter.default.post(name: .contextMenuSettingsDidChange, object: nil)
+        }
+    }
+
+    var contextMenuPrint: Bool {
+        get { defaults.object(forKey: Key.contextMenuPrint) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.contextMenuPrint)
+            NotificationCenter.default.post(name: .contextMenuSettingsDidChange, object: nil)
+        }
+    }
+
+    var contextMenuHiddenTitles: [String] {
+        get { defaults.stringArray(forKey: Key.contextMenuHiddenTitles) ?? [] }
+        set {
+            defaults.set(newValue, forKey: Key.contextMenuHiddenTitles)
+            NotificationCenter.default.post(name: .contextMenuSettingsDidChange, object: nil)
+        }
+    }
+
+    // MARK: - iPhone Companion / iCloud Inbox (F-35)
+
+    var iCloudInboxEnabled: Bool {
+        get { defaults.object(forKey: Key.iCloudInboxEnabled) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.iCloudInboxEnabled)
+            NotificationCenter.default.post(name: .iCloudInboxSettingsDidChange, object: nil)
+        }
+    }
+
+    var iCloudInboxDefaultSpace: String {
+        get { defaults.string(forKey: Key.iCloudInboxDefaultSpace) ?? "Read Later" }
+        set {
+            defaults.set(newValue, forKey: Key.iCloudInboxDefaultSpace)
+            NotificationCenter.default.post(name: .iCloudInboxSettingsDidChange, object: nil)
+        }
+    }
+
+    var iCloudInboxTargetMode: String {
+        get { defaults.string(forKey: Key.iCloudInboxTargetMode) ?? "tab" }
+        set {
+            defaults.set(newValue, forKey: Key.iCloudInboxTargetMode)
+            NotificationCenter.default.post(name: .iCloudInboxSettingsDidChange, object: nil)
+        }
+    }
+
+    var iCloudInboxNotify: Bool {
+        get { defaults.object(forKey: Key.iCloudInboxNotify) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.iCloudInboxNotify)
+            NotificationCenter.default.post(name: .iCloudInboxSettingsDidChange, object: nil)
+        }
+    }
+
+    var iCloudInboxAutoCreateSpace: Bool {
+        get { defaults.object(forKey: Key.iCloudInboxAutoCreateSpace) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.iCloudInboxAutoCreateSpace)
+            NotificationCenter.default.post(name: .iCloudInboxSettingsDidChange, object: nil)
+        }
+    }
+
+    var webPanelEnabled: Bool {
+        get { defaults.object(forKey: Key.webPanelEnabled) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.webPanelEnabled)
+            NotificationCenter.default.post(name: .webPanelSettingsDidChange, object: nil)
+        }
+    }
+
+    var webPanelAlwaysOnTop: Bool {
+        get { defaults.object(forKey: Key.webPanelAlwaysOnTop) as? Bool ?? true }
+        set {
+            defaults.set(newValue, forKey: Key.webPanelAlwaysOnTop)
+            NotificationCenter.default.post(name: .webPanelSettingsDidChange, object: nil)
+        }
+    }
+
+    var cacheMode: CacheMode {
+        get {
+            if EnterprisePolicyManager.shared.isRAMCacheOnlyForced {
+                return .ramOnly
+            }
+            guard let raw = defaults.string(forKey: Key.cacheMode),
+                  let mode = CacheMode(rawValue: raw) else {
+                return .standard
+            }
+            return mode
+        }
+        set {
+            defaults.set(newValue.rawValue, forKey: Key.cacheMode)
+            RAMCacheManager.shared.applyCacheConfiguration()
+        }
+    }
+
+    var ramCacheCapacityMB: Int {
+        get {
+            let val = defaults.integer(forKey: Key.ramCacheCapacityMB)
+            return val > 0 ? val : RAMCacheCapacity.mb128.rawValue
+        }
+        set {
+            defaults.set(newValue, forKey: Key.ramCacheCapacityMB)
+            RAMCacheManager.shared.applyCacheConfiguration()
+        }
+    }
+
+    var clearDiskCacheOnQuit: Bool {
+        get { defaults.bool(forKey: Key.clearDiskCacheOnQuit) }
+        set { defaults.set(newValue, forKey: Key.clearDiskCacheOnQuit) }
+    }
 }
 
 /// A user-subscribed external Adblock Plus / uBlock Origin filter list.
@@ -733,5 +1338,21 @@ public struct CustomFilterList: Codable, Identifiable, Equatable, Sendable {
         self.url = url
         self.isEnabled = isEnabled
     }
+}
+
+extension Notification.Name {
+    static let developMenuSettingDidChange = Notification.Name("developMenuSettingDidChange")
+    static let mouseGesturesSettingDidChange = Notification.Name("mouseGesturesSettingDidChange")
+    static let linkHintsSettingDidChange = Notification.Name("linkHintsSettingDidChange")
+    static let vimBindingsSettingDidChange = Notification.Name("vimBindingsSettingDidChange")
+    static let browserLockSettingsDidChange = Notification.Name("browserLockSettingsDidChange")
+    static let browserLockStateDidChange = Notification.Name("browserLockStateDidChange")
+    static let dohSettingDidChange = Notification.Name("dohSettingDidChange")
+    static let proxySettingDidChange = Notification.Name("proxySettingDidChange")
+    static let antiFingerprintingSettingDidChange = Notification.Name("antiFingerprintingSettingDidChange")
+    static let contextMenuSettingsDidChange = Notification.Name("contextMenuSettingsDidChange")
+    static let blockHostilePageBehaviourDidChange = Notification.Name("blockHostilePageBehaviourDidChange")
+    static let iCloudInboxSettingsDidChange = Notification.Name("iCloudInboxSettingsDidChange")
+    static let webPanelSettingsDidChange = Notification.Name("webPanelSettingsDidChange")
 }
 

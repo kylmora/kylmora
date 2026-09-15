@@ -1,20 +1,37 @@
 import AppKit
 
+/// A scroll view that scrolls nothing and says so.
+///
+/// The table is given its full height and has no scroller of its own, but an
+/// `NSScrollView` takes the wheel regardless: it handles the event, finds it
+/// has nowhere to go, and stops there. The page behind it never moves, and the
+/// shortcuts list cannot be scrolled at all. Handing the event to the next
+/// responder puts it back on its way to the detail side's own scroll view.
+@MainActor
+final class PassingScrollView: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        nextResponder?.scrollWheel(with: event)
+    }
+}
+
 /// Settings pane for browsing, recording, and customizing keyboard shortcuts.
 @MainActor
-final class ShortcutsSettingsViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane, NSTableViewDataSource, NSTableViewDelegate {
     private let manager: ShortcutManager
 
     private let searchField = NSSearchField()
-    private let categoryControl = NSSegmentedControl(
-        labels: ["All"] + ShortcutCategory.allCases.map(\.rawValue),
-        trackingMode: .selectOne,
-        target: nil,
-        action: nil
-    )
+    /// The category filter. A pop-up rather than a segmented control: six
+    /// segments and a button could not both fit the pane's width, and a
+    /// segmented control given less room than it needs does not shrink -- it
+    /// draws over whatever is beside it, which is what it was doing.
+    private let categoryPopUp = NSPopUpButton()
     private let restoreDefaultsButton = NSButton(title: "Restore All Defaults", target: nil, action: nil)
     private let tableView = NSTableView()
-    private let scrollView = NSScrollView()
+    private let scrollView = PassingScrollView()
+    /// The table is as tall as its rows. The pane is already inside a scroll
+    /// view, and a second scroller inside it -- a short window on a long list,
+    /// with empty pane below -- is the worst of both.
+    private var tableHeight: NSLayoutConstraint?
 
     private var filteredDefinitions: [ShortcutDefinition] = []
     private var recordingDefinitionID: String?
@@ -34,37 +51,48 @@ final class ShortcutsSettingsViewController: NSViewController, NSTableViewDataSo
         container.translatesAutoresizingMaskIntoConstraints = false
         self.view = container
 
-        // Search & Filter header
         searchField.placeholderString = "Search shortcuts\u{2026}"
-        searchField.translatesAutoresizingMaskIntoConstraints = false
         searchField.target = self
         searchField.action = #selector(filterChanged)
-        container.addSubview(searchField)
+        searchField.setContentHuggingPriority(.init(1), for: .horizontal)
 
-        categoryControl.selectedSegment = 0
-        categoryControl.translatesAutoresizingMaskIntoConstraints = false
-        categoryControl.target = self
-        categoryControl.action = #selector(filterChanged)
-        container.addSubview(categoryControl)
+        categoryPopUp.addItem(withTitle: "All")
+        categoryPopUp.addItems(withTitles: ShortcutCategory.allCases.map(\.rawValue))
+        categoryPopUp.selectItem(at: 0)
+        categoryPopUp.target = self
+        categoryPopUp.action = #selector(filterChanged)
 
-        restoreDefaultsButton.bezelStyle = .rounded
-        restoreDefaultsButton.translatesAutoresizingMaskIntoConstraints = false
         restoreDefaultsButton.target = self
         restoreDefaultsButton.action = #selector(restoreAllDefaultsClicked)
-        container.addSubview(restoreDefaultsButton)
 
-        // Table
+        // Every control at its own size with the search field taking the slack,
+        // so nothing is ever asked to draw where something else already is.
+        let header = NSStackView(views: [
+            searchField,
+            SettingsForm.fill(categoryPopUp),
+            // At its own size: `fill` would give it the width of a control
+            // column, which on a button is just a very wide button.
+            SettingsControlPlate(restoreDefaultsButton, width: nil)
+        ])
+        header.orientation = .horizontal
+        header.alignment = .centerY
+        header.distribution = .fill
+        header.spacing = 10
+        header.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(header)
+
         let colAction = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Action"))
         colAction.title = "Action"
-        colAction.width = 460
+        colAction.width = 300
+        colAction.minWidth = 200
 
         let colCategory = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Category"))
         colCategory.title = "Category"
-        colCategory.width = 120
+        colCategory.width = 110
 
         let colShortcut = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Shortcut"))
         colShortcut.title = "Shortcut"
-        colShortcut.width = 150
+        colShortcut.width = 130
 
         let colReset = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Reset"))
         colReset.title = ""
@@ -74,37 +102,69 @@ final class ShortcutsSettingsViewController: NSViewController, NSTableViewDataSo
         tableView.addTableColumn(colCategory)
         tableView.addTableColumn(colShortcut)
         tableView.addTableColumn(colReset)
+        // The action column takes whatever width the window has to give, so
+        // the table fills the pane instead of stopping short of it.
+        tableView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         tableView.headerView = NSTableHeaderView()
-        tableView.rowHeight = 32
-        tableView.usesAlternatingRowBackgroundColors = true
+        // Tall enough for the key cap and air on either side of it. At 32 the
+        // caps sat two points apart and read as one column of buttons.
+        tableView.rowHeight = 40
+        // The grey-and-white banding is stock AppKit and reads as a spreadsheet
+        // in a window that is glass and cards everywhere else. A hairline
+        // between rows, the same one the cards use, is what divides them.
+        tableView.usesAlternatingRowBackgroundColors = false
+        tableView.gridStyleMask = .solidHorizontalGridLineMask
+        tableView.gridColor = Style.Colors.settingsHairline
+        tableView.intercellSpacing = NSSize(width: 3, height: 1)
+        tableView.backgroundColor = .clear
+        tableView.style = .plain
+        tableView.selectionHighlightStyle = .regular
         tableView.dataSource = self
         tableView.delegate = self
         tableView.translatesAutoresizingMaskIntoConstraints = false
 
         scrollView.documentView = tableView
-        scrollView.hasVerticalScroller = true
+        // No scroller of its own: the detail side scrolls, and the table is
+        // given its whole height below.
+        scrollView.hasVerticalScroller = false
+        scrollView.verticalScrollElasticity = .none
+        scrollView.drawsBackground = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(scrollView)
 
+        // On a card, like everything else in the window. Rows floating on the
+        // wash with nothing around them looked like a pane that had not
+        // finished loading.
+        let card = SettingsPlateView()
+        card.fill = Style.Colors.settingsGlass
+        card.stroke = Style.Colors.settingsCardStroke
+        card.cornerRadius = Style.SettingsUI.cardRadius
+        card.layer?.masksToBounds = true
+        card.addSubview(scrollView)
+        container.addSubview(card)
+
+        let height = scrollView.heightAnchor.constraint(equalToConstant: 200)
+        tableHeight = height
+
+        let inset: CGFloat = 8
         NSLayoutConstraint.activate([
-            container.widthAnchor.constraint(equalToConstant: SettingsWindowController.windowWidth),
-            container.heightAnchor.constraint(greaterThanOrEqualToConstant: 440),
+            // No width of its own: the pane is the container, and the window
+            // has already given it a gutter.
+            container.widthAnchor.constraint(greaterThanOrEqualToConstant: 520),
 
-            searchField.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
-            searchField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
-            searchField.widthAnchor.constraint(equalToConstant: 240),
+            header.topAnchor.constraint(equalTo: container.topAnchor),
+            header.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            header.trailingAnchor.constraint(equalTo: container.trailingAnchor),
 
-            categoryControl.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
-            categoryControl.leadingAnchor.constraint(equalTo: searchField.trailingAnchor, constant: 16),
+            card.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
+            card.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            card.bottomAnchor.constraint(equalTo: container.bottomAnchor),
 
-            restoreDefaultsButton.centerYAnchor.constraint(equalTo: searchField.centerYAnchor),
-            restoreDefaultsButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
-
-            scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 14),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
-            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
-            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -20),
-            scrollView.heightAnchor.constraint(equalToConstant: 380)
+            scrollView.topAnchor.constraint(equalTo: card.topAnchor, constant: inset),
+            scrollView.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: inset),
+            scrollView.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -inset),
+            scrollView.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -inset),
+            height
         ])
 
         manager.onChange = { [weak self] in
@@ -112,6 +172,14 @@ final class ShortcutsSettingsViewController: NSViewController, NSTableViewDataSo
         }
 
         updateFilter()
+    }
+
+    /// The table stands at its full height, so the pane's own scroller is the
+    /// only one there is.
+    private func resizeTable() {
+        let header = tableView.headerView?.frame.height ?? 0
+        let rows = CGFloat(filteredDefinitions.count) * (tableView.rowHeight + tableView.intercellSpacing.height)
+        tableHeight?.constant = max(120, header + rows + 4)
     }
 
     override func viewWillDisappear() {
@@ -127,7 +195,7 @@ final class ShortcutsSettingsViewController: NSViewController, NSTableViewDataSo
 
     private func updateFilter() {
         let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let selectedCategoryIndex = categoryControl.selectedSegment
+        let selectedCategoryIndex = categoryPopUp.indexOfSelectedItem
 
         filteredDefinitions = manager.definitions.filter { def in
             if selectedCategoryIndex > 0 {
@@ -143,6 +211,7 @@ final class ShortcutsSettingsViewController: NSViewController, NSTableViewDataSo
         }
 
         tableView.reloadData()
+        resizeTable()
     }
 
     // MARK: - Table View Data Source & Delegate
@@ -151,23 +220,43 @@ final class ShortcutsSettingsViewController: NSViewController, NSTableViewDataSo
         filteredDefinitions.count
     }
 
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+        SettingsTableRow()
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < filteredDefinitions.count else { return nil }
         let def = filteredDefinitions[row]
         let identifier = tableColumn?.identifier.rawValue
 
+        let accent = tableView.settingsAccent ?? .controlAccentColor
+        /// A label centred on the row, level with the key cap beside it. A
+        /// bare text field handed to the table is stretched to the row and
+        /// draws its text along the top of it.
+        func centred(_ label: NSTextField) -> NSView {
+            let cell = NSView()
+            label.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor),
+                label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+            ])
+            return cell
+        }
         switch identifier {
         case "Action":
-            let cell = NSTextField(labelWithString: def.title)
-            cell.font = NSFont.systemFont(ofSize: 13, weight: .medium)
-            cell.textColor = .labelColor
-            return cell
+            let label = NSTextField(labelWithString: def.title)
+            label.font = Style.Fonts.settingsRow
+            label.textColor = Style.Colors.primaryText
+            label.lineBreakMode = .byTruncatingTail
+            return centred(label)
 
         case "Category":
-            let cell = NSTextField(labelWithString: def.category.rawValue)
-            cell.font = NSFont.systemFont(ofSize: 11)
-            cell.textColor = .secondaryLabelColor
-            return cell
+            let label = NSTextField(labelWithString: def.category.rawValue)
+            label.font = Style.Fonts.settingsNote
+            label.textColor = Style.Colors.secondaryText
+            return centred(label)
 
         case "Shortcut":
             let isRecording = recordingDefinitionID == def.id
@@ -175,25 +264,41 @@ final class ShortcutsSettingsViewController: NSViewController, NSTableViewDataSo
 
             let button = NSButton(title: display.isEmpty ? "None" : display, target: self, action: #selector(shortcutButtonClicked(_:)))
             button.tag = row
-            button.bezelStyle = .rounded
             button.controlSize = .small
-            button.font = NSFont.monospacedSystemFont(ofSize: 12, weight: isRecording ? .bold : .regular)
+            // Dressed like every other control in the window: the system bezel
+            // repeated down forty rows is the whole pane's character.
+            let plate = SettingsControlPlate(button, width: nil)
+            button.font = NSFont.monospacedSystemFont(ofSize: 12, weight: isRecording ? .bold : .medium)
             if isRecording {
-                button.contentTintColor = .systemBlue
+                button.contentTintColor = accent
             } else if manager.isCustomized(id: def.id) {
-                button.contentTintColor = .systemOrange
+                button.contentTintColor = accent
             } else {
-                button.contentTintColor = .labelColor
+                button.contentTintColor = Style.Colors.primaryText
             }
-            return button
+            // A key cap: as wide as the keys on it, centred in the row, rather
+            // than a plate stretched to the column and the row.
+            let cell = NSView()
+            cell.addSubview(plate)
+            NSLayoutConstraint.activate([
+                plate.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
+                plate.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor),
+                plate.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                plate.widthAnchor.constraint(greaterThanOrEqualToConstant: 72)
+            ])
+            return cell
 
         case "Reset":
+            // Only where there is something to reset. Forty greyed-out
+            // "Reset"s down the side of the list were noise.
             let isCustomized = manager.isCustomized(id: def.id)
             let button = NSButton(title: "Reset", target: self, action: #selector(resetRowClicked(_:)))
             button.tag = row
-            button.bezelStyle = .inline
-            button.controlSize = .mini
-            button.isEnabled = isCustomized
+            button.isBordered = false
+            button.controlSize = .small
+            button.font = .systemFont(ofSize: 11, weight: .medium)
+            button.contentTintColor = accent
+            button.isHidden = !isCustomized
             return button
 
         default:

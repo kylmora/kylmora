@@ -12,8 +12,8 @@ final class ExtensionsSettingsViewController: NSViewController {
     private let storeButton = NSButton(title: "Install", target: nil, action: nil)
     private let firefoxField = NSTextField()
     private let firefoxButton = NSButton(title: "Install", target: nil, action: nil)
-    private var storeRow: NSGridRow?
-    private var firefoxRow: NSGridRow?
+    private var storeRow: SettingsFormRow?
+    private var firefoxRow: SettingsFormRow?
 
     init(settings: Settings = .shared) {
         self.settings = settings
@@ -61,7 +61,9 @@ final class ExtensionsSettingsViewController: NSViewController {
         storeButton.keyEquivalent = "\r"
         storeButton.setAccessibilityLabel("Install from the Chrome Web Store")
         storeField.translatesAutoresizingMaskIntoConstraints = false
-        storeField.widthAnchor.constraint(equalToConstant: SettingsForm.controlWidth - 70).isActive = true
+        // No width of its own: the row gives it what is left after the button,
+        // and a link pasted into 210 points is a link you cannot read.
+        storeField.setContentHuggingPriority(.init(1), for: .horizontal)
         storeRow = form.addRow("Chrome Web Store", [storeField, storeButton])
 
         firefoxField.placeholderString = "Paste an addons.mozilla.org link"
@@ -72,7 +74,7 @@ final class ExtensionsSettingsViewController: NSViewController {
         firefoxButton.bezelStyle = .rounded
         firefoxButton.setAccessibilityLabel("Install from Firefox Add-ons")
         firefoxField.translatesAutoresizingMaskIntoConstraints = false
-        firefoxField.widthAnchor.constraint(equalToConstant: SettingsForm.controlWidth - 70).isActive = true
+        firefoxField.setContentHuggingPriority(.init(1), for: .horizontal)
         firefoxRow = form.addRow("Firefox Add-ons", [firefoxField, firefoxButton])
 
         let install = NSButton(title: "Install from a File\u{2026}", target: self, action: #selector(installTapped))

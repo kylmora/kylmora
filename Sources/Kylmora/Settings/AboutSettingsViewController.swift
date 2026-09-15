@@ -37,6 +37,8 @@ final class AboutSettingsViewController: NSViewController {
         static let copyright = "© 2026 Kylmora"
     }
 
+    private let autoCheckCheckbox = NSButton(checkboxWithTitle: "Automatically check for updates", target: nil, action: nil)
+    private let autoDownloadCheckbox = NSButton(checkboxWithTitle: "Automatically download updates", target: nil, action: nil)
     private let checkButton = NSButton(title: "Check for Updates\u{2026}", target: nil, action: nil)
     private let downloadButton = NSButton(title: "Download", target: nil, action: nil)
     private let updateStatus = NSTextField(wrappingLabelWithString: "")
@@ -67,7 +69,7 @@ final class AboutSettingsViewController: NSViewController {
         form.addSeparator()
 
         form.addRow("Browser", Self.paragraph(Copy.browser), alignment: .top)
-        form.addRow("Engine", Self.value("WebKit, the system's own, shared with Safari"))
+        form.addRow("Engine", Self.value("WebKit, the system's own, shared with Safari (security patches arrive with macOS updates)"))
         form.addRow("Built with", Self.value("Swift 6 and AppKit, with no third-party code"))
         form.addRow("Website", Self.link("kylmora.com", url: AppInfo.website))
 
@@ -76,6 +78,21 @@ final class AboutSettingsViewController: NSViewController {
         form.addRow("The logo", Self.paragraph(Copy.logo), alignment: .top)
 
         form.addSeparator()
+        autoCheckCheckbox.state = Settings.shared.automaticallyCheckForUpdates ? .on : .off
+        autoCheckCheckbox.target = self
+        autoCheckCheckbox.action = #selector(autoCheckToggled(_:))
+        if EnterprisePolicyManager.shared.isAutoUpdateForced {
+            autoCheckCheckbox.state = .on
+            autoCheckCheckbox.isEnabled = false
+            autoCheckCheckbox.toolTip = "Mandatory automatic updates are enforced by your organization"
+        }
+        form.addRow("Updates", autoCheckCheckbox)
+
+        autoDownloadCheckbox.state = Settings.shared.automaticallyDownloadUpdates ? .on : .off
+        autoDownloadCheckbox.target = self
+        autoDownloadCheckbox.action = #selector(autoDownloadToggled(_:))
+        form.addRow("", autoDownloadCheckbox)
+
         checkButton.target = self
         checkButton.action = #selector(checkForUpdates)
         checkButton.bezelStyle = .rounded
@@ -83,8 +100,8 @@ final class AboutSettingsViewController: NSViewController {
         downloadButton.action = #selector(download)
         downloadButton.bezelStyle = .rounded
         downloadButton.isHidden = true
-        form.addRow("Updates", [checkButton, downloadButton])
-        updateStatus.stringValue = "Kylmora asks kylmora.com only when you click, and sends nothing about you or your Mac."
+        form.addRow("", [checkButton, downloadButton])
+        updateStatus.stringValue = "Kylmora sends no telemetry during update checks. WebKit security patches arrive automatically with macOS updates."
         form.addNote(updateStatus)
 
         form.addSeparator()
@@ -127,9 +144,10 @@ final class AboutSettingsViewController: NSViewController {
     private static func paragraph(_ text: String) -> NSTextField {
         let field = NSTextField(wrappingLabelWithString: text)
         field.font = .systemFont(ofSize: 12)
-        field.preferredMaxLayoutWidth = SettingsForm.controlWidth
         field.translatesAutoresizingMaskIntoConstraints = false
-        field.widthAnchor.constraint(equalToConstant: SettingsForm.controlWidth).isActive = true
+        // No width of its own. A paragraph goes under its heading and runs the
+        // width of the card; pinning it to the control column left two thirds
+        // of the card empty beside every line.
         return field
     }
 
@@ -189,6 +207,14 @@ final class AboutSettingsViewController: NSViewController {
         view.window?.windowController.flatMap { $0 as? SettingsWindowController }?.paneDidResize()
     }
 
+    @objc private func autoCheckToggled(_ sender: NSButton) {
+        Settings.shared.automaticallyCheckForUpdates = (sender.state == .on)
+    }
+
+    @objc private func autoDownloadToggled(_ sender: NSButton) {
+        Settings.shared.automaticallyDownloadUpdates = (sender.state == .on)
+    }
+
     @objc private func download() {
         guard let downloadURL else { return }
         NSWorkspace.shared.open(downloadURL)
@@ -197,4 +223,6 @@ final class AboutSettingsViewController: NSViewController {
     /// What the status line says right now; for tests.
     var updateStatusText: String { updateStatus.stringValue }
     var showsDownloadButton: Bool { !downloadButton.isHidden }
+    var isAutoCheckEnabled: Bool { autoCheckCheckbox.state == .on }
+    var isAutoDownloadEnabled: Bool { autoDownloadCheckbox.state == .on }
 }

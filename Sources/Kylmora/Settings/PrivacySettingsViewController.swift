@@ -23,6 +23,18 @@ final class PrivacySettingsViewController: NSViewController {
     private let rulesLabel = NSTextField(labelWithString: "")
     private let updateButton = NSButton(title: "Update Now", target: nil, action: nil)
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
+    private let clearOnQuitCheckbox = NSButton(checkboxWithTitle: "Clear website data on quit except allow-list", target: nil, action: nil)
+    private let manageAllowlistButton = NSButton(title: "Manage Allow-List\u{2026}", target: nil, action: nil)
+    private let lockEnabledCheckbox = NSButton(checkboxWithTitle: "Require authentication to unlock Kylmora", target: nil, action: nil)
+    private let lockMethodPopUp = NSPopUpButton()
+    private let masterPasswordButton = NSButton(title: "Set Master Password\u{2026}", target: nil, action: nil)
+    private let lockOnLaunchCheckbox = NSButton(checkboxWithTitle: "Lock immediately on launch", target: nil, action: nil)
+    private let idleTimeoutPopUp = NSPopUpButton()
+    private let lockNowButton = NSButton(title: "Lock Browser Now", target: nil, action: nil)
+    private let antiFingerprintingCheckbox = NSButton(checkboxWithTitle: "Enable anti-fingerprinting protection", target: nil, action: nil)
+    private let canvasNoiseCheckbox = NSButton(checkboxWithTitle: "Randomize Canvas and WebGL pixel readouts", target: nil, action: nil)
+    private let audioNoiseCheckbox = NSButton(checkboxWithTitle: "Mask AudioContext acoustic signatures", target: nil, action: nil)
+    private let hardwareMaskingCheckbox = NSButton(checkboxWithTitle: "Standardize hardware concurrency and memory", target: nil, action: nil)
 
     init(settings: Settings = .shared, blocker: ContentBlocker = .shared, session: BrowserSession? = nil) {
         self.settings = settings
@@ -44,6 +56,11 @@ final class PrivacySettingsViewController: NSViewController {
     }
 
     private func buildLayout(in form: SettingsForm) {
+        // Each group under a heading of its own, one setting to a row. The
+        // switches and radios used to be handed over in stacks, which drew
+        // them down the left of the card with the text after them -- a second
+        // design on the same page as the rows above.
+        form.addSection("Tracking and history")
         trackersPopUp.addItems(withTitles: TrackerRemoval.allCases.map(\.title))
         trackersPopUp.target = self
         trackersPopUp.action = #selector(trackersChanged)
@@ -62,40 +79,49 @@ final class PrivacySettingsViewController: NSViewController {
 
         disableHistory.target = self
         disableHistory.action = #selector(disableHistoryChanged)
-        form.addRow("History", disableHistory)
+        form.addRow("", disableHistory)
 
+        form.addSection("Website data")
         let reset = NSButton(title: "Reset Kylmora\u{2026}", target: self, action: #selector(resetTapped))
         reset.bezelStyle = .rounded
         let manage = NSButton(title: "Manage Website Data\u{2026}", target: self, action: #selector(manageWebsiteData))
         manage.bezelStyle = .rounded
-        let dataButtons = NSStackView(views: [reset, manage])
-        dataButtons.orientation = .horizontal
-        dataButtons.spacing = 8
-        form.addRow("Cookies and website data", dataButtons)
+        form.addRow("Cookies and website data", [manage, reset])
 
+        clearOnQuitCheckbox.target = self
+        clearOnQuitCheckbox.action = #selector(clearOnQuitChanged)
+        manageAllowlistButton.target = self
+        manageAllowlistButton.action = #selector(manageAllowlist)
+        manageAllowlistButton.bezelStyle = .rounded
+        let quitRow = NSStackView(views: [clearOnQuitCheckbox, manageAllowlistButton])
+        quitRow.orientation = .horizontal
+        quitRow.spacing = 8
+        form.addRow("", quitRow)
+        form.addNote("Deletes cookies, cache, and storage for all websites when Kylmora quits, except sites on your allow-list.")
+
+        form.addSection("Crash reports")
         for radio in [crashAsk, crashAlways, crashNever] {
             radio.target = self
             radio.action = #selector(crashPolicyChanged)
+            form.addRow("", radio)
         }
-        let crash = NSStackView(views: [crashAsk, crashAlways, crashNever])
-        crash.orientation = .vertical
-        crash.alignment = .leading
-        crash.spacing = 6
-        form.addRow("Crash reports", crash)
 
+        form.addSection("User agent")
         userAgentField.placeholderString = "Mozilla/5.0 \u{2026}"
         userAgentField.target = self
         userAgentField.action = #selector(userAgentCommitted)
         form.addRow("\u{201c}Custom\u{201d} user agent", SettingsForm.fill(userAgentField))
         form.addNote("Used when \u{201c}Custom\u{201d} is chosen for a site's user agent in Website Settings.")
 
-        form.addSeparator()
+        form.addSection("Fingerprinting")
+        for box in [antiFingerprintingCheckbox, canvasNoiseCheckbox, audioNoiseCheckbox, hardwareMaskingCheckbox] {
+            box.target = self
+            box.action = #selector(antiFingerprintingChanged)
+            form.addRow("", box)
+        }
+        form.addNote("Prevents tracking scripts from fingerprinting your device through Canvas, WebGL, AudioContext, or hardware specs. Each Space uses independent seeded noise.")
 
-        let card = SettingsCardView(rows: [
-            SettingsSwitchRow(tile: .symbol("hand.raised.fill", .systemRed), title: "Block ads", control: adsSwitch),
-            SettingsSwitchRow(tile: .emoji("\u{1F36A}", .systemOrange), title: "Block cookie banners", control: cookiesSwitch),
-            SettingsSwitchRow(tile: .symbol("eyeglasses", .systemYellow), title: "Block trackers", control: trackersSwitch)
-        ])
+        form.addSection("Content blocker")
         for (control, selector) in [
             (adsSwitch, #selector(adsChanged)),
             (cookiesSwitch, #selector(cookieBannersChanged)),
@@ -104,28 +130,54 @@ final class PrivacySettingsViewController: NSViewController {
             control.target = self
             control.action = selector
         }
-        form.addRow("Content blocker", SettingsForm.fill(card))
+        // On the group's own card, not on a plate of their own inside it.
+        form.addRows([
+            SettingsSwitchRow(tile: .symbol("hand.raised.fill", .systemRed), title: "Block ads", control: adsSwitch),
+            SettingsSwitchRow(tile: .emoji("\u{1F36A}", .systemOrange), title: "Block cookie banners", control: cookiesSwitch),
+            SettingsSwitchRow(tile: .symbol("eyeglasses", .systemYellow), title: "Block trackers", control: trackersSwitch)
+        ])
 
         autoUpdate.target = self
         autoUpdate.action = #selector(autoUpdateChanged)
-        updatedLabel.font = .systemFont(ofSize: 12)
-        updatedLabel.textColor = .secondaryLabelColor
-        rulesLabel.font = .systemFont(ofSize: 12)
-        rulesLabel.textColor = .secondaryLabelColor
+        form.addRow("", autoUpdate)
         updateButton.target = self
         updateButton.action = #selector(updateNow)
         updateButton.bezelStyle = .rounded
         let manageLists = NSButton(title: "Manage Filter Lists\u{2026}", target: self, action: #selector(showAdvanced))
         manageLists.bezelStyle = .rounded
-        let listButtons = NSStackView(views: [updateButton, manageLists])
-        listButtons.orientation = .horizontal
-        listButtons.spacing = 8
-        let blockerRows = NSStackView(views: [autoUpdate, updatedLabel, rulesLabel, listButtons])
-        blockerRows.orientation = .vertical
-        blockerRows.alignment = .leading
-        blockerRows.spacing = 8
-        form.addContinuation(blockerRows)
+        // What is in force, with the buttons that change it beside it.
+        rulesLabel.lineBreakMode = .byTruncatingTail
+        form.addRow(rulesLabel, [updateButton, manageLists])
+        form.addNote(updatedLabel)
         form.addNote(statusLabel)
+
+        form.addSection("Browser lock")
+        lockEnabledCheckbox.target = self
+        lockEnabledCheckbox.action = #selector(lockEnabledChanged)
+        form.addRow("", lockEnabledCheckbox)
+
+        lockMethodPopUp.addItems(withTitles: BrowserLockMethod.allCases.map(\.title))
+        lockMethodPopUp.target = self
+        lockMethodPopUp.action = #selector(lockMethodChanged)
+        masterPasswordButton.bezelStyle = .rounded
+        masterPasswordButton.target = self
+        masterPasswordButton.action = #selector(setMasterPasswordTapped)
+        form.addRow("Unlock with", [lockMethodPopUp, masterPasswordButton])
+
+        lockOnLaunchCheckbox.target = self
+        lockOnLaunchCheckbox.action = #selector(lockOnLaunchChanged)
+        form.addRow("", lockOnLaunchCheckbox)
+
+        idleTimeoutPopUp.addItems(withTitles: BrowserLockIdleTimeout.allCases.map(\.title))
+        idleTimeoutPopUp.target = self
+        idleTimeoutPopUp.action = #selector(idleTimeoutChanged)
+        form.addRow("Auto-lock after", SettingsForm.fill(idleTimeoutPopUp))
+
+        lockNowButton.bezelStyle = .rounded
+        lockNowButton.target = self
+        lockNowButton.action = #selector(lockNowTapped)
+        form.addContinuation(lockNowButton)
+        form.addNote("Obscures tabs and web content behind a blur shield when locked. Unlock using Touch ID, system passcode, or your master password.")
     }
 
     private func reload() {
@@ -142,7 +194,42 @@ final class PrivacySettingsViewController: NSViewController {
         cookiesSwitch.state = preferences.blocksCookieBanners ? .on : .off
         trackersSwitch.state = preferences.blocksTrackers ? .on : .off
         autoUpdate.state = settings.autoUpdatesFilterLists ? .on : .off
+        clearOnQuitCheckbox.state = settings.clearWebsiteDataOnQuit ? .on : .off
+
+        lockEnabledCheckbox.state = settings.browserLockEnabled ? .on : .off
+        lockMethodPopUp.selectItem(at: BrowserLockMethod.allCases.firstIndex(of: settings.browserLockMethod) ?? 0)
+        masterPasswordButton.title = MasterPasswordStore.hasMasterPassword() ? "Change Master Password\u{2026}" : "Set Master Password\u{2026}"
+        masterPasswordButton.isHidden = settings.browserLockMethod != .masterPassword
+        lockOnLaunchCheckbox.state = settings.browserLockOnLaunch ? .on : .off
+        idleTimeoutPopUp.selectItem(at: BrowserLockIdleTimeout.allCases.firstIndex(of: settings.browserLockIdleTimeout) ?? 0)
+
+        lockOnLaunchCheckbox.isEnabled = settings.browserLockEnabled
+        lockMethodPopUp.isEnabled = settings.browserLockEnabled
+        masterPasswordButton.isEnabled = settings.browserLockEnabled
+        idleTimeoutPopUp.isEnabled = settings.browserLockEnabled
+
+        antiFingerprintingCheckbox.state = settings.antiFingerprintingEnabled ? .on : .off
+        canvasNoiseCheckbox.state = settings.canvasNoiseEnabled ? .on : .off
+        audioNoiseCheckbox.state = settings.audioNoiseEnabled ? .on : .off
+        hardwareMaskingCheckbox.state = settings.hardwareMaskingEnabled ? .on : .off
+
+        let fpActive = settings.antiFingerprintingEnabled
+        canvasNoiseCheckbox.isEnabled = fpActive
+        audioNoiseCheckbox.isEnabled = fpActive
+        hardwareMaskingCheckbox.isEnabled = fpActive
+
         reloadStatus()
+    }
+
+    @objc private func antiFingerprintingChanged() {
+        settings.antiFingerprintingEnabled = antiFingerprintingCheckbox.state == .on
+        settings.canvasNoiseEnabled = canvasNoiseCheckbox.state == .on
+        settings.audioNoiseEnabled = audioNoiseCheckbox.state == .on
+        settings.hardwareMaskingEnabled = hardwareMaskingCheckbox.state == .on
+        let fpActive = settings.antiFingerprintingEnabled
+        canvasNoiseCheckbox.isEnabled = fpActive
+        audioNoiseCheckbox.isEnabled = fpActive
+        hardwareMaskingCheckbox.isEnabled = fpActive
     }
 
     /// The lines under the card: when the lists were fetched, what is in
@@ -225,6 +312,140 @@ final class PrivacySettingsViewController: NSViewController {
         presentAsSheet(sheet)
     }
 
+    @objc private func clearOnQuitChanged() {
+        settings.clearWebsiteDataOnQuit = clearOnQuitCheckbox.state == .on
+    }
+
+    @objc private func manageAllowlist() {
+        let sheet = WebsiteDataAllowlistViewController(settings: settings, session: session)
+        presentAsSheet(sheet)
+    }
+
+    @objc private func lockEnabledChanged() {
+        let willEnable = lockEnabledCheckbox.state == .on
+        if willEnable && settings.browserLockMethod == .masterPassword && !MasterPasswordStore.hasMasterPassword() {
+            promptSetMasterPassword(onSuccess: { [weak self] in
+                self?.settings.browserLockEnabled = true
+                self?.reload()
+            }, onCancel: { [weak self] in
+                self?.lockEnabledCheckbox.state = .off
+                self?.settings.browserLockEnabled = false
+                self?.reload()
+            })
+            return
+        }
+        settings.browserLockEnabled = willEnable
+        reload()
+    }
+
+    @objc private func lockMethodChanged() {
+        guard BrowserLockMethod.allCases.indices.contains(lockMethodPopUp.indexOfSelectedItem) else { return }
+        let method = BrowserLockMethod.allCases[lockMethodPopUp.indexOfSelectedItem]
+        settings.browserLockMethod = method
+        if method == .masterPassword && !MasterPasswordStore.hasMasterPassword() {
+            promptSetMasterPassword(onSuccess: { [weak self] in
+                self?.reload()
+            }, onCancel: { [weak self] in
+                self?.reload()
+            })
+        } else {
+            reload()
+        }
+    }
+
+    @objc private func lockOnLaunchChanged() {
+        settings.browserLockOnLaunch = lockOnLaunchCheckbox.state == .on
+    }
+
+    @objc private func idleTimeoutChanged() {
+        guard BrowserLockIdleTimeout.allCases.indices.contains(idleTimeoutPopUp.indexOfSelectedItem) else { return }
+        settings.browserLockIdleTimeout = BrowserLockIdleTimeout.allCases[idleTimeoutPopUp.indexOfSelectedItem]
+    }
+
+    @objc private func lockNowTapped() {
+        BrowserLockManager.shared.lock(animated: true)
+    }
+
+    @objc private func setMasterPasswordTapped() {
+        promptSetMasterPassword(onSuccess: { [weak self] in
+            self?.reload()
+        })
+    }
+
+    private func promptSetMasterPassword(onSuccess: (() -> Void)? = nil, onCancel: (() -> Void)? = nil) {
+        let isChanging = MasterPasswordStore.hasMasterPassword()
+        let alert = NSAlert()
+        alert.messageText = isChanging ? "Change Master Password" : "Set Master Password"
+        alert.informativeText = isChanging
+            ? "Enter your current master password and choose a new one."
+            : "Create a master password to protect Kylmora."
+        alert.addButton(withTitle: isChanging ? "Change Password" : "Set Password")
+        alert.addButton(withTitle: "Cancel")
+
+        let currentField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        currentField.placeholderString = "Current Password"
+
+        let newField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        newField.placeholderString = "New Password"
+
+        let confirmField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        confirmField.placeholderString = "Confirm Password"
+
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.alignment = .leading
+        if isChanging {
+            stack.addArrangedSubview(currentField)
+        }
+        stack.addArrangedSubview(newField)
+        stack.addArrangedSubview(confirmField)
+        stack.setFrameSize(NSSize(width: 240, height: isChanging ? 96 : 64))
+
+        alert.accessoryView = stack
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            if isChanging {
+                guard MasterPasswordStore.verifyMasterPassword(currentField.stringValue) else {
+                    let errAlert = NSAlert()
+                    errAlert.alertStyle = .critical
+                    errAlert.messageText = "Incorrect Current Password"
+                    errAlert.informativeText = "The current master password you entered was incorrect."
+                    errAlert.runModal()
+                    onCancel?()
+                    return
+                }
+            }
+
+            let newPass = newField.stringValue
+            guard !newPass.isEmpty else {
+                let errAlert = NSAlert()
+                errAlert.alertStyle = .warning
+                errAlert.messageText = "Empty Password"
+                errAlert.informativeText = "Master password cannot be empty."
+                errAlert.runModal()
+                onCancel?()
+                return
+            }
+
+            guard newPass == confirmField.stringValue else {
+                let errAlert = NSAlert()
+                errAlert.alertStyle = .warning
+                errAlert.messageText = "Passwords Do Not Match"
+                errAlert.informativeText = "The entered passwords do not match. Please try again."
+                errAlert.runModal()
+                onCancel?()
+                return
+            }
+
+            MasterPasswordStore.setMasterPassword(newPass)
+            onSuccess?()
+        } else {
+            onCancel?()
+        }
+    }
+
     private func update(_ change: (inout ContentBlockingPreferences) -> Void) {
         var preferences = settings.contentBlocking
         change(&preferences)
@@ -260,6 +481,7 @@ final class WebsiteDataViewController: NSViewController {
     private let table = NSTableView()
     private let removeButton = NSButton(title: "Remove", target: nil, action: nil)
     private let removeAllButton = NSButton(title: "Remove All", target: nil, action: nil)
+    private let addToAllowlistButton = NSButton(title: "Add to Allow-List", target: nil, action: nil)
     private let status = NSTextField(labelWithString: "Loading\u{2026}")
     private var records: [WebsiteData.Record] = []
 
@@ -306,12 +528,16 @@ final class WebsiteDataViewController: NSViewController {
         removeAllButton.target = self
         removeAllButton.action = #selector(removeAll)
         removeAllButton.bezelStyle = .rounded
+        addToAllowlistButton.target = self
+        addToAllowlistButton.action = #selector(addToAllowlist)
+        addToAllowlistButton.bezelStyle = .rounded
+        addToAllowlistButton.isEnabled = false
         let done = NSButton(title: "Done", target: self, action: #selector(dismissSheet))
         done.bezelStyle = .rounded
         done.keyEquivalent = "\r"
         status.font = .systemFont(ofSize: 11)
         status.textColor = .secondaryLabelColor
-        let footer = NSStackView(views: [removeButton, removeAllButton, status, NSView(), done])
+        let footer = NSStackView(views: [removeButton, removeAllButton, addToAllowlistButton, status, NSView(), done])
         footer.orientation = .horizontal
         footer.spacing = 8
         footer.translatesAutoresizingMaskIntoConstraints = false
@@ -365,6 +591,14 @@ final class WebsiteDataViewController: NSViewController {
         }
     }
 
+    @objc private func addToAllowlist() {
+        let chosen = table.selectedRowIndexes.compactMap { records.indices.contains($0) ? records[$0] : nil }
+        for record in chosen {
+            Settings.shared.addToQuitAllowlist(record.displayName)
+        }
+        status.stringValue = "Added \(chosen.count) site\(chosen.count == 1 ? "" : "s") to allow-list."
+    }
+
     @objc private func dismissSheet() { dismiss(nil) }
 }
 
@@ -391,151 +625,6 @@ extension WebsiteDataViewController: NSTableViewDataSource, NSTableViewDelegate 
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         removeButton.isEnabled = !table.selectedRowIndexes.isEmpty
-    }
-}
-
-// MARK: - The card
-
-/// A grouped card of rows with a hairline between each, as macOS System
-/// Settings draws its groups.
-@MainActor
-final class SettingsCardView: NSView {
-    init(rows: [NSView]) {
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
-        layer?.cornerRadius = 10
-        layer?.cornerCurve = .continuous
-        layer?.masksToBounds = true
-
-        var views: [NSView] = []
-        for (index, row) in rows.enumerated() {
-            if index > 0 {
-                let line = NSBox()
-                line.boxType = .separator
-                line.translatesAutoresizingMaskIntoConstraints = false
-                views.append(line)
-            }
-            views.append(row)
-        }
-        let stack = NSStackView(views: views)
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 0
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor)
-        ])
-        for view in views {
-            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("SettingsCardView is created in code only")
-    }
-
-    override func updateLayer() {
-        layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
-    }
-}
-
-/// A coloured tile with a glyph, a title, and a control at the trailing edge.
-@MainActor
-final class SettingsSwitchRow: NSView {
-    enum Tile {
-        case symbol(String, NSColor)
-        case emoji(String, NSColor)
-    }
-
-    /// A tile on its own, for lists that want the same glyph-on-colour.
-    static func tileView(_ tile: Tile, side: CGFloat = 26) -> NSView {
-        TileView(tile: tile, side: side)
-    }
-
-    init(tile: Tile, title: String, control: NSControl) {
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-
-        let tileView = TileView(tile: tile, side: 26)
-        let label = NSTextField(labelWithString: title)
-        label.font = .systemFont(ofSize: 13)
-        control.translatesAutoresizingMaskIntoConstraints = false
-        control.setAccessibilityLabel(title)
-
-        let stack = NSStackView(views: [tileView, label, NSView(), control])
-        stack.orientation = .horizontal
-        stack.spacing = 10
-        stack.alignment = .centerY
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            heightAnchor.constraint(equalToConstant: 44),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor)
-        ])
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("SettingsSwitchRow is created in code only")
-    }
-
-    private final class TileView: NSView {
-        private let tile: Tile
-
-        init(tile: Tile, side: CGFloat) {
-            self.tile = tile
-            super.init(frame: .zero)
-            translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                widthAnchor.constraint(equalToConstant: side),
-                heightAnchor.constraint(equalToConstant: side)
-            ])
-            setAccessibilityElement(false)
-        }
-
-        required init?(coder: NSCoder) {
-            fatalError("TileView is created in code only")
-        }
-
-        override func draw(_ dirtyRect: NSRect) {
-            let colour: NSColor
-            switch tile {
-            case .symbol(_, let c), .emoji(_, let c): colour = c
-            }
-            colour.setFill()
-            NSBezierPath(roundedRect: bounds, xRadius: 6, yRadius: 6).fill()
-
-            switch tile {
-            case .symbol(let name, _):
-                guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-                    .withSymbolConfiguration(.init(pointSize: 13, weight: .semibold)) else { return }
-                let tinted = image.copy() as! NSImage
-                tinted.isTemplate = true
-                let size = tinted.size
-                let origin = NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2)
-                NSColor.white.set()
-                tinted.draw(at: origin, from: .zero, operation: .sourceOver, fraction: 1)
-                // Template images draw black; paint white through the mask.
-                NSGraphicsContext.saveGraphicsState()
-                let rect = NSRect(origin: origin, size: size)
-                tinted.draw(in: rect, from: .zero, operation: .destinationIn, fraction: 1)
-                NSColor.white.setFill()
-                rect.fill(using: .sourceAtop)
-                NSGraphicsContext.restoreGraphicsState()
-            case .emoji(let text, _):
-                let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 15)]
-                let size = (text as NSString).size(withAttributes: attributes)
-                (text as NSString).draw(
-                    at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2),
-                    withAttributes: attributes
-                )
-            }
-        }
+        addToAllowlistButton.isEnabled = !table.selectedRowIndexes.isEmpty
     }
 }
