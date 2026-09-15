@@ -21,11 +21,7 @@ struct AutoUpdateTests {
         )
 
         controller.checkOutcomeProvider = { _ in
-            .available(
-                version: expectedRelease.version,
-                url: expectedRelease.url,
-                notes: expectedRelease.notes
-            )
+            .available(expectedRelease)
         }
 
         controller.checkForUpdates(userInitiated: false)
@@ -47,7 +43,7 @@ struct AutoUpdateTests {
         defer { Settings.shared.skippedUpdateVersion = nil }
 
         controller.checkOutcomeProvider = { _ in
-            .available(version: "99.0.0", url: URL(string: "https://kylmora.com"), notes: "Notes")
+            .available(UpdateCheck.Release(version: "99.0.0", url: URL(string: "https://kylmora.com"), notes: "Notes"))
         }
 
         controller.checkForUpdates(userInitiated: false)

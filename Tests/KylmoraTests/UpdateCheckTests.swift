@@ -31,7 +31,7 @@ struct UpdateCheckTests {
     func newer() throws {
         let latest = try release(#"{"version":"0.2.0","url":"https://kylmora.com/download","notes":"Faster tabs."}"#)
         #expect(UpdateCheck.outcome(current: "0.1.0", release: latest)
-            == .available(version: "0.2.0", url: URL(string: "https://kylmora.com/download"), notes: "Faster tabs."))
+            == .available(UpdateCheck.Release(version: "0.2.0", url: URL(string: "https://kylmora.com/download"), notes: "Faster tabs.")))
     }
 
     @Test("The same version, or an older one on the site, means up to date")
@@ -77,12 +77,12 @@ struct AboutPaneTests {
         #expect(pane.updateStatusText.contains("latest version"))
         #expect(!pane.showsDownloadButton)
 
-        pane.show(.available(version: "0.2.0", url: URL(string: "https://kylmora.com/download"), notes: "Faster tabs."))
+        pane.show(.available(UpdateCheck.Release(version: "0.2.0", url: URL(string: "https://kylmora.com/download"), notes: "Faster tabs.")))
         #expect(pane.updateStatusText.contains("0.2.0"))
         #expect(pane.updateStatusText.contains("Faster tabs."))
         #expect(pane.showsDownloadButton)
 
-        pane.show(.available(version: "0.3.0", url: nil, notes: nil))
+        pane.show(.available(UpdateCheck.Release(version: "0.3.0", url: nil, notes: nil)))
         #expect(!pane.showsDownloadButton)
 
         pane.show(.unreachable("Could not reach kylmora.com."))

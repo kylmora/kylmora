@@ -194,13 +194,14 @@ final class AboutSettingsViewController: NSViewController {
         case .upToDate(let current):
             updateStatus.textColor = .secondaryLabelColor
             updateStatus.stringValue = "You\u{2019}re on the latest version. Kylmora \(current) is the newest there is."
-        case .available(let version, let url, let notes):
+        case .available(let found):
             updateStatus.textColor = .labelColor
-            var text = "Kylmora \(version) is available; you have \(AppInfo.version)."
-            if let notes, !notes.isEmpty { text += " \(notes)" }
+            var text = "Kylmora \(found.version) is available; you have \(AppInfo.version)."
+            if let notes = found.notes, !notes.isEmpty { text += " \(notes)" }
             updateStatus.stringValue = text
+            let url = found.url
             downloadURL = url
-            release = UpdateCheck.Release(version: version, url: url, notes: notes)
+            release = found
             // Only when there is something to fetch. A release the feed named
             // but gave no address for cannot be installed or downloaded, and a
             // button that would do neither is worse than no button.

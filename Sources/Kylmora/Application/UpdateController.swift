@@ -114,13 +114,12 @@ final class UpdateController: NSObject, URLSessionDownloadDelegate {
                 showErrorAlert(reason: reason, in: parentWindow)
             }
 
-        case .available(let version, let url, let notes):
-            let release = UpdateCheck.Release(version: version, url: url, notes: notes)
+        case .available(let release):
             self.activeRelease = release
             state = .updateAvailable(release)
 
             // If background check and user chose to skip this version, ignore
-            if !userInitiated, let skipped = Settings.shared.skippedUpdateVersion, skipped == version {
+            if !userInitiated, let skipped = Settings.shared.skippedUpdateVersion, skipped == release.version {
                 state = .idle
                 return
             }
@@ -183,6 +182,10 @@ final class UpdateController: NSObject, URLSessionDownloadDelegate {
 
     func startDownload(for release: UpdateCheck.Release) {
         guard let downloadURL = release.updatePackageURL else {
+            // The feed named a version but gave no package for it. Say so:
+            // silently opening the release page looks identical to the
+            // updater refusing to work.
+            state = .error("The update feed does not say where to download \(release.version).")
             if let webURL = release.url {
                 NSWorkspace.shared.open(webURL)
             }
@@ -242,9 +245,20 @@ final class UpdateController: NSObject, URLSessionDownloadDelegate {
 
         guard fileURL.pathExtension.lowercased() == "dmg" else {
             // A .pkg carries its own installer and knows how to replace the
-            // app itself; anything else is handed to the user.
-            NSWorkspace.shared.open(fileURL)
-            NSApp.terminate(nil)
+            // app. Anything else is not something to open and hope: opening
+            // whatever was downloaded is what used to send people to a web
+            // page instead of updating them.
+            if fileURL.pathExtension.lowercased() == "pkg" {
+                NSWorkspace.shared.open(fileURL)
+                NSApp.terminate(nil)
+            } else {
+                failInstall(
+                    UpdateInstaller.Failure.stageFailed(
+                        "What was downloaded is not a disk image or an installer."
+                    ),
+                    fallback: fileURL
+                )
+            }
             return
         }
 

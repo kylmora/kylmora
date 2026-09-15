@@ -155,3 +155,96 @@ struct UpdateInstallerTests {
         #expect(AppVersion("0.2.0") > AppVersion("0.1.9"))
     }
 }
+
+
+/// The path from "the site says there is a new version" to "something is
+/// downloading". This is where an update quietly turned into a web page.
+@Suite("Finding the package to install")
+struct UpdatePackageURLTests {
+
+    private func feed(_ json: String) throws -> UpdateCheck.Release {
+        try UpdateCheck.decode(Data(json.utf8))
+    }
+
+    @Test("The download address survives the answer being handed on")
+    func downloadURLIsNotDropped() throws {
+        // This is the bug. The outcome used to carry three of the release's
+        // four fields, and the one it left behind was the address of the
+        // package -- so everything downstream fell back to the release page,
+        // downloaded a few kilobytes of HTML, found it was not a disk image
+        // and opened it in a browser. One click "updated" you to a web page.
+        let release = try feed("""
+        {"version": "0.1.51",
+         "url": "https://github.com/kylmora/kylmora/releases/latest",
+         "downloadUrl": "https://github.com/kylmora/kylmora/releases/latest/download/Kylmora.dmg"}
+        """)
+        let outcome = UpdateCheck.outcome(current: "0.1.5", release: release)
+        let carried = try #require(outcome.release)
+        #expect(carried.downloadUrl == release.downloadUrl)
+        #expect(carried.updatePackageURL?.pathExtension == "dmg")
+    }
+
+    @Test("A release page is never treated as a download")
+    func aPageIsNotAPackage() throws {
+        // A feed that only names a page has nothing to install. Saying so is
+        // the honest answer; downloading the page is not.
+        let pageOnly = try feed("""
+        {"version": "0.2.0", "url": "https://github.com/kylmora/kylmora/releases/latest"}
+        """)
+        #expect(pageOnly.updatePackageURL == nil)
+        #expect(pageOnly.url != nil, "the page is still there to open deliberately")
+    }
+
+    @Test("Only things that can be installed count as packages")
+    func packageExtensions() {
+        func isPackage(_ text: String) -> Bool {
+            UpdateCheck.Release.isPackage(URL(string: text)!)
+        }
+        #expect(isPackage("https://example.com/Kylmora.dmg"))
+        #expect(isPackage("https://example.com/Kylmora.pkg"))
+        #expect(isPackage("https://example.com/Kylmora.zip"))
+        #expect(!isPackage("https://github.com/kylmora/kylmora/releases/latest"))
+        #expect(!isPackage("https://kylmora.com/download"))
+        #expect(!isPackage("https://example.com/notes.html"))
+    }
+
+    @Test("The direct address wins over the page when the feed carries both")
+    func prefersTheDirectAddress() throws {
+        let both = try feed("""
+        {"version": "0.2.0",
+         "url": "https://kylmora.com/download",
+         "downloadUrl": "https://example.com/Kylmora.dmg"}
+        """)
+        #expect(both.updatePackageURL?.absoluteString == "https://example.com/Kylmora.dmg")
+    }
+
+    @Test("A feed whose only address is a package is still usable")
+    func packageInTheURLField() throws {
+        // Older feeds put the .dmg in `url` and had no `downloadUrl` at all.
+        let older = try feed("""
+        {"version": "0.2.0", "url": "https://example.com/Kylmora.dmg"}
+        """)
+        #expect(older.updatePackageURL?.pathExtension == "dmg")
+    }
+
+    @Test("The live feed's shape is the one the updater expects")
+    func theShapeWeActuallyPublish() throws {
+        // Exactly what kylmora.com/releases/latest.json serves today. If the
+        // site's shape and the browser's reading of it ever drift apart, the
+        // update button stops working and nothing else fails first.
+        let live = try feed("""
+        {
+          "version": "0.1.51",
+          "url": "https://github.com/kylmora/kylmora/releases/latest",
+          "dmg": "https://github.com/kylmora/kylmora/releases/latest/download/Kylmora.dmg",
+          "pkg": "https://github.com/kylmora/kylmora/releases/latest/download/Kylmora.pkg",
+          "downloadUrl": "https://github.com/kylmora/kylmora/releases/latest/download/Kylmora.dmg",
+          "notes": "Kylmora updates itself now."
+        }
+        """)
+        #expect(live.version == "0.1.51")
+        #expect(live.updatePackageURL?.lastPathComponent == "Kylmora.dmg")
+        #expect(UpdateCheck.outcome(current: "0.1.5", release: live).release?.updatePackageURL != nil)
+        #expect(UpdateCheck.outcome(current: "0.1.51", release: live) == .upToDate(current: "0.1.51"))
+    }
+}

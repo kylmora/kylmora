@@ -75,8 +75,23 @@ enum UpdateCheck {
             self.downloadUrl = downloadUrl
         }
 
+        /// The address to download, or nil when the feed only gave a page.
+        ///
+        /// A release page is not a package. Falling back to it meant the
+        /// updater downloaded a few kilobytes of HTML, found it was not a
+        /// disk image, and opened it -- which is how "update" ended in a
+        /// browser window on GitHub. When there is nothing to download the
+        /// answer is nil, and the caller opens the page deliberately instead
+        /// of by accident.
         var updatePackageURL: URL? {
-            downloadUrl ?? url
+            if let downloadUrl, Self.isPackage(downloadUrl) { return downloadUrl }
+            if let url, Self.isPackage(url) { return url }
+            return nil
+        }
+
+        /// Whether an address names something that can be installed.
+        static func isPackage(_ url: URL) -> Bool {
+            ["dmg", "pkg", "zip"].contains(url.pathExtension.lowercased())
         }
     }
 
@@ -84,16 +99,22 @@ enum UpdateCheck {
         /// This is the newest version the site knows about.
         case upToDate(current: String)
         /// The site has a newer one.
-        case available(version: String, url: URL?, notes: String?)
+        ///
+        /// The whole release, not a copy of some of it. This used to be three
+        /// separate values and the one left out was `downloadUrl`, so by the
+        /// time anything acted on the answer it no longer knew where the
+        /// package was.
+        case available(Release)
         /// No answer, or one that could not be read. The text says why.
         case unreachable(String)
 
         var release: Release? {
-            if case .available(let version, let url, let notes) = self {
-                return Release(version: version, url: url, notes: notes)
-            }
+            if case .available(let release) = self { return release }
             return nil
         }
+
+        /// The version the site is offering, for a status line.
+        var offeredVersion: String? { release?.version }
     }
 
     static func decode(_ data: Data) throws -> Release {
@@ -107,7 +128,7 @@ enum UpdateCheck {
     /// Pure: compares what the site said with what is running.
     static func outcome(current: String, release: Release) -> Outcome {
         if AppVersion(release.version) > AppVersion(current) {
-            return .available(version: release.version, url: release.url, notes: release.notes)
+            return .available(release)
         }
         return .upToDate(current: current)
     }
