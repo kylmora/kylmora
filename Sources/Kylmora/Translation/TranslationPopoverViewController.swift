@@ -10,7 +10,7 @@ final class TranslationPopoverViewController: NSViewController {
     private let onRestore: () -> Void
 
     private let titleLabel = NSTextField(labelWithString: "Translate Page")
-    private let privacyBadge = NSTextField(labelWithString: "On-Device • Private & Local")
+    private let privacyBadge = NSTextField(labelWithString: "Apple's on-device model • Nothing leaves this Mac")
     private let sourceLabel = NSTextField(labelWithString: "Source:")
     private let sourceValueLabel = NSTextField(labelWithString: "Auto-detected")
     private let targetLabel = NSTextField(labelWithString: "Translate to:")
@@ -161,23 +161,29 @@ final class TranslationPopoverViewController: NSViewController {
         switch state.status {
         case .untranslated, .detecting, .available:
             translateButton.title = "Translate"
-            translateButton.isEnabled = true
             restoreButton.isEnabled = false
             spinner.stopAnimation(nil)
-            statusLabel.stringValue = ""
+            if #available(macOS 15.0, *) {
+                translateButton.isEnabled = true
+                statusLabel.stringValue = ""
+            } else {
+                // Say so before the click, not after it.
+                translateButton.isEnabled = false
+                statusLabel.stringValue = TranslationFailure.needsNewerMacOS.localizedDescription
+            }
 
         case .translating:
             translateButton.isEnabled = false
             restoreButton.isEnabled = false
             spinner.startAnimation(nil)
-            statusLabel.stringValue = "Translating on-device…"
+            statusLabel.stringValue = "Translating on this Mac… the page updates as each part is done."
 
         case .translated(_, _, let count):
             translateButton.title = "Translate Again"
             translateButton.isEnabled = true
             restoreButton.isEnabled = true
             spinner.stopAnimation(nil)
-            statusLabel.stringValue = "Translated \(count) elements on-device."
+            statusLabel.stringValue = "Translated \(count) passages with Apple's on-device model."
 
         case .restored:
             translateButton.title = "Translate"

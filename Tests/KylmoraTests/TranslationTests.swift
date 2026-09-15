@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import NaturalLanguage
 import Testing
+import WebKit
 @testable import Kylmora
 
 @Suite("On-Device Page Translation")
@@ -54,20 +55,69 @@ struct TranslationTests {
         #expect(call.contains("World"))
     }
 
-    @Test("Local translation engine processes snippets locally without networking")
-    func engineTranslation() async throws {
-        let engine = LocalPageTranslationEngine.shared
-        let supported = await engine.isSupported(from: "fr", to: "en")
-        #expect(supported)
+    @Test("Pages are translated in batches that cover every node once, in order")
+    func batching() {
+        #expect(TranslationBatch.ranges(count: 0).isEmpty)
+        #expect(TranslationBatch.ranges(count: 5, size: 10) == [0..<5])
+        #expect(TranslationBatch.ranges(count: 25, size: 10) == [0..<10, 10..<20, 20..<25])
+        let ranges = TranslationBatch.ranges(count: 1000)
+        #expect(ranges.first?.lowerBound == 0)
+        #expect(ranges.last?.upperBound == 1000)
+        #expect(ranges.reduce(0) { $0 + $1.count } == 1000)
+        #expect(ranges.allSatisfy { $0.count <= TranslationBatch.size })
+    }
 
-        let frenchSnippets = ["Accueil", "Articles", "Lire la suite", "Commentaires"]
-        let translated = try await engine.translate(texts: frenchSnippets, from: "fr", to: "en")
+    @Test("The language codes the popover offers are ones Apple's framework can name")
+    func languageCodesMapToLocaleLanguages() {
+        for language in TranslationLanguages.all {
+            let locale = TranslationBatch.language(for: language.code)
+            #expect(locale.languageCode != nil, "\(language.code) has no language code")
+        }
+        #expect(TranslationBatch.language(for: "zh-Hans").script?.identifier == "Hans")
+    }
 
-        #expect(translated.count == 4)
-        #expect(translated[0] == "Home")
-        #expect(translated[1] == "Articles")
-        #expect(translated[2] == "Read more")
-        #expect(translated[3] == "Comments")
+    @Test("Availability answers without a window and never pretends to translate")
+    func availabilityIsHonest() async {
+        let status = await NativeTranslation.availability(from: "fr", to: "en")
+        if #available(macOS 15.0, *) {
+            #expect(status != .needsNewerMacOS)
+        } else {
+            #expect(status == .needsNewerMacOS)
+        }
+        // A pair no model handles is reported as such, not "translated".
+        let bogus = await NativeTranslation.availability(from: "xx", to: "en")
+        #expect(bogus == .unsupported || bogus == .needsNewerMacOS)
+    }
+
+    @Test("Translating a page that is not on screen fails with a reason, not a fake result")
+    func translatingOffscreenPageFails() async {
+        let webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        let translator = PageTranslator.shared
+        let tabID = UUID()
+        var state = translator.state(for: tabID)
+        state.detectedLanguage = "fr"
+        translator.setState(state, for: tabID)
+
+        await #expect(throws: TranslationFailure.noWindow) {
+            try await translator.translatePage(in: webView, for: tabID, targetLanguage: "en")
+        }
+        if case .failed(let message) = translator.state(for: tabID).status {
+            #expect(message == TranslationFailure.noWindow.localizedDescription)
+        } else {
+            Issue.record("Expected a failed state with the reason")
+        }
+    }
+
+    @Test("Every failure has a sentence the popover can show")
+    func failureMessages() {
+        let cases: [TranslationFailure] = [
+            .needsNewerMacOS, .unsupportedPair(source: "fr", target: "en"),
+            .unsupportedPair(source: nil, target: "de"), .noWindow, .nothingToTranslate
+        ]
+        for failure in cases {
+            #expect(!(failure.errorDescription ?? "").isEmpty)
+        }
+        #expect(TranslationFailure.unsupportedPair(source: "fr", target: "en").localizedDescription.contains("French"))
     }
 
     @Test("PageTranslator tracks per-tab state transitions")

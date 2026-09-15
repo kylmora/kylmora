@@ -119,16 +119,35 @@ public final class PageTranslator {
         return detected
     }
 
-    /// Translates the page in `webView` to `targetLanguage`.
+    /// Translates the page in `webView` to `targetLanguage` with Apple's
+    /// on-device model, applying each batch to the page as it comes back.
+    /// Returns the number of text nodes changed.
     @discardableResult
     public func translatePage(in webView: WKWebView, for tabID: UUID, targetLanguage: String? = nil) async throws -> Int {
         var current = state(for: tabID)
         let target = targetLanguage ?? current.targetLanguage
         current.targetLanguage = target
-        let source = current.detectedLanguage ?? "auto"
+        let source = current.detectedLanguage
 
-        current.status = .translating(sourceLanguage: source, targetLanguage: target)
+        current.status = .translating(sourceLanguage: source ?? "auto", targetLanguage: target)
         setState(current, for: tabID)
+
+        func fail(_ error: Error) -> Error {
+            current.status = .failed(error: error.localizedDescription)
+            setState(current, for: tabID)
+            return error
+        }
+
+        guard let window = webView.window else { throw fail(TranslationFailure.noWindow) }
+
+        switch await NativeTranslation.availability(from: source, to: target) {
+        case .installed, .downloadable:
+            break
+        case .unsupported:
+            throw fail(TranslationFailure.unsupportedPair(source: source, target: target))
+        case .needsNewerMacOS:
+            throw fail(TranslationFailure.needsNewerMacOS)
+        }
 
         // Ensure bootstrap script is present
         _ = try? await webView.evaluateJavaScript(TranslationScript.bootstrap)
@@ -138,31 +157,28 @@ public final class PageTranslator {
               let data = jsonNodes.data(using: .utf8),
               let items = try? JSONDecoder().decode([TranslatableItem].self, from: data),
               !items.isEmpty else {
-            current.status = .failed(error: "No translatable text found on this page")
-            setState(current, for: tabID)
-            return 0
+            throw fail(TranslationFailure.nothingToTranslate)
         }
 
-        // Batch translation
-        let texts = items.map(\.text)
-        let translatedTexts = try await LocalPageTranslationEngine.shared.translate(
-            texts: texts,
-            from: source,
-            to: target
-        )
-
-        var resultMap: [String: String] = [:]
-        for (index, item) in items.enumerated() {
-            if index < translatedTexts.count {
-                resultMap[item.id] = translatedTexts[index]
-            }
+        var appliedCount = 0
+        do {
+            _ = try await NativeTranslation.translate(
+                items.map(\.text), from: source, to: target, in: window,
+                onChunk: { [weak webView] range, translated in
+                    guard let webView else { return }
+                    var chunk: [String: String] = [:]
+                    for (offset, index) in range.enumerated() where offset < translated.count {
+                        chunk[items[index].id] = translated[offset]
+                    }
+                    let call = TranslationScript.applyTranslationsCall(map: chunk)
+                    appliedCount += (try? await webView.evaluateJavaScript(call) as? Int) ?? 0
+                }
+            )
+        } catch {
+            throw fail(error)
         }
 
-        // Apply translations back to DOM
-        let applyCall = TranslationScript.applyTranslationsCall(map: resultMap)
-        let appliedCount = (try? await webView.evaluateJavaScript(applyCall) as? Int) ?? 0
-
-        current.status = .translated(sourceLanguage: source, targetLanguage: target, nodeCount: appliedCount)
+        current.status = .translated(sourceLanguage: source ?? "auto", targetLanguage: target, nodeCount: appliedCount)
         setState(current, for: tabID)
         return appliedCount
     }

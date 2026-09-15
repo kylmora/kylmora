@@ -1,174 +1,123 @@
+import AppKit
 import Foundation
-import NaturalLanguage
 #if canImport(Translation)
 @preconcurrency import Translation
 #endif
 
-/// Protocol for local, on-device translation engines.
-public protocol TranslationEngine: Sendable {
-    /// Translates an array of text snippets from `sourceLanguage` to `targetLanguage`.
-    func translate(texts: [String], from sourceLanguage: String, to targetLanguage: String) async throws -> [String]
-
-    /// Checks whether translation between the two language codes is supported on-device.
-    func isSupported(from sourceLanguage: String, to targetLanguage: String) async -> Bool
+/// Whether Apple's on-device translation can handle a language pair here.
+public enum TranslationAvailability: Equatable, Sendable {
+    /// The language pack is on this Mac; translation starts at once.
+    case installed
+    /// Apple supports the pair but the pack is not downloaded yet. macOS
+    /// asks the user to download it the first time it is needed.
+    case downloadable
+    /// Apple's models do not translate between these two languages.
+    case unsupported
+    /// This Mac is older than macOS 15, which introduced the framework.
+    case needsNewerMacOS
 }
 
-/// Fallback / offline on-device translation engine that translates common navigational,
-/// editorial, and contextual web phrases locally with zero network connectivity.
-public final class LocalRuleTranslationEngine: TranslationEngine {
-    public init() {}
+/// The one thing the phrase-table era got right: the shape of a request.
+/// A page is translated in chunks so the first paragraphs change on screen
+/// while the rest is still being worked on.
+public enum TranslationBatch {
+    /// Apple's batch API is fastest with a few hundred short strings at a time.
+    public static let size = 120
 
-    public func isSupported(from sourceLanguage: String, to targetLanguage: String) async -> Bool {
-        true
-    }
-
-    public func translate(texts: [String], from sourceLanguage: String, to targetLanguage: String) async throws -> [String] {
-        let sourcePrefix = sourceLanguage.components(separatedBy: "-").first?.lowercased() ?? sourceLanguage.lowercased()
-        let targetPrefix = targetLanguage.components(separatedBy: "-").first?.lowercased() ?? targetLanguage.lowercased()
-
-        if sourcePrefix == targetPrefix {
-            return texts
-        }
-
-        return texts.map { text in
-            translateSingleSnippet(text, from: sourcePrefix, to: targetPrefix)
+    /// Splits `count` items into consecutive ranges of at most `size`.
+    public static func ranges(count: Int, size: Int = TranslationBatch.size) -> [Range<Int>] {
+        guard count > 0, size > 0 else { return [] }
+        return stride(from: 0, to: count, by: size).map { start in
+            start..<min(start + size, count)
         }
     }
 
-    private func translateSingleSnippet(_ text: String, from source: String, to target: String) -> String {
-        // Common phrases table for quick on-device translation
-        let dictionary: [String: [String: String]] = [
-            "fr": [
-                "accueil": "Home",
-                "articles": "Articles",
-                "lire la suite": "Read more",
-                "commentaire": "Comment",
-                "commentaires": "Comments",
-                "partager": "Share",
-                "rechercher": "Search",
-                "connexion": "Sign in",
-                "inscription": "Sign up",
-                "paramètres": "Settings",
-                "contact": "Contact",
-                "à propos": "About",
-                "télécharger": "Download",
-                "aide": "Help",
-                "oui": "Yes",
-                "non": "No"
-            ],
-            "es": [
-                "inicio": "Home",
-                "artículos": "Articles",
-                "leer más": "Read more",
-                "comentario": "Comment",
-                "comentarios": "Comments",
-                "compartir": "Share",
-                "buscar": "Search",
-                "iniciar sesión": "Sign in",
-                "registrarse": "Sign up",
-                "ajustes": "Settings",
-                "contacto": "Contact",
-                "acerca de": "About",
-                "descargar": "Download",
-                "ayuda": "Help",
-                "sí": "Yes",
-                "no": "No"
-            ],
-            "de": [
-                "startseite": "Home",
-                "artikel": "Articles",
-                "weiterlesen": "Read more",
-                "kommentar": "Comment",
-                "kommentare": "Comments",
-                "teilen": "Share",
-                "suchen": "Search",
-                "anmelden": "Sign in",
-                "registrieren": "Sign up",
-                "einstellungen": "Settings",
-                "kontakt": "Contact",
-                "über uns": "About",
-                "herunterladen": "Download",
-                "hilfe": "Help",
-                "ja": "Yes",
-                "nein": "No"
-            ]
-        ]
-
-        let trimmedLower = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if target == "en", let sourceDict = dictionary[source], let match = sourceDict[trimmedLower] {
-            return match
-        }
-
-        // Return translated indicator or original string if phrase dictionary does not have a direct entry
-        return text
+    /// `Locale.Language` for one of the codes `TranslationLanguages` uses.
+    public static func language(for code: String) -> Locale.Language {
+        Locale.Language(identifier: code)
     }
 }
 
-#if canImport(Translation)
-/// Native macOS 15+ On-Device Translation Engine using Apple's `Translation` framework.
-@available(macOS 15.0, *)
-public final class NativeTranslationEngine: TranslationEngine, @unchecked Sendable {
-    private let availability = LanguageAvailability()
-
-    public init() {}
-
-    public func isSupported(from sourceLanguage: String, to targetLanguage: String) async -> Bool {
-        let sourceLocale = Locale.Language(identifier: sourceLanguage)
-        let targetLocale = Locale.Language(identifier: targetLanguage)
-        let status = await availability.status(from: sourceLocale, to: targetLocale)
-        return status == .installed || status == .supported
-    }
-
-    public func translate(texts: [String], from sourceLanguage: String, to targetLanguage: String) async throws -> [String] {
-        guard !texts.isEmpty else { return [] }
-        // If Apple TranslationSession can be leveraged via installed model:
-        let sourceLocale = Locale.Language(identifier: sourceLanguage)
-        let targetLocale = Locale.Language(identifier: targetLanguage)
-
-        let status = await availability.status(from: sourceLocale, to: targetLocale)
-        guard status == .installed || status == .supported else {
-            // Fall back to rule engine for unsupported pairs
-            let fallback = LocalRuleTranslationEngine()
-            return try await fallback.translate(texts: texts, from: sourceLanguage, to: targetLanguage)
-        }
-
-        // When TranslationSession requires interactive UI or downloading, fallback guarantees responsiveness
-        let fallback = LocalRuleTranslationEngine()
-        return try await fallback.translate(texts: texts, from: sourceLanguage, to: targetLanguage)
-    }
-}
-#endif
-
-/// Unified translation engine that delegates to Apple's native on-device framework when available
-/// and falls back to local on-device translation without making any network calls.
-public final class LocalPageTranslationEngine: TranslationEngine {
-    public static let shared = LocalPageTranslationEngine()
-
-    private let fallback = LocalRuleTranslationEngine()
-
-    public init() {}
-
-    public func isSupported(from sourceLanguage: String, to targetLanguage: String) async -> Bool {
+/// Apple's on-device translation, driven from AppKit.
+///
+/// Everything happens on this Mac: the Translation framework runs its models
+/// locally and the page's text never leaves the machine. The framework only
+/// hands out a `TranslationSession` through SwiftUI, so the actual call goes
+/// through `TranslationSessionHost`, which keeps an invisible SwiftUI view in
+/// the browser window for that purpose and shows Apple's language-download
+/// sheet there when a pack is missing.
+@MainActor
+public enum NativeTranslation {
+    /// Whether the pair can be translated on this Mac, and what it would take.
+    public static func availability(from source: String?, to target: String) async -> TranslationAvailability {
         #if canImport(Translation)
-        if #available(macOS 15.0, *) {
-            let native = NativeTranslationEngine()
-            if await native.isSupported(from: sourceLanguage, to: targetLanguage) {
-                return true
-            }
+        guard #available(macOS 15.0, *) else { return .needsNewerMacOS }
+        let availability = LanguageAvailability()
+        let targetLanguage = TranslationBatch.language(for: target)
+        guard let source else {
+            // Source unknown: the framework identifies it itself once it has
+            // text, so all that can be checked now is the target.
+            let supported = await availability.supportedLanguages
+            let targetCode = targetLanguage.languageCode?.identifier
+            return supported.contains(where: { $0.languageCode?.identifier == targetCode }) ? .downloadable : .unsupported
         }
+        switch await availability.status(from: TranslationBatch.language(for: source), to: targetLanguage) {
+        case .installed: return .installed
+        case .supported: return .downloadable
+        case .unsupported: return .unsupported
+        @unknown default: return .unsupported
+        }
+        #else
+        return .needsNewerMacOS
         #endif
-        return await fallback.isSupported(from: sourceLanguage, to: targetLanguage)
     }
 
-    public func translate(texts: [String], from sourceLanguage: String, to targetLanguage: String) async throws -> [String] {
+    /// Translates `texts` in order. `onChunk` is awaited on the main actor as
+    /// each batch comes back, with the range it covers, so the caller can put
+    /// it on screen before the whole page is done.
+    public static func translate(
+        _ texts: [String],
+        from source: String?,
+        to target: String,
+        in window: NSWindow,
+        onChunk: @escaping @MainActor (Range<Int>, [String]) async -> Void
+    ) async throws -> [String] {
         #if canImport(Translation)
-        if #available(macOS 15.0, *) {
-            let native = NativeTranslationEngine()
-            if await native.isSupported(from: sourceLanguage, to: targetLanguage) {
-                return try await native.translate(texts: texts, from: sourceLanguage, to: targetLanguage)
-            }
-        }
+        guard #available(macOS 15.0, *) else { throw TranslationFailure.needsNewerMacOS }
+        return try await TranslationSessionHost.shared.translate(
+            texts,
+            from: source.map(TranslationBatch.language(for:)),
+            to: TranslationBatch.language(for: target),
+            in: window,
+            onChunk: onChunk
+        )
+        #else
+        throw TranslationFailure.needsNewerMacOS
         #endif
-        return try await fallback.translate(texts: texts, from: sourceLanguage, to: targetLanguage)
+    }
+}
+
+/// Why a page could not be translated, in words the popover can show.
+public enum TranslationFailure: LocalizedError, Equatable {
+    case needsNewerMacOS
+    case unsupportedPair(source: String?, target: String)
+    case noWindow
+    case nothingToTranslate
+
+    public var errorDescription: String? {
+        switch self {
+        case .needsNewerMacOS:
+            return "Page translation uses Apple's on-device translation, which needs macOS 15 or later."
+        case .unsupportedPair(let source, let target):
+            let to = TranslationLanguages.displayName(for: target)
+            if let source {
+                return "Apple's on-device translation cannot translate \(TranslationLanguages.displayName(for: source)) into \(to)."
+            }
+            return "Apple's on-device translation cannot translate into \(to)."
+        case .noWindow:
+            return "The page has to be on screen to be translated."
+        case .nothingToTranslate:
+            return "No translatable text found on this page."
+        }
     }
 }
