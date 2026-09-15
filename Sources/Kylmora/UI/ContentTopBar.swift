@@ -34,8 +34,6 @@ final class ContentTopBar: NSView {
     /// spot is a way to stop it.
     let reloadButton = IconButton(symbolName: "arrow.clockwise", label: "Reload")
     let addressField = AddressField()
-    /// Zoom out / percentage / zoom in, kept next to the address it acts on.
-    let zoomControl = ZoomControl()
 
     private let actionStack = NSStackView()
     private var navigationLeadingConstraint: NSLayoutConstraint!
@@ -73,10 +71,8 @@ final class ContentTopBar: NSView {
 
         navigation.translatesAutoresizingMaskIntoConstraints = false
         actionStack.translatesAutoresizingMaskIntoConstraints = false
-        zoomControl.translatesAutoresizingMaskIntoConstraints = false
         addSubview(navigation)
         addSubview(addressField)
-        addSubview(zoomControl)
         addSubview(actionStack)
 
         // Three separately anchored pieces rather than one stack, because a
@@ -109,19 +105,13 @@ final class ContentTopBar: NSView {
                 constant: Style.Metrics.breadcrumbLeadingGap
             ),
             addressField.trailingAnchor.constraint(
-                lessThanOrEqualTo: zoomControl.leadingAnchor,
+                lessThanOrEqualTo: actionStack.leadingAnchor,
                 constant: -Style.Metrics.iconButtonSpacing
             ),
             addressField.widthAnchor.constraint(
                 lessThanOrEqualToConstant: Style.Metrics.addressFieldMaxWidth
             ),
             addressField.centerYAnchor.constraint(equalTo: centerYAnchor),
-
-            zoomControl.trailingAnchor.constraint(
-                equalTo: actionStack.leadingAnchor,
-                constant: -Style.Metrics.iconButtonSpacing
-            ),
-            zoomControl.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             actionStack.trailingAnchor.constraint(
                 equalTo: trailingAnchor,

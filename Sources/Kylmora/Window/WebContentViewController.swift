@@ -320,8 +320,6 @@ final class WebContentViewController: NSViewController {
             },
             url: onStartPage ? nil : tab?.displayURL
         )
-        let zoom = tab.map { Double($0.currentWebView?.pageZoom ?? SiteSettings.shared.pageZoom(for: $0.url)) } ?? 1
-        topBar.zoomControl.setPercent(Int((zoom * 100).rounded()))
     }
 
     // MARK: - Thumbnails

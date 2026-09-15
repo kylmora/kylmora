@@ -371,9 +371,6 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
                 self.session.newTab(url: url)
             }
         }
-        bar.zoomControl.zoomOut.setClickHandler { [weak self] in self?.stepZoom(by: -1) }
-        bar.zoomControl.zoomIn.setClickHandler { [weak self] in self?.stepZoom(by: 1) }
-        bar.zoomControl.onReset = { [weak self] in self?.resetZoom() }
         var actions = [
             TopBarAction(symbolName: "checkmark.shield.fill", label: "Shield") { [weak self] in
                 self?.showShieldPopover()
@@ -586,7 +583,6 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     @objc private func selectZoom(_ sender: NSMenuItem) {
         guard let step = sender.representedObject as? String else { return }
         session.activeTab?.setPageZoom(step)
-        showZoomLevel()
     }
 
     @objc private func showSiteSettingsFromMenu() { showSiteSettings() }
@@ -835,20 +831,10 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         }?.offset ?? (steps.firstIndex(of: "1") ?? 0)
         let index = min(max(nearest + step, 0), steps.count - 1)
         tab.setPageZoom(steps[index])
-        showZoomLevel()
     }
 
     private func resetZoom() {
         session.activeTab?.setPageZoom("1")
-        showZoomLevel()
-    }
-
-    /// Reflects the active tab's zoom in the top bar's percentage readout.
-    func showZoomLevel() {
-        let zoom = session.activeTab.map {
-            Double($0.currentWebView?.pageZoom ?? SiteSettings.shared.pageZoom(for: $0.url))
-        } ?? 1
-        content.topBar.zoomControl.setPercent(Int((zoom * 100).rounded()))
     }
 
     /// One button for every extension rather than one each: the bar is
