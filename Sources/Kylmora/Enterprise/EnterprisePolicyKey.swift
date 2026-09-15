@@ -78,7 +78,7 @@ public enum EnterprisePolicyKey: String, CaseIterable, Sendable {
         case .passwordManagerDisabled: return "Disables saving or autofilling credentials in the browser."
         case .contentBlockingForced: return "Forces ad and tracking protection on without user override."
         case .autoUpdateForced: return "Forces automatic security and software updates."
-        case .dohURL: return "Directs DNS queries to an approved DNS-over-HTTPS endpoint."
+        case .dohURL: return "Preselects and locks this DNS-over-HTTPS resolver in Settings. Page loads use the Mac's DNS, so push a DNS profile through MDM to enforce it."
         case .organizationName: return "Identifies the managing organization in browser chrome."
         case .ramCacheOnlyForced: return "Mandates memory-only caching to protect SSDs and eliminate disk forensics."
         }

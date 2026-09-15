@@ -108,11 +108,75 @@ struct NetworkConfigTests {
         Settings.shared.proxySettings = ProxySettings()
     }
 
+    @Test("Encrypted DNS is a system profile for the chosen resolver, and nothing when off")
+    func dnsProfile() throws {
+        #expect(DNSProfile(provider: .off) == nil)
+        #expect(DNSProfile(provider: .custom(url: "")) == nil)
+        #expect(DNSProfile(provider: .custom(url: "http://plain.example/dns")) == nil, "only https resolvers")
+
+        let profile = try #require(DNSProfile(provider: .cloudflare))
+        #expect(profile.resolverName == "Cloudflare")
+        #expect(profile.serverAddresses.contains("1.1.1.1"))
+        let plist = profile.plist
+        #expect(plist["PayloadType"] as? String == "Configuration")
+        #expect(plist["PayloadScope"] as? String == "System")
+        let payloads = try #require(plist["PayloadContent"] as? [[String: Any]])
+        #expect(payloads.count == 1)
+        #expect(payloads[0]["PayloadType"] as? String == "com.apple.dnsSettings.managed")
+        let dns = try #require(payloads[0]["DNSSettings"] as? [String: Any])
+        #expect(dns["DNSProtocol"] as? String == "HTTPS")
+        #expect(dns["ServerURL"] as? String == "https://cloudflare-dns.com/dns-query")
+        #expect((dns["ServerAddresses"] as? [String])?.count == 4)
+
+        // A custom resolver has no addresses to pin, and is named by its host.
+        let custom = try #require(DNSProfile(provider: .custom(url: "https://dns.example.org/dns-query")))
+        #expect(custom.resolverName == "dns.example.org")
+        let customPayload = try #require((custom.plist["PayloadContent"] as? [[String: Any]])?.first)
+        #expect((customPayload["DNSSettings"] as? [String: Any])?["ServerAddresses"] == nil)
+
+        // Same resolver, same identifiers: reinstalling replaces, not stacks.
+        #expect(DNSProfile(provider: .cloudflare)?.plist["PayloadUUID"] as? String == plist["PayloadUUID"] as? String)
+        #expect(DNSProfile.stableUUID(for: "a") != DNSProfile.stableUUID(for: "b"))
+        #expect(UUID(uuidString: DNSProfile.stableUUID(for: "a")) != nil)
+
+        // It serialises as a plist macOS will read.
+        let data = try profile.data()
+        let back = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        #expect(back?["PayloadIdentifier"] as? String == "com.kylmora.Kylmora.dns.cloudflare")
+    }
+
+    @Test("The Advanced pane writes the profile and hands it to the system")
+    func advancedPaneInstallsProfile() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "kylmora-dns-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let previous = Settings.shared.dohProvider
+        defer { Settings.shared.dohProvider = previous }
+        Settings.shared.dohProvider = .quad9
+
+        let pane = AdvancedSettingsViewController()
+        pane.profileDirectory = directory
+        var opened: URL?
+        pane.openProfile = { opened = $0 }
+        _ = pane.view
+
+        pane.installDNSProfile()
+        let file = try #require(opened)
+        #expect(file.lastPathComponent == "Kylmora Encrypted DNS (Quad9).mobileconfig")
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        let plist = try PropertyListSerialization.propertyList(from: Data(contentsOf: file), format: nil) as? [String: Any]
+        #expect(plist?["PayloadDisplayName"] as? String == "Kylmora Encrypted DNS (Quad9)")
+
+        // Off: nothing to install, and the button says so.
+        Settings.shared.dohProvider = .off
+        pane.updateDNSProfileControls()
+        opened = nil
+        pane.installDNSProfile()
+        #expect(opened == nil)
+    }
+
     @Test("NetworkConfigManager applies configuration without crashing")
     func networkConfigManagerApplication() {
         let manager = NetworkConfigManager.shared
-        manager.applyDoH(provider: .cloudflare)
-        manager.applyDoH(provider: .off)
 
         let store = WKWebsiteDataStore.nonPersistent()
         manager.apply(to: store)

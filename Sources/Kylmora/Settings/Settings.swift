@@ -1073,7 +1073,6 @@ final class Settings {
             if case .custom(let url) = newValue {
                 defaults.set(url, forKey: Key.dohCustomURL)
             }
-            NetworkConfigManager.shared.applyDoH(provider: newValue)
             NotificationCenter.default.post(name: .dohSettingDidChange, object: nil)
         }
     }
@@ -1083,7 +1082,7 @@ final class Settings {
         set {
             defaults.set(newValue, forKey: Key.dohCustomURL)
             if dohProvider.key == "custom" {
-                NetworkConfigManager.shared.applyDoH(provider: .custom(url: newValue))
+                NotificationCenter.default.post(name: .dohSettingDidChange, object: nil)
             }
         }
     }

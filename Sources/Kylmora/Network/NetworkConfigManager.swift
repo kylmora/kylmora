@@ -3,8 +3,12 @@ import Foundation
 import Network
 import WebKit
 
-/// Coordinates system network configuration for Kylmora, including
-/// DNS over HTTPS (DoH) resolution and HTTP / SOCKSv5 proxying.
+/// Applies the HTTP / SOCKSv5 proxy settings to WebKit's data stores.
+///
+/// DNS over HTTPS is deliberately not here. WebKit resolves names in its own
+/// network process, which nothing in this process can reach; the resolver is
+/// set for the whole Mac through a configuration profile instead. See
+/// `DNSProfile`.
 @MainActor
 final class NetworkConfigManager {
     static let shared = NetworkConfigManager()
@@ -12,29 +16,11 @@ final class NetworkConfigManager {
     var allStoresProvider: (() -> [(Space.Identity, WKWebsiteDataStore)])?
     var spaceProxyResolver: ((Space.Identity) -> ProxySettings?)?
 
-    private var activeDoHContext: nw_privacy_context_t?
-
     private init() {}
 
-    /// Initializes and applies stored network preferences on browser startup.
+    /// Applies stored network preferences on browser startup.
     func start() {
-        applyDoH(provider: Settings.shared.dohProvider)
         applyToAllStores()
-    }
-
-    /// Configures DNS over HTTPS (DoH) name resolution.
-    func applyDoH(provider: DoHProvider) {
-        guard let urlString = provider.endpointURLString,
-              let _ = URL(string: urlString) else {
-            activeDoHContext = nil
-            return
-        }
-
-        let dohEndpoint = nw_endpoint_create_url(urlString)
-        let resolver = nw_resolver_config_create_https(dohEndpoint)
-        let context = nw_privacy_context_create("KylmoraDoH")
-        nw_privacy_context_require_encrypted_name_resolution(context, true, resolver)
-        activeDoHContext = context
     }
 
     /// Applies proxy configuration to a single WKWebsiteDataStore.

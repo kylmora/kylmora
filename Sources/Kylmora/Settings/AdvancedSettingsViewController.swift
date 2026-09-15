@@ -13,6 +13,14 @@ final class AdvancedSettingsViewController: NSViewController, NSTextFieldDelegat
     // DNS over HTTPS
     private let dohPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let dohCustomField = NSTextField()
+    private let dohInstallButton = NSButton(title: "Install DNS Profile\u{2026}", target: nil, action: nil)
+    private let dohStatusLabel = NSTextField(wrappingLabelWithString: "")
+    /// Where the profile goes. Downloads, so it can be found again and handed
+    /// to an MDM; tests point it elsewhere.
+    var profileDirectory: URL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        ?? FileManager.default.temporaryDirectory
+    /// How the written profile is handed to the system; tests replace it.
+    var openProfile: (URL) -> Void = { NSWorkspace.shared.open($0) }
 
     // Proxy
     private let proxyCheckbox = NSButton(checkboxWithTitle: "Enable proxy server", target: nil, action: nil)
@@ -68,7 +76,7 @@ final class AdvancedSettingsViewController: NSViewController, NSTextFieldDelegat
         )
 
         // MARK: - DNS over HTTPS
-        form.addSection("DNS over HTTPS")
+        form.addSection("Encrypted DNS")
         dohPopup.target = self
         dohPopup.action = #selector(dohChanged)
         dohPopup.removeAllItems()
@@ -84,7 +92,15 @@ final class AdvancedSettingsViewController: NSViewController, NSTextFieldDelegat
         // The row goes where the field goes: it is only shown for a custom
         // resolver.
         form.addContinuation(SettingsForm.fill(dohCustomField))
-        form.addNote("Encrypts domain name queries over HTTPS (RFC 8484) using Apple Network.framework encrypted name resolution to protect lookups from local network surveillance and ISP hijacking.")
+
+        dohInstallButton.bezelStyle = .rounded
+        dohInstallButton.target = self
+        dohInstallButton.action = #selector(installDNSProfile)
+        form.addContinuation(dohInstallButton)
+        dohStatusLabel.font = Style.Fonts.settingsNote
+        dohStatusLabel.textColor = Style.Colors.secondaryText
+        form.addNote(dohStatusLabel)
+        form.addNote("Pages load in WebKit's own network process, which uses the Mac's DNS settings, so a browser cannot switch encrypted DNS on by itself. macOS takes the setting from a configuration profile: Kylmora writes one for the resolver above, you approve it once in System Settings ▸ General ▸ Device Management, and from then on every app on this Mac, Kylmora included, sends its DNS queries over HTTPS (RFC 8484). Remove the profile there to go back.")
 
         // MARK: - Proxy
         form.addSection("Network proxy")
@@ -181,6 +197,7 @@ final class AdvancedSettingsViewController: NSViewController, NSTextFieldDelegat
             dohCustomField.stringValue = url
         }
         dohCustomField.isHidden = dohPopup.indexOfSelectedItem != 5
+        updateDNSProfileControls()
 
         // Proxy
         let proxy = settings.proxySettings
@@ -242,11 +259,44 @@ final class AdvancedSettingsViewController: NSViewController, NSTextFieldDelegat
         }
         dohCustomField.isHidden = index != 5
         settings.dohProvider = provider
+        updateDNSProfileControls()
     }
 
     @objc private func dohCustomFieldChanged() {
         if dohPopup.indexOfSelectedItem == 5 {
             settings.dohProvider = .custom(url: dohCustomField.stringValue)
+        }
+        updateDNSProfileControls()
+    }
+
+    /// The button only offers what can be written: a resolver with an
+    /// https endpoint. The label says what the profile will do.
+    func updateDNSProfileControls() {
+        if let profile = DNSProfile(provider: settings.dohProvider) {
+            dohInstallButton.isEnabled = true
+            dohInstallButton.title = "Install \(profile.resolverName) DNS Profile\u{2026}"
+            dohStatusLabel.stringValue = "Writes \(profile.fileName) to Downloads and opens it for approval. Once approved, the whole Mac resolves names through \(profile.serverURL)."
+        } else {
+            dohInstallButton.isEnabled = false
+            dohInstallButton.title = "Install DNS Profile\u{2026}"
+            if case .custom = settings.dohProvider {
+                dohStatusLabel.stringValue = "Enter an https:// resolver address to make a profile for it."
+            } else {
+                dohStatusLabel.stringValue = "Off: the Mac keeps the DNS settings of the network it is on."
+            }
+        }
+    }
+
+    /// Writes the profile for the chosen resolver and hands it to macOS,
+    /// which lists it under Device Management for the user to approve.
+    @objc func installDNSProfile() {
+        guard let profile = DNSProfile(provider: settings.dohProvider) else { return }
+        do {
+            let file = try profile.write(to: profileDirectory)
+            openProfile(file)
+            dohStatusLabel.stringValue = "Profile written to \(file.path). Approve it in System Settings ▸ General ▸ Device Management to switch the Mac to \(profile.resolverName)."
+        } catch {
+            dohStatusLabel.stringValue = "Could not write the profile: \(error.localizedDescription)"
         }
     }
 
