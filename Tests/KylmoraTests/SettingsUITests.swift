@@ -577,6 +577,33 @@ struct SettingsControlSkinTests {
         view.subviews.flatMap { ($0 as? T).map { [$0] } ?? all(type, in: $0) }
     }
 
+    @Test(
+        "What a space looks like is one card, down to its rim and its theme file",
+        arguments: ["Window border", "Theme file"]
+    )
+    func spaceLooksAreOneCard(row: String) {
+        // The rim and the .kylmoratheme are both things Customized gives a
+        // space, alongside its fill, colour and transparency. On cards of
+        // their own they read as window-wide settings that happened to be
+        // sitting in the space editor.
+        guard let form = form(for: .spaces) else { return }
+        func labels(in view: NSView) -> [String] {
+            view.subviews.flatMap { child -> [String] in
+                if let field = child as? NSTextField { return [field.stringValue] }
+                return labels(in: child)
+            }
+        }
+        let cards = all(SettingsCardView.self, in: form)
+        guard let spaceCard = cards.first(where: { labels(in: $0).contains("Space name") }) else {
+            Issue.record("the Spaces pane should have a card for the selected space")
+            return
+        }
+        #expect(
+            labels(in: spaceCard).contains(row),
+            "\(row) is on another card: \(cards.map { labels(in: $0).filter { !$0.isEmpty }.first ?? "?" })"
+        )
+    }
+
     @Test("No system pop-up ever draws itself", arguments: SettingsWindowController.Pane.allCases)
     func noVisiblePopUps(pane: SettingsWindowController.Pane) {
         // The grey bezel that hides its options behind a click is the most

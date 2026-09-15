@@ -51,9 +51,9 @@ final class SpacesSettingsViewController: NSViewController {
     private var gradientNoteRow: SettingsFormRow?
     private var transparencyRow: SettingsFormRow?
     private var transparencyNoteRow: SettingsFormRow?
-    /// The Window border row, its note and the hairline above it, shown only
-    /// for a customised space (the rim is drawn in the space's own colours).
-    private var borderSeparatorRow: SettingsFormRow?
+    /// The Window border row and its note. They sit on the same card as the
+    /// space's colour, and show only for a customised space: the rim is drawn
+    /// in that space's own colours, so there is nothing to draw without one.
     private var borderRow: SettingsFormRow?
     private var borderNoteRow: SettingsFormRow?
 
@@ -222,14 +222,24 @@ final class SpacesSettingsViewController: NSViewController {
         transparencyRow = form.addRow("Transparency", [transparencySlider, transparencyValueLabel])
         transparencyNoteRow = form.addNote("How much the window shows through the colour. 0% is the full wash; 100% fades it away.")
 
-        borderSeparatorRow = form.addSeparator()
-
+        // On the card the space's colour is on, not a card of its own. The rim
+        // is one more thing Customized gives a space, alongside its fill,
+        // colour and transparency, and a card break in front of it read as a
+        // window-wide setting that had wandered into the space editor.
         borderSummary.textColor = .secondaryLabelColor
         borderSummary.lineBreakMode = .byTruncatingTail
         let customizeBorder = NSButton(title: "Customize\u{2026}", target: self, action: #selector(customizeBorder))
         borderRow = form.addRow("Window border", [borderSummary, customizeBorder])
         borderNoteRow = form.addNote("A rim around the window in this space's colours, so a glance at any corner says which identity is in front.")
 
+        // On the same card as the colours it carries. The file is those very
+        // settings written down -- exporting is this card, saved; importing is
+        // this card, filled in -- so a break in front of it fenced a thing off
+        // from the only settings it is about.
+        //
+        // Shown whatever the appearance, unlike the rows above: importing a
+        // theme is one of the ways a plain space becomes a customised one, and
+        // hiding the button until it already was would close that door.
         let exportTheme = NSButton(title: "Export Theme\u{2026}", target: self, action: #selector(exportTheme))
         let importTheme = NSButton(title: "Import Theme\u{2026}", target: self, action: #selector(importTheme))
         form.addRow("Theme file", [exportTheme, importTheme])
@@ -538,7 +548,6 @@ final class SpacesSettingsViewController: NSViewController {
 
         // The window border is drawn in the space's own colours, so it belongs
         // with Customized too -- hidden for the plain presets and Website.
-        borderSeparatorRow?.isHidden = !customised
         borderRow?.isHidden = !customised
         borderNoteRow?.isHidden = !customised
         let transparency = (1 - space.look.washOpacity) * 100
