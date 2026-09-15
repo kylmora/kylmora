@@ -95,6 +95,29 @@ struct URLResolverTests {
 
 @Suite("Quick searches and custom engines")
 struct SearchEngineTests {
+    @Test("A bang at either end searches that engine: !g cats, cats !g")
+    func bangs() {
+        let wiki = SearchEngine.custom(name: "Wikipedia", address: "https://en.wikipedia.org/w/index.php?search=%s", keyword: "w")!
+        let engines = SearchEngine.all + [wiki]
+
+        #expect(URLResolver.resolve("!g cats", using: .duckDuckGo, engines: engines)?.host() == "www.google.com")
+        #expect(URLResolver.resolve("cats !g", using: .duckDuckGo, engines: engines)?.host() == "www.google.com")
+        let wikiURL = URLResolver.resolve("!w cats and dogs", using: .duckDuckGo, engines: engines)
+        #expect(wikiURL?.host() == "en.wikipedia.org")
+        #expect(wikiURL?.query()?.contains("search=cats%20and%20dogs") == true)
+        #expect(URLResolver.quickSearch("black holes !W", engines: engines)?.query == "black holes")
+
+        // A bang nobody defined is an ordinary search, exclamation mark and all.
+        let plain = URLResolver.resolve("!zz cats", using: .duckDuckGo, engines: engines)
+        #expect(plain?.host() == "duckduckgo.com")
+        #expect(plain?.query()?.contains("zz") == true)
+        // A bang alone has nothing to search for.
+        #expect(URLResolver.quickSearch("!g", engines: engines) == nil)
+        // "!" by itself is not a bang, and neither is "!!g".
+        #expect(URLResolver.quickSearch("! cats", engines: engines) == nil)
+        #expect(URLResolver.quickSearch("!!g cats", engines: engines) == nil)
+    }
+
     @Test("A keyword and a space search that engine; a keyword alone does not")
     func quickSearch() {
         let wiki = SearchEngine.custom(name: "Wikipedia", address: "https://en.wikipedia.org/w/index.php?search=%s", keyword: "w")!

@@ -618,6 +618,46 @@ enum CommandCatalog {
             keywords: ["standalone", "focus", "window", "chromeless", "web app", "ssb"]
         ),
         CommandCandidate(
+            id: "print-page",
+            title: "Print Page\u{2026}",
+            subtitle: "Print the page with the standard print panel",
+            symbolName: "printer",
+            shortcut: "⌘P",
+            keywords: ["print", "printer", "paper", "page setup"]
+        ),
+        CommandCandidate(
+            id: "export-pdf",
+            title: "Export Page as PDF\u{2026}",
+            subtitle: "Save the whole page as a PDF file",
+            symbolName: "doc.richtext",
+            shortcut: "",
+            keywords: ["pdf", "export", "save", "print", "document"]
+        ),
+        CommandCandidate(
+            id: "view-source",
+            title: "View Page Source",
+            subtitle: "Open the page's HTML in a new tab, with line numbers",
+            symbolName: "chevron.left.forwardslash.chevron.right",
+            shortcut: "⌥⇧⌘U",
+            keywords: ["source", "html", "markup", "code", "view source", "developer"]
+        ),
+        CommandCandidate(
+            id: "copy-markdown-link",
+            title: "Copy as Markdown Link",
+            subtitle: "Copy [title](address) to the clipboard",
+            symbolName: "text.badge.checkmark",
+            shortcut: "",
+            keywords: ["copy", "markdown", "link", "md", "clipboard", "share"]
+        ),
+        CommandCandidate(
+            id: "copy-title-url",
+            title: "Copy Title and URL",
+            subtitle: "Copy the page title on one line and the address on the next",
+            symbolName: "doc.on.clipboard",
+            shortcut: "",
+            keywords: ["copy", "title", "url", "address", "clipboard", "share"]
+        ),
+        CommandCandidate(
             id: "translate-page",
             title: "Translate Page",
             subtitle: "Translate active web page on-device (Private & Local)",

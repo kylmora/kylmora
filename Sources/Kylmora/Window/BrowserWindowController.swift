@@ -1786,6 +1786,16 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             togglePinActiveTab(nil)
         case "copy-url":
             copyCurrentURL(nil)
+        case "copy-markdown-link":
+            copyMarkdownLink(nil)
+        case "copy-title-url":
+            copyTitleAndURL(nil)
+        case "print-page":
+            printPage(nil)
+        case "export-pdf":
+            exportPageAsPDF(nil)
+        case "view-source":
+            viewPageSource(nil)
         case "next-tab":
             selectNextTab(nil)
         case "previous-tab":

@@ -301,6 +301,38 @@ final class ShortcutManager {
             defaultModifiers: [.command, .option]
         ),
         ShortcutDefinition(
+            id: "print-page",
+            title: "Print Page",
+            category: .tools,
+            selector: #selector(BrowserWindowController.printPage(_:)),
+            defaultKey: "p",
+            defaultModifiers: [.command]
+        ),
+        ShortcutDefinition(
+            id: "export-pdf",
+            title: "Export Page as PDF",
+            category: .tools,
+            selector: #selector(BrowserWindowController.exportPageAsPDF(_:)),
+            defaultKey: "",
+            defaultModifiers: []
+        ),
+        ShortcutDefinition(
+            id: "view-source",
+            title: "View Page Source",
+            category: .tools,
+            selector: #selector(BrowserWindowController.viewPageSource(_:)),
+            defaultKey: "u",
+            defaultModifiers: [.command, .option, .shift]
+        ),
+        ShortcutDefinition(
+            id: "copy-markdown-link",
+            title: "Copy as Markdown Link",
+            category: .navigation,
+            selector: #selector(BrowserWindowController.copyMarkdownLink(_:)),
+            defaultKey: "",
+            defaultModifiers: []
+        ),
+        ShortcutDefinition(
             id: "translate-page",
             title: "Translate Page",
             category: .tools,

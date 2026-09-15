@@ -40,12 +40,36 @@ enum URLResolver {
 
     /// `g cats` with an engine whose keyword is `g`. The keyword alone is not
     /// a search; there is nothing to search for.
+    ///
+    /// A bang works too, at either end: `!g cats` and `cats !g` search the
+    /// engine whose keyword is `g`, the way DuckDuckGo's own bangs read.
     static func quickSearch(_ text: String, engines: [SearchEngine]) -> (engine: SearchEngine, query: String)? {
-        guard let space = text.firstIndex(where: \.isWhitespace) else { return nil }
-        let word = text[..<space].lowercased()
-        let query = text[space...].trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty, let engine = engines.first(where: { $0.keyword == word }) else { return nil }
-        return (engine, query)
+        let words = text.split(whereSeparator: \.isWhitespace)
+        guard words.count >= 2 else { return nil }
+
+        func engine(forKeyword word: Substring) -> SearchEngine? {
+            let keyword = word.lowercased()
+            return engines.first(where: { $0.keyword == keyword })
+        }
+
+        if let engine = engine(forKeyword: words[0]) {
+            return (engine, words.dropFirst().joined(separator: " "))
+        }
+        if let bang = bang(in: words[0]), let engine = engine(forKeyword: bang) {
+            return (engine, words.dropFirst().joined(separator: " "))
+        }
+        if let last = words.last, let bang = bang(in: last), let engine = engine(forKeyword: bang) {
+            return (engine, words.dropLast().joined(separator: " "))
+        }
+        return nil
+    }
+
+    /// The keyword in `!keyword`, or nil when the word is not a bang.
+    private static func bang(in word: Substring) -> Substring? {
+        guard word.count >= 2, word.first == "!" else { return nil }
+        let keyword = word.dropFirst()
+        guard !keyword.contains("!") else { return nil }
+        return keyword
     }
 
     /// Schemes that are legitimately written without `//` after the colon.

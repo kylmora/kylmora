@@ -96,13 +96,21 @@ configuration profile or a `policies.json`; a sample profile is in
   link in Settings, or install a `.zip`, `.crx`, `.xpi` or an unpacked folder
   (needs macOS 15.4)
 - Search engines with keywords, custom engines from any site's search box, and a
-  separate engine for private spaces
+  separate engine for private spaces. `g cats`, `!g cats` and `cats !g` all
+  search the engine whose keyword is `g`
 - Privacy controls: tracking parameters stripped from links, scheduled history and
   cookie removal, a website-data manager, a reset, local crash reports you decide
   about, and a custom user agent
 - Per-website settings — twenty of them — each with a default and per-site
   exceptions: reader mode, auto-play, zoom, pop-ups, notifications, camera,
   microphone, location, JavaScript, cookies, and more
+- Page translation with Apple's on-device model (macOS 15 and later); the text
+  never leaves the Mac, and the page updates as each part comes back
+- Print and Page Setup through WebKit's own pagination, Export as PDF, View
+  Page Source with line numbers, Copy as Markdown Link and Copy Title and URL
+- Encrypted DNS: writes a system configuration profile for Cloudflare, Quad9,
+  Google, AdGuard or a custom resolver, since page loads use the Mac's DNS and
+  only a profile can switch that to DNS over HTTPS
 - System WebKit, no bundled engine
 
 ## Requirements
@@ -160,6 +168,8 @@ Tools/                make-icon.py, measure.sh
 | Cmd-R | Reload |
 | Cmd-. | Stop loading |
 | Cmd-F | Find in page |
+| Cmd-P | Print |
+| Cmd-Opt-Shift-U | View page source |
 | Cmd-G / Cmd-Shift-G | Find next / previous |
 | Cmd-Opt-L | Downloads |
 | Cmd-[ / Cmd-] | Back / forward |
