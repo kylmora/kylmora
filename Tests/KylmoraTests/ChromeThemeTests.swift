@@ -256,7 +256,7 @@ struct ChromeThemeTests {
 
 
 /// The toolbar-button list in Settings > Browsing.
-@Suite("The toolbar button list lines up")
+@Suite("The toolbar button list is a list of this app")
 @MainActor
 struct ToolbarSettingsListTests {
     private func laidOutPane() -> NSView {
@@ -267,46 +267,85 @@ struct ToolbarSettingsListTests {
         return pane.view
     }
 
-    /// Every control in the list, by the name it carries in its identifier.
-    private func controls(in root: NSView) -> (checks: [NSButton], arrows: [NSButton]) {
+    /// One switch per toolbar button, found by the name it carries.
+    private func toggles(in root: NSView) -> [SettingsToggle] {
         let names = Set(ToolbarLayout.catalog.map(\.label))
-        let buttons = UITestSupport.buttons(in: root).filter {
-            names.contains($0.identifier?.rawValue ?? "")
+        return UITestSupport.descendants(of: root)
+            .compactMap { $0 as? SettingsToggle }
+            .filter { names.contains($0.identifier?.rawValue ?? "") }
+    }
+
+    private func rows(in root: NSView) -> [NSView] {
+        toggles(in: root).compactMap(\.superview)
+    }
+
+    private func column(_ view: NSView, in root: NSView) -> CGFloat {
+        (view.convert(view.bounds, to: root).minX * 100).rounded()
+    }
+
+    @Test("Shown or hidden is this app's switch, not AppKit's tickbox")
+    func togglesAreOurs() {
+        // Every other boolean in this window is one of these. Ten blue ticks in
+        // the middle of a page of them is the loudest possible way to say that
+        // this list was built by somebody else.
+        let root = laidOutPane()
+        #expect(toggles(in: root).count == ToolbarLayout.catalog.count)
+
+        let names = Set(ToolbarLayout.catalog.map(\.label))
+        let tickboxes = UITestSupport.buttons(in: root).filter {
+            $0.isCheckboxLike && names.contains($0.identifier?.rawValue ?? "")
         }
-        let checks = buttons.filter { $0.isCheckboxLike }
-        let arrows = buttons.filter { !$0.isCheckboxLike }
-        return (checks, arrows)
+        #expect(tickboxes.isEmpty, "\(tickboxes.count) rows still use AppKit's checkbox")
     }
 
-    @Test("Every row's checkbox starts in the same column")
-    func checkboxesAlign() throws {
-        // Each row used to be its own horizontal stack, and an NSImageView
-        // sizes itself to its symbol. SF Symbols are not all the same width,
-        // so the checkbox, its label and the two arrows each began at a
-        // different x on every row -- the whole list read as broken.
+    @Test("The arrows are the chrome's own buttons")
+    func arrowsAreOurs() {
         let root = laidOutPane()
-        let (checks, arrows) = controls(in: root)
-        #expect(checks.count == ToolbarLayout.catalog.count)
+        let arrows = rows(in: root).flatMap { $0.subviews.compactMap { $0 as? IconButton } }
         #expect(arrows.count == ToolbarLayout.catalog.count * 2)
-
-        let columns = Set(checks.map { ($0.convert($0.bounds, to: root).minX * 100).rounded() })
-        #expect(columns.count == 1, "checkboxes start at \(columns.count) different x positions")
     }
 
-    @Test("Both arrows keep their own column too")
-    func arrowsAlign() throws {
+    @Test("Names start in one column and the controls end in one")
+    func rowsLineUp() {
+        // Each row used to size itself to its own contents, and an NSImageView
+        // takes the width of its symbol. SF Symbols are not all the same width,
+        // so the control, the name and the arrows each began at a different x
+        // on every row -- the whole list read as broken.
         let root = laidOutPane()
-        let (_, arrows) = controls(in: root)
-        let columns = Set(arrows.map { ($0.convert($0.bounds, to: root).minX * 100).rounded() })
-        // Two: one for the up arrow, one for the down arrow.
-        #expect(columns.count == 2, "arrows sit in \(columns.count) columns, not 2")
+        let list = rows(in: root)
+        #expect(list.count == ToolbarLayout.catalog.count)
+
+        let names = list.compactMap { $0.subviews.compactMap { $0 as? NSTextField }.first }
+        #expect(Set(names.map { column($0, in: root) }).count == 1, "names start ragged")
+
+        let switches = toggles(in: root)
+        #expect(Set(switches.map { column($0, in: root) }).count == 1, "switches end ragged")
+
+        let arrows = list.flatMap { $0.subviews.compactMap { $0 as? IconButton } }
+        #expect(Set(arrows.map { column($0, in: root) }).count == 2, "arrows sit in more than two columns")
+    }
+
+    @Test("The controls are on the trailing edge, where every other row keeps them")
+    func controlsAreTrailing() {
+        let root = laidOutPane()
+        let list = rows(in: root)
+        guard let row = list.first,
+              let name = row.subviews.compactMap({ $0 as? NSTextField }).first,
+              let toggle = toggles(in: root).first
+        else {
+            Issue.record("the list should have rows")
+            return
+        }
+        #expect(column(name, in: root) < column(toggle, in: root))
+        // And the switch is at the far end of the row, not floating mid-way.
+        let rowWidth = row.convert(row.bounds, to: root).maxX
+        #expect(toggle.convert(toggle.bounds, to: root).maxX > rowWidth - 40)
     }
 
     @Test("The first row cannot move up and the last cannot move down")
-    func endsOfTheListCannotMoveFurther() throws {
+    func endsOfTheListCannotMoveFurther() {
         let root = laidOutPane()
-        let (_, arrows) = controls(in: root)
-        let disabled = arrows.filter { !$0.isEnabled }
-        #expect(disabled.count == 2, "only the first up arrow and the last down arrow")
+        let arrows = rows(in: root).flatMap { $0.subviews.compactMap { $0 as? IconButton } }
+        #expect(arrows.filter { !$0.isEnabled }.count == 2)
     }
 }

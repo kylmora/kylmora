@@ -7,13 +7,14 @@ final class BrowsingSettingsViewController: NSViewController {
     private let tabStripCheckbox = NSButton(checkboxWithTitle: "Show a tab bar above the page", target: nil, action: nil)
     /// The toolbar-button list.
     ///
-    /// A grid, not a stack of rows. Each row used to be its own horizontal
-    /// stack, so nothing lined up with anything: an `NSImageView` sizes itself
-    /// to its symbol, and SF Symbols are not all the same width, so the
-    /// checkbox, the label and the two arrows each started at a different x on
-    /// every row. A grid gives the four columns one width apiece, which is the
-    /// whole job.
-    private let toolbarGrid = NSGridView()
+    /// Rows of the same shape every other list in this window uses: the thing
+    /// on the left, its controls on the right, each row the full width of the
+    /// card. Before this each row was its own self-sized stack, so nothing
+    /// lined up -- an `NSImageView` takes the width of its symbol and SF
+    /// Symbols are not all the same width, so the control, the name and the
+    /// arrows each started at a different x on every row -- and the toggles
+    /// were AppKit's own tickboxes sitting on a page of this app's switches.
+    private let toolbarList = NSStackView()
     private let settings: Settings
     private let session: BrowserSession?
     private let https = NSButton(checkboxWithTitle: "Automatic HTTPS upgrade", target: nil, action: nil)
@@ -116,9 +117,10 @@ final class BrowsingSettingsViewController: NSViewController {
         form.addRow("", compactButtons)
 
         form.addSection("Toolbar buttons")
-        toolbarGrid.rowSpacing = 6
-        toolbarGrid.columnSpacing = 10
-        form.addRow("", toolbarGrid)
+        toolbarList.orientation = .vertical
+        toolbarList.alignment = .leading
+        toolbarList.spacing = 2
+        form.addRow("", SettingsForm.fill(toolbarList))
         let resetToolbar = NSButton(title: "Restore Default Toolbar", target: self, action: #selector(resetToolbar))
         resetToolbar.bezelStyle = .rounded
         form.addContinuation(resetToolbar)
@@ -213,31 +215,22 @@ final class BrowsingSettingsViewController: NSViewController {
     }
 
     /// The column a symbol is centred in. Fixed, because the symbols are not
-    /// all the same width and the checkbox beside them has to start in the
-    /// same place on every row.
+    /// all the same width and the name beside them has to start in the same
+    /// place on every row.
     private static let toolbarSymbolColumn: CGFloat = 20
-    /// And the column each arrow is centred in.
-    private static let toolbarArrowColumn: CGFloat = 22
+    /// The arrows, at the size the rest of the chrome draws a small button.
+    private static let toolbarArrowSide: CGFloat = 24
 
-    /// One row per button: a checkbox for shown, arrows for order.
+    /// One row per button: the app's own switch for shown, arrows for order.
     private func rebuildToolbarRows() {
-        for index in stride(from: toolbarGrid.numberOfRows - 1, through: 0, by: -1) {
-            let row = toolbarGrid.row(at: index)
-            // A removed row leaves its views behind, so they are taken out by
-            // hand rather than accumulating one set per rebuild.
-            for cell in 0..<row.numberOfCells {
-                row.cell(at: cell).contentView?.removeFromSuperview()
-            }
-            toolbarGrid.removeRow(at: index)
+        for view in toolbarList.arrangedSubviews {
+            toolbarList.removeArrangedSubview(view)
+            view.removeFromSuperview()
         }
 
         let layout = settings.toolbarLayout
         let names = layout.fullOrder()
         for (index, name) in names.enumerated() {
-            let check = NSButton(checkboxWithTitle: name, target: self, action: #selector(toolbarVisibilityChanged(_:)))
-            check.state = layout.hidden.contains(name) ? .off : .on
-            check.identifier = NSUserInterfaceItemIdentifier(name)
-
             let symbolName = ToolbarLayout.catalog.first { $0.label == name }?.symbolName ?? "questionmark"
             let symbol = NSImageView(
                 image: NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)!
@@ -245,64 +238,75 @@ final class BrowsingSettingsViewController: NSViewController {
             // Template and tinted, so a multicolour symbol does not arrive in
             // its own colours next to nine grey ones.
             symbol.image?.isTemplate = true
-            symbol.contentTintColor = .secondaryLabelColor
+            symbol.contentTintColor = Style.Colors.secondaryText
             symbol.imageScaling = .scaleProportionallyDown
             symbol.setAccessibilityElement(false)
             symbol.translatesAutoresizingMaskIntoConstraints = false
             symbol.widthAnchor.constraint(equalToConstant: Self.toolbarSymbolColumn).isActive = true
 
-            let up = arrowButton("chevron.up", label: "Move \(name) up", name: name,
-                                 action: #selector(toolbarMoveUp(_:)))
+            let label = NSTextField(labelWithString: name)
+            label.font = Style.Fonts.settingsRow
+            label.textColor = Style.Colors.primaryText
+            label.setAccessibilityElement(false)
+
+            let up = IconButton(
+                symbolName: "chevron.up", label: "Move \(name) up", side: Self.toolbarArrowSide
+            ) { [weak self] in self?.moveToolbarButton(name, by: -1) }
             up.isEnabled = index > 0
-            let down = arrowButton("chevron.down", label: "Move \(name) down", name: name,
-                                   action: #selector(toolbarMoveDown(_:)))
+            let down = IconButton(
+                symbolName: "chevron.down", label: "Move \(name) down", side: Self.toolbarArrowSide
+            ) { [weak self] in self?.moveToolbarButton(name, by: 1) }
             down.isEnabled = index < names.count - 1
 
-            toolbarGrid.addRow(with: [symbol, check, up, down])
+            // This app's switch, not AppKit's tickbox. Every other boolean in
+            // this window is one of these, and ten blue ticks in the middle of
+            // a page of them is the single loudest way to say that this list
+            // was built by somebody else.
+            let toggle = SettingsToggle()
+            toggle.setOn(!layout.hidden.contains(name), animated: false)
+            toggle.identifier = NSUserInterfaceItemIdentifier(name)
+            toggle.target = self
+            toggle.action = #selector(toolbarVisibilityChanged(_:))
+            toggle.setAccessibilityLabel(name)
+            NSLayoutConstraint.activate([
+                toggle.widthAnchor.constraint(equalToConstant: SettingsToggle.size.width),
+                toggle.heightAnchor.constraint(equalToConstant: SettingsToggle.size.height)
+            ])
+
+            // The spacer is what right-aligns the controls: the row is the full
+            // width of the card, the name sits at the left of it, and
+            // everything else is pushed to the trailing edge -- the shape every
+            // other row in this window has.
+            let row = NSStackView(views: [symbol, label, NSView(), up, down, toggle])
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = 8
+            row.translatesAutoresizingMaskIntoConstraints = false
+            row.setHuggingPriority(.init(1), for: .horizontal)
+            toolbarList.addArrangedSubview(row)
+            NSLayoutConstraint.activate([
+                row.widthAnchor.constraint(equalTo: toolbarList.widthAnchor),
+                row.heightAnchor.constraint(greaterThanOrEqualToConstant: 30)
+            ])
         }
-
-        // Columns exist only once there are rows in them.
-        guard toolbarGrid.numberOfRows > 0 else { return }
-        toolbarGrid.column(at: 0).xPlacement = .center
-        // The checkbox column takes the width of the longest name, so every
-        // arrow pair sits in the same place however long the names are.
-        toolbarGrid.column(at: 1).xPlacement = .leading
-        for index in 2...3 { toolbarGrid.column(at: index).xPlacement = .center }
-        for index in 0..<toolbarGrid.numberOfRows {
-            toolbarGrid.row(at: index).yPlacement = .center
-        }
     }
 
-    private func arrowButton(_ symbol: String, label: String, name: String, action: Selector) -> NSButton {
-        let button = NSButton(
-            image: NSImage(systemSymbolName: symbol, accessibilityDescription: label)!,
-            target: self,
-            action: action
-        )
-        button.isBordered = false
-        button.identifier = NSUserInterfaceItemIdentifier(name)
-        button.setAccessibilityLabel(label)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        button.widthAnchor.constraint(equalToConstant: Self.toolbarArrowColumn).isActive = true
-        return button
-    }
-
-    @objc private func toolbarVisibilityChanged(_ sender: NSButton) {
-        guard let name = sender.identifier?.rawValue else { return }
+    /// Moves a button up or down the order by one place.
+    private func moveToolbarButton(_ name: String, by offset: Int) {
         var layout = settings.toolbarLayout
-        layout.setHidden(name, sender.state == .off)
+        layout.move(name, by: offset)
         settings.toolbarLayout = layout
-    }
-
-    @objc private func toolbarMoveUp(_ sender: NSButton) { moveToolbarButton(sender, by: -1) }
-    @objc private func toolbarMoveDown(_ sender: NSButton) { moveToolbarButton(sender, by: 1) }
-
-    private func moveToolbarButton(_ sender: NSButton, by delta: Int) {
-        guard let name = sender.identifier?.rawValue else { return }
-        var layout = settings.toolbarLayout
-        layout.move(name, by: delta)
-        settings.toolbarLayout = layout
+        // The order changed, so the rows and which arrows are dead change with
+        // it. Toggling a button does not move anything and rebuilds nothing.
         rebuildToolbarRows()
+    }
+
+    @objc private func toolbarVisibilityChanged(_ sender: NSControl) {
+        guard let name = sender.identifier?.rawValue else { return }
+        let isOn = (sender as? SettingsToggle)?.isOn ?? ((sender as? NSButton)?.state == .on)
+        var layout = settings.toolbarLayout
+        layout.setHidden(name, !isOn)
+        settings.toolbarLayout = layout
     }
 
     @objc private func resetToolbar() {
