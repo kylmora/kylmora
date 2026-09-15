@@ -49,12 +49,27 @@ struct ToolbarLayout: Codable, Equatable, Sendable {
         arrange(Self.catalog.map(\.label), label: { $0 }) + Self.catalog.map(\.label).filter { hidden.contains($0) && !order.contains($0) }
     }
 
+    /// Moves a button so many places along the order.
     mutating func move(_ name: String, by delta: Int) {
+        guard let index = fullOrder().firstIndex(of: name) else { return }
+        move(name, to: index + delta)
+    }
+
+    /// Moves a button to an absolute position.
+    ///
+    /// Taken out and put back in, not swapped with whatever is there. For a
+    /// step of one the two are the same, which is why swapping was good enough
+    /// while the arrows were the only way to reorder. They are not the same for
+    /// anything longer: dragging the first button to the fourth place by
+    /// swapping puts the fourth one first and leaves the two in between where
+    /// they were, which is not what the drag showed you it would do.
+    mutating func move(_ name: String, to destination: Int) {
         var names = fullOrder()
-        guard let index = names.firstIndex(of: name) else { return }
-        let target = index + delta
-        guard names.indices.contains(target) else { return }
-        names.swapAt(index, target)
+        guard let index = names.firstIndex(of: name),
+              names.indices.contains(destination), destination != index
+        else { return }
+        names.remove(at: index)
+        names.insert(name, at: destination)
         order = names
     }
 

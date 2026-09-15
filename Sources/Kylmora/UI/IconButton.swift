@@ -128,14 +128,6 @@ final class IconButton: NSButton {
         set { glyph.contentTintColor = newValue }
     }
 
-    /// A missed `mouseExited` -- the app deactivating with the pointer over
-    /// the button, an overlay opening under it -- would leave the highlight
-    /// painted with nothing hovering. The pointer's real position settles it.
-    private var isPointerInside: Bool {
-        guard let window else { return false }
-        return bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
-    }
-
     override func layout() {
         super.layout()
         highlight?.layout(

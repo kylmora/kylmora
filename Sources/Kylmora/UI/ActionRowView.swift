@@ -97,6 +97,7 @@ final class ActionRowView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingArea = installHoverTracking(replacing: trackingArea)
+        isHovered = isPointerInside
     }
 
     override func mouseEntered(with event: NSEvent) { isHovered = true }

@@ -65,4 +65,58 @@ struct ToolbarLayoutTests {
         #expect(bar.actionButton(labelled: "Shield") == nil)
         #expect(bar.actionButton(labelled: "Reader Mode") != nil)
     }
+
+    @Test("Dragging a button several places takes it there, keeping the rest in order")
+    func moveToAnAbsolutePlace() {
+        // A swap would have been enough while the arrows were the only way to
+        // reorder, because a swap and a move are the same thing one step at a
+        // time. They are not the same over three: swapping the first with the
+        // fourth puts the fourth one first and leaves the two between them
+        // where they were, which is not what a drag showed you it would do.
+        var layout = ToolbarLayout()
+        let before = layout.fullOrder()
+        let first = before[0]
+        layout.move(first, to: 3)
+        let after = layout.fullOrder()
+
+        #expect(after[3] == first)
+        #expect(after[0] == before[1])
+        #expect(after[1] == before[2])
+        #expect(after[2] == before[3])
+        #expect(Set(after) == Set(before), "nothing is lost or invented")
+        #expect(after.count == before.count)
+    }
+
+    @Test("Dragging a button back up is the same move in reverse")
+    func moveUpwards() {
+        var layout = ToolbarLayout()
+        let before = layout.fullOrder()
+        let fourth = before[3]
+        layout.move(fourth, to: 0)
+        let after = layout.fullOrder()
+        #expect(after[0] == fourth)
+        #expect(after[1] == before[0])
+        #expect(after[3] == before[2])
+    }
+
+    @Test("A move of one place is exactly what the arrows always did")
+    func oneStepIsUnchanged() {
+        var moved = ToolbarLayout()
+        var swapped = ToolbarLayout()
+        let names = moved.fullOrder()
+        moved.move(names[2], to: 3)
+        swapped.move(names[2], by: 1)
+        #expect(moved.fullOrder() == swapped.fullOrder())
+    }
+
+    @Test("A move to nowhere leaves the order alone")
+    func moveOutOfRange() {
+        var layout = ToolbarLayout()
+        let before = layout.fullOrder()
+        layout.move(before[0], to: -1)
+        layout.move(before[0], to: before.count)
+        layout.move("Not a button", to: 2)
+        layout.move(before[0], to: 0)
+        #expect(layout.fullOrder() == before)
+    }
 }

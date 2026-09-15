@@ -349,3 +349,95 @@ struct ToolbarSettingsListTests {
         #expect(arrows.filter { !$0.isEnabled }.count == 2)
     }
 }
+
+
+@Suite("Dragging a row into a new place")
+@MainActor
+struct ReorderableStackTests {
+    /// Five rows, top to bottom, in an unflipped view: the first has the
+    /// largest centre, and they are 20 apart.
+    private let drag = ReorderableStackView.Drag(centres: [100, 80, 60, 40, 20], index: 0)
+
+    private func drag(of index: Int) -> ReorderableStackView.Drag {
+        ReorderableStackView.Drag(centres: [100, 80, 60, 40, 20], index: index)
+    }
+
+    @Test("A row that has not moved keeps its place")
+    func restingRowKeepsItsSlot() {
+        for index in 0..<5 {
+            #expect(drag(of: index).target(forOffset: 0) == index)
+        }
+    }
+
+    @Test("A row dragged past one neighbour takes that neighbour's place")
+    func passingOneRow() {
+        // The top row dragged down past the second, and the bottom row up
+        // past the fourth. Just over half a row is enough either way.
+        #expect(drag(of: 0).target(forOffset: -25) == 1)
+        #expect(drag(of: 4).target(forOffset: 25) == 3)
+    }
+
+    @Test("A row dragged to either end lands at that end")
+    func endsOfTheList() {
+        #expect(drag(of: 3).target(forOffset: 500) == 0)
+        #expect(drag(of: 1).target(forOffset: -500) == 4)
+    }
+
+    @Test("The rows the drag passes slide one slot to open a gap")
+    func passedRowsOpenAGap() {
+        // The top row dropped into the fourth slot: the three it passed each
+        // move one place towards the top, and nothing else moves.
+        let moving = drag(of: 0)
+        #expect(moving.shift(forRow: 0, target: 3) == 0, "the dragged row is moved by the pointer")
+        for row in 1...3 {
+            #expect(moving.shift(forRow: row, target: 3) == moving.pitch)
+        }
+        #expect(moving.shift(forRow: 4, target: 3) == 0, "a row the drag never reached")
+    }
+
+    @Test("Dragging upwards pushes the passed rows the other way")
+    func upwardGapGoesTheOtherWay() {
+        let moving = drag(of: 4)
+        for row in 2...3 {
+            #expect(moving.shift(forRow: row, target: 2) == -moving.pitch)
+        }
+        #expect(moving.shift(forRow: 1, target: 2) == 0)
+    }
+
+    @Test("Nothing moves while the row is still over its own slot")
+    func restingGap() {
+        let moving = drag(of: 2)
+        for row in 0..<5 {
+            #expect(moving.shift(forRow: row, target: 2) == 0)
+        }
+    }
+
+    @Test("The rule reads the same in a flipped view")
+    func flippedRunsTheOtherWay() {
+        // Centres rising with the index, which is what a flipped view gives.
+        let flipped = ReorderableStackView.Drag(centres: [20, 40, 60, 80, 100], index: 0)
+        #expect(!flipped.descending)
+        #expect(flipped.target(forOffset: 25) == 1, "the first row dragged past the second")
+        #expect(flipped.target(forOffset: 500) == 4)
+        // And the gap opens towards the top, which is the other direction now.
+        #expect(flipped.shift(forRow: 1, target: 3) == -flipped.pitch)
+    }
+
+    @Test("A single row has nowhere to go")
+    func oneRow() {
+        let alone = ReorderableStackView.Drag(centres: [10], index: 0)
+        #expect(alone.target(forOffset: 999) == 0)
+        #expect(alone.pitch == 0)
+    }
+
+    @Test("The toolbar list is the draggable kind")
+    func toolbarListIsReorderable() {
+        let pane = BrowsingSettingsViewController(settings: .shared)
+        pane.loadViewIfNeeded()
+        let stacks = UITestSupport.descendants(of: pane.view).compactMap { $0 as? ReorderableStackView }
+        #expect(stacks.count == 1)
+        #expect(stacks.first?.onReorder != nil, "nothing is listening for the drop")
+    }
+}
+
+

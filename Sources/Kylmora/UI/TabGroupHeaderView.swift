@@ -196,6 +196,9 @@ final class TabGroupHeaderView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingArea = installHoverTracking(replacing: trackingArea)
+        // A missed exit would strand the remove and customise buttons on a
+        // header the pointer left. See `TabRowView.resyncHover`.
+        isHovered = isPointerInside
     }
 
     override func mouseEntered(with event: NSEvent) { isHovered = true }

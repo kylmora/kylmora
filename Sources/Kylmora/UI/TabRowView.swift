@@ -569,6 +569,7 @@ final class TabRowView: NSTableCellView {
             radius: Style.Metrics.rowCornerRadius,
             scale: highlightScale
         )
+        resyncHover()
         // Both halves of this row's state have been applied by now, so from
         // here on a change is a change the user made and is worth animating.
         if isFresh {
@@ -587,6 +588,18 @@ final class TabRowView: NSTableCellView {
         highlight?.apply(state, appearance: effectiveAppearance, animated: animated && !isFresh)
     }
 
+    /// Drops a hover the pointer has already left.
+    ///
+    /// `mouseExited` is not guaranteed: a list that reloads or scrolls under a
+    /// pointer that never moves, or an app that deactivates with the pointer on
+    /// a row, both leave the row lit with nothing on it -- and, worse, wearing
+    /// a close button, so a row that is not the one under the pointer offers to
+    /// close itself. Checked only while the row believes it is hovered, so the
+    /// common case costs nothing.
+    private func resyncHover() {
+        if isHovered && !isPointerInside { isHovered = false }
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         highlight?.refresh(appearance: effectiveAppearance)
@@ -595,6 +608,10 @@ final class TabRowView: NSTableCellView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingArea = installHoverTracking(replacing: trackingArea)
+        // The tracking area is rebuilt when the row moves or the list changes
+        // shape, which is exactly when an exit event is most likely to have
+        // been missed.
+        isHovered = isPointerInside
     }
 
     override func mouseEntered(with event: NSEvent) { isHovered = true }

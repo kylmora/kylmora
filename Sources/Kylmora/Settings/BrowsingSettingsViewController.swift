@@ -14,7 +14,7 @@ final class BrowsingSettingsViewController: NSViewController {
     /// Symbols are not all the same width, so the control, the name and the
     /// arrows each started at a different x on every row -- and the toggles
     /// were AppKit's own tickboxes sitting on a page of this app's switches.
-    private let toolbarList = NSStackView()
+    private let toolbarList = ReorderableStackView()
     private let settings: Settings
     private let session: BrowserSession?
     private let https = NSButton(checkboxWithTitle: "Automatic HTTPS upgrade", target: nil, action: nil)
@@ -120,6 +120,11 @@ final class BrowsingSettingsViewController: NSViewController {
         toolbarList.orientation = .vertical
         toolbarList.alignment = .leading
         toolbarList.spacing = 2
+        // Dragging is the other way to reorder, and the better one: getting the
+        // last button to the top is nine clicks on an arrow and one drag.
+        toolbarList.onReorder = { [weak self] from, to in
+            self?.moveToolbarButton(from: from, to: to)
+        }
         form.addRow("", SettingsForm.fill(toolbarList))
         let resetToolbar = NSButton(title: "Restore Default Toolbar", target: self, action: #selector(resetToolbar))
         resetToolbar.bezelStyle = .rounded
@@ -298,6 +303,16 @@ final class BrowsingSettingsViewController: NSViewController {
         settings.toolbarLayout = layout
         // The order changed, so the rows and which arrows are dead change with
         // it. Toggling a button does not move anything and rebuilds nothing.
+        rebuildToolbarRows()
+    }
+
+    /// Drops a dragged row into its new place.
+    private func moveToolbarButton(from: Int, to: Int) {
+        var layout = settings.toolbarLayout
+        let names = layout.fullOrder()
+        guard names.indices.contains(from), names.indices.contains(to), from != to else { return }
+        layout.move(names[from], to: to)
+        settings.toolbarLayout = layout
         rebuildToolbarRows()
     }
 
