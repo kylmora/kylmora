@@ -47,6 +47,11 @@ Apple, so they open without a security warning.
 Prefer to build it yourself? See [Building from source](#building-from-source) —
 you'll need macOS 14+ and a Swift 6 toolchain (no Xcode required).
 
+Rolling it out to a fleet? [docs/enterprise-policies.md](docs/enterprise-policies.md)
+covers deploying the `.dmg` through an MDM and locking settings with a
+configuration profile or a `policies.json`; a sample profile is in
+`Resources/Enterprise/`.
+
 ## Features
 
 - One window. Spaces and tabs switch inside it, never by opening another window

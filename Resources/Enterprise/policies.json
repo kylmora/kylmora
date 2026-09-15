@@ -1,0 +1,25 @@
+{
+  "OrganizationName": "Acme Corp",
+
+  "HomepageURL": "https://intranet.acme.com",
+  "NewTabURL": "https://intranet.acme.com/start",
+
+  "DefaultSearchEngine": "duckduckgo",
+  "LockSearchEngine": true,
+
+  "URLBlocklist": ["facebook.com", "*.tiktok.com"],
+  "URLAllowlist": ["careers.facebook.com"],
+
+  "BlockAllExtensions": false,
+  "ExtensionInstallAllowlist": ["cjpalhdlnbpafiamejdnhcphjbkeiagm"],
+  "ExtensionInstallBlocklist": ["hdokiejnpimakedhajhdlcegeplioahd"],
+
+  "DeveloperToolsDisabled": true,
+  "PrivateBrowsingDisabled": true,
+  "PasswordManagerDisabled": false,
+  "ContentBlockingForced": true,
+  "AutoUpdateForced": true,
+  "RAMCacheOnlyForced": false,
+
+  "DNSOverHTTPSURL": "https://dns.acme.com/dns-query"
+}

@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Sample configuration profile for Kylmora.
+
+  Import this into your MDM (Jamf, Intune, Kandji, Mosyle, ...) as a custom
+  profile, or double-click it on one Mac to try it. Edit the values under
+  PayloadContent to suit; remove any key you do not want to enforce. Every key
+  is documented in docs/enterprise-policies.md.
+
+  Replace the two PayloadUUIDs with fresh ones (uuidgen) before deploying, so
+  your profile does not collide with another copy of this sample.
+-->
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadType</key>
+            <string>com.kylmora.Kylmora</string>
+            <key>PayloadIdentifier</key>
+            <string>com.kylmora.Kylmora.policies</string>
+            <key>PayloadUUID</key>
+            <string>6F3A9C2E-4B1D-4E8A-9C7F-2D5E8B1A3C40</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>PayloadDisplayName</key>
+            <string>Kylmora browser policies</string>
+
+            <key>OrganizationName</key>
+            <string>Acme Corp</string>
+
+            <key>HomepageURL</key>
+            <string>https://intranet.acme.com</string>
+            <key>NewTabURL</key>
+            <string>https://intranet.acme.com/start</string>
+
+            <key>DefaultSearchEngine</key>
+            <string>duckduckgo</string>
+            <key>LockSearchEngine</key>
+            <true/>
+
+            <key>URLBlocklist</key>
+            <array>
+                <string>facebook.com</string>
+                <string>*.tiktok.com</string>
+            </array>
+            <key>URLAllowlist</key>
+            <array>
+                <string>careers.facebook.com</string>
+            </array>
+
+            <key>BlockAllExtensions</key>
+            <false/>
+            <key>ExtensionInstallAllowlist</key>
+            <array>
+                <string>cjpalhdlnbpafiamejdnhcphjbkeiagm</string>
+            </array>
+            <key>ExtensionInstallBlocklist</key>
+            <array>
+                <string>hdokiejnpimakedhajhdlcegeplioahd</string>
+            </array>
+
+            <key>DeveloperToolsDisabled</key>
+            <true/>
+            <key>PrivateBrowsingDisabled</key>
+            <true/>
+            <key>PasswordManagerDisabled</key>
+            <false/>
+            <key>ContentBlockingForced</key>
+            <true/>
+            <key>AutoUpdateForced</key>
+            <true/>
+            <key>RAMCacheOnlyForced</key>
+            <false/>
+
+            <key>DNSOverHTTPSURL</key>
+            <string>https://dns.acme.com/dns-query</string>
+        </dict>
+    </array>
+
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadIdentifier</key>
+    <string>com.acme.mdm.kylmora</string>
+    <key>PayloadUUID</key>
+    <string>A1E4D7B0-8C52-4F6E-B3A9-0F1C2D3E4F50</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadDisplayName</key>
+    <string>Kylmora (managed)</string>
+    <key>PayloadDescription</key>
+    <string>Locks the Kylmora browser's homepage, search engine, blocked sites and security settings.</string>
+    <key>PayloadOrganization</key>
+    <string>Acme Corp</string>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadRemovalDisallowed</key>
+    <true/>
+</dict>
+</plist>

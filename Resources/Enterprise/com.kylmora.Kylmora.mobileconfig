@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadDescription</key>
+	<string>Configures corporate management policies, security baselines, and URL filtering for the Kylmora web browser.</string>
+	<key>PayloadDisplayName</key>
+	<string>Kylmora Browser Corporate Policy</string>
+	<key>PayloadIdentifier</key>
+	<string>com.kylmora.Kylmora.enterprise</string>
+	<key>PayloadOrganization</key>
+	<string>Enterprise IT</string>
+	<key>PayloadRemovalDisallowed</key>
+	<true/>
+	<key>PayloadScope</key>
+	<string>System</string>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>8A1F3C45-92E1-4D6C-B2D9-5F3E1A2C3E4F</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>PayloadDescription</key>
+			<string>Managed preferences payload for Kylmora</string>
+			<key>PayloadDisplayName</key>
+			<string>Kylmora Managed Preferences</string>
+			<key>PayloadIdentifier</key>
+			<string>com.kylmora.Kylmora.preferences</string>
+			<key>PayloadType</key>
+			<string>com.kylmora.Kylmora</string>
+			<key>PayloadUUID</key>
+			<string>B4C2D1E0-7A3F-4F8B-9E5C-1D2E3F4A5B6C</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+
+			<!-- Organization Identity -->
+			<key>OrganizationName</key>
+			<string>Corporate IT</string>
+
+			<!-- Navigation & Start -->
+			<key>HomepageURL</key>
+			<string>https://intranet.example.com</string>
+			<key>NewTabURL</key>
+			<string>https://intranet.example.com</string>
+
+			<!-- Search Engine Enforcement -->
+			<key>DefaultSearchEngine</key>
+			<string>duckduckgo</string>
+			<key>LockSearchEngine</key>
+			<true/>
+
+			<!-- URL Filtering (Blocklist & Allowlist) -->
+			<key>URLBlocklist</key>
+			<array>
+				<string>*://*.gambling.com/*</string>
+				<string>*://*.malicious.example/*</string>
+			</array>
+			<key>URLAllowlist</key>
+			<array>
+				<string>https://*.example.com/*</string>
+				<string>https://github.com/*</string>
+			</array>
+
+			<!-- Security & Auditing Restrictions -->
+			<key>DeveloperToolsDisabled</key>
+			<false/>
+			<key>PrivateBrowsingDisabled</key>
+			<false/>
+			<key>PasswordManagerDisabled</key>
+			<false/>
+
+			<!-- Protection Policies -->
+			<key>ContentBlockingForced</key>
+			<true/>
+			<key>AutoUpdateForced</key>
+			<true/>
+
+			<!-- Network & Privacy -->
+			<key>DNSOverHTTPSURL</key>
+			<string>https://cloudflare-dns.com/dns-query</string>
+
+			<!-- Extension Policies -->
+			<key>BlockAllExtensions</key>
+			<false/>
+			<key>ExtensionInstallBlocklist</key>
+			<array/>
+			<key>ExtensionInstallAllowlist</key>
+			<array>
+				<string>*</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

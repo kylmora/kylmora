@@ -3,7 +3,11 @@ BUNDLE_ID   := com.kylmora.Kylmora
 CONFIG      ?= release
 BUILD_DIR   := build
 APP_BUNDLE  := $(BUILD_DIR)/$(APP_NAME).app
-BIN         := $(shell swift build -c $(CONFIG) --show-bin-path)/$(APP_NAME)
+ifeq ($(CONFIG),release)
+BIN ?= .build/out/Products/Release/$(APP_NAME)
+else
+BIN ?= .build/out/Products/Debug/$(APP_NAME)
+endif
 ENTITLEMENTS := Resources/Kylmora.entitlements
 ICON         := Resources/Kylmora.icns
 ICON_MARK    := Resources/Icon/kylmora-mark.png
@@ -18,12 +22,17 @@ ICON_MARK    := Resources/Icon/kylmora-mark.png
 #       --apple-id you@example.com --team-id TEAMID --password <app-specific>
 DEV_ID         ?=
 NOTARY_PROFILE ?=
+# For the installer package: a 'Developer ID Installer: You (TEAMID)'
+# identity, which is a separate certificate from the Application one. Left
+# empty, `make pkg` builds an unsigned package, which an MDM still installs.
+INSTALLER_ID   ?=
+PKG            := $(BUILD_DIR)/$(APP_NAME).pkg
 
 # swift-testing's macro plugin ships in a subdirectory that SwiftPM does not
 # search automatically when only Command Line Tools are installed.
 TESTING_PLUGINS := $(shell xcode-select -p)/usr/lib/swift/host/plugins/testing
 
-.PHONY: all build bundle run test clean size measure notarize icon
+.PHONY: all build bundle run test clean size measure notarize icon pkg
 
 all: bundle
 
@@ -96,6 +105,27 @@ notarize:
 	@xcrun stapler staple "$(APP_BUNDLE)"
 	@spctl --assess --type execute --verbose "$(APP_BUNDLE)"
 	@echo "notarised and stapled $(APP_BUNDLE)"
+
+# An installer package that puts the app in /Applications, for fleets: a
+# device-management tool installs a .pkg silently, where a .dmg needs a person
+# to drag. Built around whatever bundle is in build/ -- run `make bundle` (or
+# CI's notarised one) first, so a stapled app goes in stapled.
+#   make pkg INSTALLER_ID="Developer ID Installer: You (TEAMID)"
+pkg:
+	@test -d "$(APP_BUNDLE)" || { echo "pkg: no $(APP_BUNDLE); run make bundle first"; exit 1; }
+	@rm -f "$(PKG)"
+	@VERSION=$$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$(APP_BUNDLE)/Contents/Info.plist"); \
+	if [ -n "$(strip $(INSTALLER_ID))" ]; then \
+		pkgbuild --component "$(APP_BUNDLE)" --install-location /Applications \
+			--identifier "$(BUNDLE_ID)" --version "$$VERSION" \
+			--sign "$(INSTALLER_ID)" --timestamp "$(PKG)" \
+		&& echo "signed with $(INSTALLER_ID)"; \
+	else \
+		pkgbuild --component "$(APP_BUNDLE)" --install-location /Applications \
+			--identifier "$(BUNDLE_ID)" --version "$$VERSION" "$(PKG)" \
+		&& echo "unsigned (set INSTALLER_ID to sign)"; \
+	fi
+	@echo "built $(PKG)"
 
 clean:
 	swift package clean
