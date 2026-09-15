@@ -91,6 +91,10 @@ struct FolderPlateSlice: Equatable {
     /// plate, which draws each slice on its own.
     let plateTop: CGFloat
     let plateHeight: CGFloat
+    /// Clear space this row carries *below* the plate, when the plate ends
+    /// here and something that is not another card follows it. Zero anywhere
+    /// else. See `FolderPlateGeometry`.
+    var gapBelow: CGFloat = 0
 }
 
 /// The vertical placement each row's slice needs so one plate's fill runs
@@ -98,18 +102,26 @@ struct FolderPlateSlice: Equatable {
 ///
 /// Pure arithmetic over the plate's row heights, kept apart from the view so
 /// the sums can be checked without a table. The header row is taller than its
-/// content by `gap`, an empty strip above the plate; every other row is all
+/// content by `gap`, an empty strip above the plate; the last row may be
+/// taller by `gapBelow`, an empty strip under it; every other row is all
 /// plate.
 enum FolderPlateGeometry {
     /// - Parameter rowHeights: the plate's rows, header first.
     /// - Returns: for each row, the plate top's offset from that row's top
     ///   (flipped, positive down) and the plate's full height.
-    static func slices(rowHeights: [CGFloat], gap: CGFloat) -> [(plateTop: CGFloat, plateHeight: CGFloat)] {
+    /// - Parameter gapBelow: empty space under the plate, carried by its last
+    ///   row. A card is fenced off above by `gap`; without the same below it,
+    ///   a card followed by a loose row crowds that row harder than two plain
+    ///   rows crowd each other.
+    static func slices(
+        rowHeights: [CGFloat], gap: CGFloat, gapBelow: CGFloat = 0
+    ) -> [(plateTop: CGFloat, plateHeight: CGFloat)] {
         guard !rowHeights.isEmpty else { return [] }
-        // The header row's own plate starts below the gap; every other row is
-        // plate top to bottom.
+        // The header row's own plate starts below the gap and the last row's
+        // ends above its own; every other row is plate top to bottom.
         var content = rowHeights
         content[0] -= gap
+        content[content.count - 1] -= gapBelow
         let total = content.reduce(0, +)
 
         var result: [(plateTop: CGFloat, plateHeight: CGFloat)] = []

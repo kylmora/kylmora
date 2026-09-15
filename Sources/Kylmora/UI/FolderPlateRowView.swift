@@ -51,7 +51,10 @@ final class FolderPlateRowView: NSTableRowView {
             // The fill: the flat default sliced per row, or the group's colour
             // over the whole card. The rim, if any, goes on top of either.
             if slice.appearance.fill == .standard {
-                drawDefault(slice.segment, leading: leading, width: width, radius: radius, gap: gap)
+                drawDefault(
+                    slice.segment, leading: leading, width: width,
+                    radius: radius, gap: gap, gapBelow: slice.gapBelow
+                )
             } else {
                 drawGradient(slice, leading: leading, width: width, radius: radius, gap: gap)
             }
@@ -91,7 +94,7 @@ final class FolderPlateRowView: NSTableRowView {
     /// arc is clipped away and it meets the next slice in a straight line.
     private func drawDefault(
         _ segment: FolderPlatePlan.Segment,
-        leading: CGFloat, width: CGFloat, radius: CGFloat, gap: CGFloat
+        leading: CGFloat, width: CGFloat, radius: CGFloat, gap: CGFloat, gapBelow: CGFloat
     ) {
         var rect = bounds
         rect.origin.x = leading
@@ -113,6 +116,13 @@ final class FolderPlateRowView: NSTableRowView {
         if !topContinues {
             if isFlipped { rect.origin.y += gap }
             rect.size.height -= gap
+        }
+        // And the last row may be taller by a gap under the card, which the
+        // plate likewise stops short of. In a flipped view the bottom is maxY,
+        // so only the height changes; otherwise the origin rises with it.
+        if !bottomContinues, gapBelow > 0 {
+            if !isFlipped { rect.origin.y += gapBelow }
+            rect.size.height -= gapBelow
         }
 
         NSGraphicsContext.saveGraphicsState()

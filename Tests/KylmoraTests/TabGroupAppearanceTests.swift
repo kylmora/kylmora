@@ -119,4 +119,31 @@ struct FolderPlateGeometryTests {
     func empty() {
         #expect(FolderPlateGeometry.slices(rowHeights: [], gap: 6).isEmpty)
     }
+
+    @Test("A card leaves room under itself as well as over it")
+    func gapBelowShortensThePlate() {
+        // The last row is taller than the plate by the space under the card,
+        // exactly as the header is taller than it by the space above.
+        let withOut = FolderPlateGeometry.slices(rowHeights: [38, 32, 42], gap: 6)
+        let withIn = FolderPlateGeometry.slices(rowHeights: [38, 32, 42], gap: 6, gapBelow: 10)
+        #expect(withIn[0].plateHeight == withOut[0].plateHeight - 10)
+        // Every row reports the same full height, so the fill stays one shape.
+        #expect(Set(withIn.map(\.plateHeight)).count == 1)
+        // And the rows above the last are unmoved: the space comes off the
+        // bottom, not out of the middle.
+        #expect(withIn[0].plateTop == withOut[0].plateTop)
+        #expect(withIn[1].plateTop == withOut[1].plateTop)
+        #expect(withIn[2].plateTop == withOut[2].plateTop)
+    }
+
+    @Test("A one-row card can carry both gaps at once")
+    func singleRowCardTakesBothGaps() {
+        let placed = FolderPlateGeometry.slices(rowHeights: [48], gap: 6, gapBelow: 10)
+        #expect(placed.count == 1)
+        #expect(placed[0].plateTop == 6)
+        // Typed rather than written inline: an arithmetic literal inside
+        // `#expect` is inferred independently of the value it is compared to.
+        let expected: CGFloat = 48 - 6 - 10
+        #expect(placed[0].plateHeight == expected)
+    }
 }

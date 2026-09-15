@@ -973,7 +973,8 @@ final class SidebarViewController: NSViewController {
         }
         for (id, indices) in rowsOf {
             let heights = indices.map { tableView(tableView, heightOfRow: $0) }
-            let placed = FolderPlateGeometry.slices(rowHeights: heights, gap: gap)
+            let below = indices.last.map { plateGapBelow(row: $0) } ?? 0
+            let placed = FolderPlateGeometry.slices(rowHeights: heights, gap: gap, gapBelow: below)
             var map: [Int: (plateTop: CGFloat, plateHeight: CGFloat)] = [:]
             for (offset, index) in indices.enumerated() where placed.indices.contains(offset) {
                 map[index] = placed[offset]
@@ -990,7 +991,12 @@ final class SidebarViewController: NSViewController {
                     depth: piece.depth,
                     appearance: appearance,
                     plateTop: place?.plateTop ?? 0,
-                    plateHeight: place?.plateHeight ?? 0
+                    plateHeight: place?.plateHeight ?? 0,
+                    // Only the slice that closes the plate carries the space
+                    // under it; the rows above it are plate top to bottom.
+                    gapBelow: piece.segment == .bottom || piece.segment == .single
+                        ? plateGapBelow(row: index)
+                        : 0
                 )
             }
         }
@@ -2006,6 +2012,7 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
         guard rows.indices.contains(row) else { return Style.Metrics.rowHeight }
         if case .group = rows[row] {
             return Style.Metrics.groupHeaderHeight + Style.Metrics.folderPlateGap
+                + plateGapBelow(row: row)
         }
         // The row that owns a plate's rounded bottom corners owns the padding
         // under them too. `plates` is rebuilt with `rows`, so it is already in
@@ -2013,9 +2020,33 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
         // that come from `buildSlices`, which is why this reads `plates`
         // rather than the slices it is in the middle of computing.
         guard plates.indices.contains(row), plates[row].contains(where: { $0.segment == .bottom }) else {
-            return Style.Metrics.rowHeight
+            return Style.Metrics.rowHeight + plateGapBelow(row: row)
         }
         return Style.Metrics.rowHeight + Style.Metrics.folderPlateBottomPadding
+            + plateGapBelow(row: row)
+    }
+
+    /// Clear space a card leaves under itself, before whatever comes next.
+    ///
+    /// A card is fenced off above by `folderPlateGap`, carried by its header's
+    /// row. Nothing carried the same below it, so a card followed by a loose
+    /// tab left three points between the card's edge and that tab's pill --
+    /// less than the six two plain rows keep between each other. The card read
+    /// as having caught the row underneath it.
+    ///
+    /// Nothing is added when the next row is another card's header, because
+    /// that header already brings the gap with it, or when the next row is
+    /// still inside a plate this row is also in, because that plate has not
+    /// ended yet.
+    private func plateGapBelow(row: Int) -> CGFloat {
+        guard plates.indices.contains(row), !plates[row].isEmpty else { return 0 }
+        let next = row + 1
+        guard rows.indices.contains(next) else { return 0 }
+        if case .group = rows[next] { return 0 }
+        let mine = Set(plates[row].compactMap(\.groupID))
+        let theirs = Set(plates.indices.contains(next) ? plates[next].compactMap(\.groupID) : [])
+        guard mine.isDisjoint(with: theirs) else { return 0 }
+        return Style.Metrics.folderPlateGap
     }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
