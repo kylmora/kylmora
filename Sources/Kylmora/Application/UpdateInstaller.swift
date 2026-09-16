@@ -19,9 +19,12 @@ import Foundation
 ///   2. Its Team Identifier equals the running app's. A valid Developer ID
 ///      signature from *somebody* is not enough; it has to be the same
 ///      somebody who signed the copy already installed.
-///   3. `spctl --assess --type exec` — Gatekeeper accepts it, which for a
+///   3. It carries a slice this Mac can execute. A release ships an Apple
+///      Silicon only build beside the universal one, and every check above
+///      passes on it even on an Intel Mac.
+///   4. `spctl --assess --type exec` — Gatekeeper accepts it, which for a
 ///      release built by our own workflow means Apple notarised it.
-///   4. Its version is actually newer than the running one, so a downgrade
+///   5. Its version is actually newer than the running one, so a downgrade
 ///      cannot be served as an update.
 ///
 /// Any of those failing stops the install with a reason, and nothing on disk
@@ -46,6 +49,7 @@ enum UpdateInstaller {
         case noAppInImage
         case signatureRejected(String)
         case wrongTeam(expected: String, found: String)
+        case wrongArchitecture(found: String, running: String)
         case notNewer(found: String, running: String)
         case stageFailed(String)
         case launchFailed(String)
@@ -72,6 +76,8 @@ enum UpdateInstaller {
                 return "The download is not a signed copy of Kylmora, so it was not installed." + detail(detail_)
             case .wrongTeam(let expected, let found):
                 return "The download is signed by \(found), not by \(expected), so it was not installed."
+            case .wrongArchitecture(let found, let running):
+                return "This download is built for \(found) and will not run on this Mac, which needs \(running). Download the universal version of Kylmora instead."
             case .notNewer(let found, let running):
                 return "The download is version \(found), which is not newer than the \(running) you are running."
             case .stageFailed(let detail_):
@@ -115,6 +121,38 @@ enum UpdateInstaller {
         return nil
     }
 
+    /// The architectures named by `lipo -archs`, which prints them on one
+    /// line separated by spaces: `arm64`, or `x86_64 arm64` for a universal
+    /// build.
+    ///
+    /// Pure, like the Team Identifier parsing above, so it can be checked
+    /// without a binary of each kind to hand.
+    static func parseArchitectures(_ output: String) -> Set<String> {
+        Set(output.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" })
+            .map(String.init))
+    }
+
+    static func architectures(of app: URL) -> Set<String> {
+        guard let executable = Bundle(url: app)?.executableURL else { return [] }
+        let result = run("/usr/bin/lipo", ["-archs", executable.path])
+        guard result.status == 0 else { return [] }
+        return parseArchitectures(result.output)
+    }
+
+    /// The architecture this copy is actually executing as.
+    ///
+    /// Read at compile time, which is exactly right for a universal binary:
+    /// the arm64 slice is the one running on Apple Silicon and the x86_64
+    /// slice the one running on an Intel Mac, so each answers for the machine
+    /// it is on without asking the system anything.
+    static var runningArchitecture: String {
+        #if arch(arm64)
+        return "arm64"
+        #else
+        return "x86_64"
+        #endif
+    }
+
     static func teamIdentifier(of app: URL) -> String? {
         let result = run("/usr/bin/codesign", ["-dv", "--verbose=4", app.path])
         // codesign writes this to standard error.
@@ -155,6 +193,23 @@ enum UpdateInstaller {
             guard found == expectedTeam else {
                 throw Failure.wrongTeam(expected: expectedTeam, found: found)
             }
+        }
+
+        // A correctly signed, notarised, newer build can still be one this Mac
+        // cannot execute: since 0.1.56 the releases include an Apple Silicon
+        // only disk image and package beside the universal ones, and nothing
+        // above would notice the difference. Installing one of those on an
+        // Intel Mac would replace a working browser with a bundle that cannot
+        // launch, and the update feed names a single download for everybody.
+        //
+        // An unreadable answer (no executable, or lipo missing) leaves this
+        // alone rather than blocking the update on a tool that did not run.
+        let slices = architectures(of: candidate)
+        if !slices.isEmpty, !slices.contains(runningArchitecture) {
+            throw Failure.wrongArchitecture(
+                found: slices.sorted().joined(separator: " and "),
+                running: runningArchitecture
+            )
         }
 
         let gatekeeper = run("/usr/sbin/spctl", ["--assess", "--type", "exec", "--verbose=4", candidate.path])

@@ -10,12 +10,33 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build & attach .dmg
+  # One job per architecture variant, run at the same time. The slow part of a
+  # release is notarisation -- Apple's queue, which this repository does not
+  # control -- and doing the universal and Apple Silicon halves in sequence
+  # meant waiting through six submissions end to end. Split, each runner waits
+  # through three of its own, so the release takes about as long as the slower
+  # half rather than the sum of both.
+  #
+  # Each job is self-contained: its own keychain, its own build, its own three
+  # artifacts. Nothing is shared, so nothing has to be synchronised.
+  build:
+    name: Build ${{ matrix.variant }}
     runs-on: macos-26
     # No timeout-minutes on purpose: GitHub's own six-hour job limit is the only
     # cap. Notarisation waits on Apple, which has no guaranteed ceiling, and a
     # shorter cap here only turns a slow submission into a failed build.
+    strategy:
+      # One variant failing should stop the other: a release is all four files
+      # or none, so there is nothing to gain by finishing the survivor.
+      fail-fast: true
+      matrix:
+        include:
+          - variant: universal
+            archs: arm64 x86_64
+            suffix: ''
+          - variant: apple-silicon
+            archs: arm64
+            suffix: '-AppleSilicon'
     steps:
       - uses: actions/checkout@v7
 
@@ -31,13 +52,16 @@ jobs:
 
       # Single source of truth for the version: the git tag. `vX.Y.Z` becomes the
       # app's version, so there is never a version number to bump by hand.
+      #
+      # Both jobs read the same tag and the same run number, so the two variants
+      # of a release always carry identical version and build numbers.
       - name: Stamp the version from the tag
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" Resources/Info.plist
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" Resources/Info.plist
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "Building Kylmora $VERSION (build $GITHUB_RUN_NUMBER)"
+          echo "Building Kylmora $VERSION (build $GITHUB_RUN_NUMBER) -- ${{ matrix.variant }}"
 
       # Put the Developer ID certificate into a throwaway keychain that exists
       # only for this job, so codesign can find the identity.
@@ -88,18 +112,24 @@ jobs:
       # Signed with the hardened runtime and a secure timestamp — both are
       # required for notarisation.
       - name: Build the app bundle
-        run: make bundle DEV_ID="$DEV_ID" ARCHS="arm64 x86_64"
+        run: make bundle DEV_ID="$DEV_ID" ARCHS="${{ matrix.archs }}"
 
       # If ARCHS were ever dropped or misspelled the build would still succeed
       # and still notarize -- and ship an Apple-Silicon-only binary under the
       # name people download for their Intel Mac. Checked, not assumed.
-      - name: Check the universal binary carries both architectures
+      - name: Check the binary carries the architectures it claims
         run: |
           set -e
           bin=build/Kylmora.app/Contents/MacOS/Kylmora
           lipo -info "$bin"
-          lipo -info "$bin" | grep -q x86_64
-          lipo -info "$bin" | grep -q arm64
+          for arch in ${{ matrix.archs }}; do
+            lipo -info "$bin" | grep -q "$arch" || { echo "missing $arch"; exit 1; }
+          done
+          # The universal build must not quietly become single-architecture,
+          # and the Apple Silicon one must not quietly carry Intel code.
+          count=$(lipo -archs "$bin" | wc -w | tr -d ' ')
+          expected=$(echo "${{ matrix.archs }}" | wc -w | tr -d ' ')
+          test "$count" -eq "$expected" || { echo "expected $expected slices, found $count"; exit 1; }
 
       # Apple checks the app, then the ticket is stapled into the bundle so it
       # validates even on a machine that is offline. This blocks for as long as
@@ -111,7 +141,6 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: Tools/notarize.sh build/Kylmora.app
 
-      # Installed once: both disk images in this job are built with it.
       - name: Install dmgbuild
         run: |
           python3 -m venv dmgvenv
@@ -124,7 +153,7 @@ jobs:
       - name: Package the styled .dmg
         run: |
           ./dmgvenv/bin/dmgbuild -D app="build/Kylmora.app" \
-            -s Tools/dmg-settings.py "Kylmora" "build/Kylmora.dmg"
+            -s Tools/dmg-settings.py "Kylmora" "build/Kylmora${{ matrix.suffix }}.dmg"
 
       # The disk image is notarised in its own right, so the download itself is
       # trusted — not just the app once it has been copied out.
@@ -134,10 +163,10 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          codesign --force --sign "$DEV_ID" --timestamp build/Kylmora.dmg
-          Tools/notarize.sh build/Kylmora.dmg
+          codesign --force --sign "$DEV_ID" --timestamp build/Kylmora${{ matrix.suffix }}.dmg
+          Tools/notarize.sh build/Kylmora${{ matrix.suffix }}.dmg
           # What Gatekeeper itself will say when a user opens the download.
-          spctl --assess --type open --context context:primary-signature -vv build/Kylmora.dmg
+          spctl --assess --type open --context context:primary-signature -vv build/Kylmora${{ matrix.suffix }}.dmg
 
       # An installer package for fleets. A device-management tool (Intune,
       # Jamf, Kandji...) installs a .pkg silently as root on every enrolled
@@ -151,7 +180,7 @@ jobs:
       # not notarize unsigned packages -- so the .dmg stays the download for
       # people and the .pkg is for administrators.
       - name: Build the installer .pkg
-        run: make pkg INSTALLER_ID="$INSTALLER_ID"
+        run: make pkg INSTALLER_ID="$INSTALLER_ID" PKG_SUFFIX="${{ matrix.suffix }}"
 
       - name: Notarize the .pkg
         if: env.INSTALLER_ID != ''
@@ -160,52 +189,54 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          Tools/notarize.sh build/Kylmora.pkg
-          spctl --assess --type install -vv build/Kylmora.pkg
+          Tools/notarize.sh build/Kylmora${{ matrix.suffix }}.pkg
+          spctl --assess --type install -vv build/Kylmora${{ matrix.suffix }}.pkg
 
-      # A second, smaller download for people who know their Mac is Apple
-      # Silicon. It needs its own build, signature and notarisation ticket:
-      # a thinned copy of the universal binary is a different binary, and the
-      # fat one's ticket does not cover it.
-      #
-      # Deliberately last. `make bundle` rewrites build/Kylmora.app, so this
-      # runs only once the universal .dmg and .pkg above are already built
-      # from the universal app -- reorder these and the "universal" download
-      # silently becomes Apple Silicon only.
-      - name: Build the app bundle (Apple Silicon only)
-        run: make bundle DEV_ID="$DEV_ID" ARCHS="arm64"
+      # Handed to the publish job below. Only the finished, stapled files --
+      # the app bundle and the build tree are not worth carrying between jobs.
+      - name: Hand the packages to the publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: kylmora-${{ matrix.variant }}
+          path: |
+            build/Kylmora${{ matrix.suffix }}.dmg
+            build/Kylmora${{ matrix.suffix }}.pkg
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Notarize the Apple Silicon app
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: Tools/notarize.sh build/Kylmora.app
-
-      - name: Package the Apple Silicon .dmg
+      # The runner is torn down anyway, but the private key should not outlive
+      # the job even if a later step fails.
+      - name: Remove the signing keychain
+        if: always()
         run: |
-          ./dmgvenv/bin/dmgbuild -D app="build/Kylmora.app" \
-            -s Tools/dmg-settings.py "Kylmora" "build/Kylmora-AppleSilicon.dmg"
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/installer.p12" "$RUNNER_TEMP/Kylmora.app.zip"
 
-      - name: Sign and notarize the Apple Silicon .dmg
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          codesign --force --sign "$DEV_ID" --timestamp build/Kylmora-AppleSilicon.dmg
-          Tools/notarize.sh build/Kylmora-AppleSilicon.dmg
-          spctl --assess --type open --context context:primary-signature -vv build/Kylmora-AppleSilicon.dmg
+  # Reached only once both variants are notarized and stapled, so an
+  # unnotarised build can never become a release, and a release is never
+  # published with half its downloads missing. Linux: this job only moves
+  # files that are already signed.
+  publish:
+    name: Publish the GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Collect both variants
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
 
-      # Only reached once the app and the disk image are notarized and
-      # stapled, so an unnotarised build can never become a release.
-      - name: Publish the GitHub Release
-        uses: softprops/action-gh-release@v3
+      - name: Show what will be published
+        run: ls -lh dist
+
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
-            build/Kylmora.dmg
-            build/Kylmora-AppleSilicon.dmg
-            build/Kylmora.pkg
+            dist/Kylmora.dmg
+            dist/Kylmora-AppleSilicon.dmg
+            dist/Kylmora.pkg
+            dist/Kylmora-AppleSilicon.pkg
           generate_release_notes: true
           fail_on_unmatched_files: true
           draft: false
@@ -229,16 +260,13 @@ jobs:
 
             ### For IT administrators
 
-            `Kylmora.pkg` installs the app to `/Applications` silently, for
+            | Package | For |
+            |---|---|
+            | `Kylmora.pkg` | Any Mac — Apple Silicon or Intel |
+            | `Kylmora-AppleSilicon.pkg` | Apple Silicon only, a smaller payload |
+
+            Either installs the app to `/Applications` silently, for
             deployment through an MDM such as Jamf, Intune or Kandji. To lock
             settings across a fleet, see
             [docs/enterprise-policies.md](https://github.com/kylmora/kylmora/blob/main/docs/enterprise-policies.md)
             and the sample profile in `Resources/Enterprise/`.
-
-      # The runner is torn down anyway, but the private key should not outlive
-      # the job even if a later step fails.
-      - name: Remove the signing keychain
-        if: always()
-        run: |
-          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
-          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/installer.p12" "$RUNNER_TEMP/Kylmora.app.zip"
