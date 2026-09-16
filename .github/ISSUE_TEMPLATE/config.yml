@@ -1,1 +1,16 @@
+# No blank issues: every report starts from a template, so the version and the
+# steps are there the first time and nobody has to be asked for them.
 blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/kylmora/kylmora/security/advisories/new
+    about: Privately, never as a public issue. See SECURITY.md.
+  - name: Email support
+    url: mailto:support@kylmora.com
+    about: If you would rather not have a GitHub account, or the report is not public.
+  - name: Contact form on kylmora.com
+    url: https://kylmora.com/contact
+    about: The same inbox, without a mail client or a GitHub account.
+  - name: Ask a question or share an idea
+    url: https://github.com/kylmora/kylmora/discussions
+    about: For anything that is not yet a bug or a specific request.

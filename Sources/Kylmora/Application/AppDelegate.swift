@@ -235,6 +235,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         showSettings(sender, on: .about)
     }
 
+    // MARK: - Help > getting in touch
+    //
+    // Kylmora has no telemetry and no crash service. Everything we learn about
+    // a bug, someone chose to tell us, so the route has to be short and it has
+    // to be in the menu people already open when they are stuck.
+
+    /// Help > Report a Problem: the sheet, which sends straight to kylmora.com
+    /// with the version, the system and the kind of Mac shown before it goes.
+    /// No mail client required; the sheet offers mail as a second button for
+    /// anyone who wants the message in their own Sent folder.
+    @objc func reportAProblem(_ sender: Any?) {
+        showFeedback(kind: .bug)
+    }
+
+    /// Help > Suggest a Feature: the same sheet, asking what they want instead
+    /// of what went wrong.
+    @objc func suggestAFeature(_ sender: Any?) {
+        showFeedback(kind: .feature)
+    }
+
+    /// Help > Contact Support: an open question, for everything that is
+    /// neither a bug nor an idea.
+    @objc func contactSupport(_ sender: Any?) {
+        showFeedback(kind: .question)
+    }
+
+    /// Held for as long as it is on screen; a window controller with no owner
+    /// is released out from under its own window.
+    private var feedbackWindow: FeedbackWindowController?
+
+    func showFeedback(kind: FeedbackSubmission.Kind) {
+        // One at a time. A second Report a Problem should bring the half-typed
+        // first one forward, not open an empty sheet over the top of it.
+        if let existing = feedbackWindow {
+            existing.showWindow(nil)
+            existing.window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+        let controller = FeedbackWindowController(kind: kind)
+        feedbackWindow = controller
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: controller.window, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.feedbackWindow = nil }
+        }
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func openIssues(_ sender: Any?) {
+        NSWorkspace.shared.open(SupportContact.issues)
+    }
+
+    /// A vulnerability goes to GitHub's private advisory form, which is the
+    /// route SECURITY.md asks for; the address is on that page too.
+    @objc func reportSecurityIssue(_ sender: Any?) {
+        NSWorkspace.shared.open(SupportContact.securityAdvisory)
+    }
+
+    @objc func openWebsite(_ sender: Any?) {
+        NSWorkspace.shared.open(AppInfo.website)
+    }
+
     /// Invokes the Sparkle-style updater flow.
     @objc func checkForUpdates(_ sender: Any?) {
         UpdateController.shared.checkForUpdates(userInitiated: true, in: mainWindowController?.window)
