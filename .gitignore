@@ -21,3 +21,6 @@ signing/
 *.p12
 *.p8
 *.certSigningRequest
+
+WEBSITES.md
+BRAND_EMAIL.md
