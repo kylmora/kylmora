@@ -42,3 +42,26 @@ jobs:
           test -x "$app/Contents/Resources/kylmora-cli"
           codesign --verify --deep --strict "$app"
           echo "bundle ok: $(du -sh "$app" | cut -f1)"
+
+      # An Intel Mac cannot run an arm64-only binary at all -- not even under
+      # Rosetta, which only translates the other way. The release job is the
+      # only thing that builds the universal one, which is the same shape of
+      # gap that used to surface at a tag rather than at a push. Ad-hoc
+      # signed, no secrets and no notarisation: what this proves is that the
+      # second slice still compiles and links, which is the part that breaks.
+      - name: Build a universal bundle
+        run: make bundle ARCHS="arm64 x86_64"
+
+      - name: Check both architectures are present
+        run: |
+          set -e
+          bin=build/Kylmora.app/Contents/MacOS/Kylmora
+          lipo -info "$bin"
+          lipo -info "$bin" | grep -q x86_64
+          lipo -info "$bin" | grep -q arm64
+          # Both slices must still say macOS 14. A universal build that
+          # quietly raised its own deployment target would drop exactly the
+          # older Macs it was added for, and nothing else here would notice.
+          slices=$(otool -l "$bin" | grep -A3 LC_BUILD_VERSION | grep -c "minos 14.0")
+          test "$slices" -eq 2 || { echo "deployment target moved off 14.0"; exit 1; }
+          echo "universal ok: $(du -sh build/Kylmora.app | cut -f1)"
