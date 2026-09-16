@@ -12,6 +12,19 @@ APP_BUNDLE  := $(BUILD_DIR)/$(APP_NAME).app
 # because the release job is the only thing that packages the app, it failed at
 # a tag rather than at a push. Expanded lazily, so this runs after the build.
 BIN ?= $(shell swift build -c $(CONFIG) --show-bin-path)/$(APP_NAME)
+# The version in Resources/Info.plist, which is a placeholder and stays one.
+# Releases are tag-driven: CI sets the real version from `vX.Y.Z` before it
+# builds, so the checked-in value is never edited and never true. Local builds
+# then all claim to be this, which makes the About pane offer an "update" to
+# every release ever cut -- and makes a bug report from a dev build say 0.1.0,
+# which names no code at all. `bundle` stamps the copy inside the app from
+# `git describe` instead, so a dev build says which commit it is.
+#
+# The suffix is deliberate and harmless: AppVersion ignores everything after
+# the first hyphen, so 0.1.54-1-g31bc7eb compares equal to 0.1.54 and the
+# update check stops offering a release you already have -- while the About
+# pane still shows the whole string, so you can see it is not a real 0.1.54.
+PLACEHOLDER_VERSION := 0.1.0
 ENTITLEMENTS := Resources/Kylmora.entitlements
 ICON         := Resources/Kylmora.icns
 ICON_MARK    := Resources/Icon/kylmora-mark.png
@@ -61,6 +74,26 @@ bundle: build $(ICON)
 	@rm -rf "$(APP_BUNDLE)"
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE)/Contents/Resources"
 	@cp Resources/Info.plist "$(APP_BUNDLE)/Contents/Info.plist"
+	@# Give a local build a version that says which commit it is.
+	@#
+	@# Only ever the copy inside the bundle, never Resources/Info.plist: the
+	@# rule is that no version is bumped by hand, and a stamped source file
+	@# would be committed by accident sooner or later.
+	@#
+	@# Only when the plist still reads the placeholder, so a release build --
+	@# where CI has already written the tag into Resources/Info.plist -- is
+	@# left exactly as CI set it. And only when git can name a tag: a shallow
+	@# clone with no tags (CI's own `make bundle` check) falls through quietly
+	@# and keeps the placeholder, as it does today.
+	@current=$$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$(APP_BUNDLE)/Contents/Info.plist" 2>/dev/null); \
+	described=$$(git describe --tags --dirty --always 2>/dev/null | sed 's/^v//'); \
+	tagged=$$(git describe --tags --abbrev=0 2>/dev/null); \
+	if [ "$$current" = "$(PLACEHOLDER_VERSION)" ] && [ -n "$$tagged" ]; then \
+		commits=$$(git rev-list --count HEAD 2>/dev/null || echo 1); \
+		/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $$described" "$(APP_BUNDLE)/Contents/Info.plist"; \
+		/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $$commits" "$(APP_BUNDLE)/Contents/Info.plist"; \
+		echo "local build stamped $$described ($$commits)"; \
+	fi
 	@cp "$(ICON)" "$(APP_BUNDLE)/Contents/Resources/"
 	@printf 'APPL????' > "$(APP_BUNDLE)/Contents/PkgInfo"
 	@cp "$(BIN)" "$(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)"
