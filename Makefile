@@ -1,6 +1,13 @@
 APP_NAME    := Kylmora
 BUNDLE_ID   := com.kylmora.Kylmora
 CONFIG      ?= release
+# Which architectures the binary carries. Empty means "whatever this machine
+# is", which is what a local build wants: building the second slice as well
+# doubles the link for code you cannot run here anyway. CI passes both, so the
+# app that ships runs on Intel Macs as well as Apple Silicon.
+#   make bundle ARCHS="arm64 x86_64"
+ARCHS       ?=
+ARCH_FLAGS  := $(foreach arch,$(ARCHS),--arch $(arch))
 BUILD_DIR   := build
 APP_BUNDLE  := $(BUILD_DIR)/$(APP_NAME).app
 # Where SwiftPM actually put the binary.
@@ -11,7 +18,7 @@ APP_BUNDLE  := $(BUILD_DIR)/$(APP_NAME).app
 # failed on the runner at the copy, after a successful compile and link -- and
 # because the release job is the only thing that packages the app, it failed at
 # a tag rather than at a push. Expanded lazily, so this runs after the build.
-BIN ?= $(shell swift build -c $(CONFIG) --show-bin-path)/$(APP_NAME)
+BIN ?= $(shell swift build -c $(CONFIG) $(ARCH_FLAGS) --show-bin-path)/$(APP_NAME)
 # The version in Resources/Info.plist, which is a placeholder and stays one.
 # Releases are tag-driven: CI sets the real version from `vX.Y.Z` before it
 # builds, so the checked-in value is never edited and never true. Local builds
@@ -62,7 +69,7 @@ SWIFT_FLAGS :=
 endif
 
 build:
-	swift build -c $(CONFIG) $(SWIFT_FLAGS)
+	swift build -c $(CONFIG) $(ARCH_FLAGS) $(SWIFT_FLAGS)
 
 # The app icon is generated from the K mark; see Tools/make-icon.py.
 icon: $(ICON)

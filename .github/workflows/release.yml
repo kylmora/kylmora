@@ -88,7 +88,18 @@ jobs:
       # Signed with the hardened runtime and a secure timestamp — both are
       # required for notarisation.
       - name: Build the app bundle
-        run: make bundle DEV_ID="$DEV_ID"
+        run: make bundle DEV_ID="$DEV_ID" ARCHS="arm64 x86_64"
+
+      # If ARCHS were ever dropped or misspelled the build would still succeed
+      # and still notarize -- and ship an Apple-Silicon-only binary under the
+      # name people download for their Intel Mac. Checked, not assumed.
+      - name: Check the universal binary carries both architectures
+        run: |
+          set -e
+          bin=build/Kylmora.app/Contents/MacOS/Kylmora
+          lipo -info "$bin"
+          lipo -info "$bin" | grep -q x86_64
+          lipo -info "$bin" | grep -q arm64
 
       # Apple checks the app, then the ticket is stapled into the bundle so it
       # validates even on a machine that is offline. This blocks for as long as
@@ -100,14 +111,18 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: Tools/notarize.sh build/Kylmora.app
 
+      # Installed once: both disk images in this job are built with it.
+      - name: Install dmgbuild
+        run: |
+          python3 -m venv dmgvenv
+          ./dmgvenv/bin/pip install --quiet dmgbuild Pillow
+
       # A styled installer image: a compact window, the app beside an
       # /Applications shortcut, and an arrow background. dmgbuild writes the
       # window layout directly (no Finder scripting), so it works headlessly.
       # Built around the stapled app, so what ships already carries its ticket.
       - name: Package the styled .dmg
         run: |
-          python3 -m venv dmgvenv
-          ./dmgvenv/bin/pip install --quiet dmgbuild Pillow
           ./dmgvenv/bin/dmgbuild -D app="build/Kylmora.app" \
             -s Tools/dmg-settings.py "Kylmora" "build/Kylmora.dmg"
 
@@ -148,6 +163,40 @@ jobs:
           Tools/notarize.sh build/Kylmora.pkg
           spctl --assess --type install -vv build/Kylmora.pkg
 
+      # A second, smaller download for people who know their Mac is Apple
+      # Silicon. It needs its own build, signature and notarisation ticket:
+      # a thinned copy of the universal binary is a different binary, and the
+      # fat one's ticket does not cover it.
+      #
+      # Deliberately last. `make bundle` rewrites build/Kylmora.app, so this
+      # runs only once the universal .dmg and .pkg above are already built
+      # from the universal app -- reorder these and the "universal" download
+      # silently becomes Apple Silicon only.
+      - name: Build the app bundle (Apple Silicon only)
+        run: make bundle DEV_ID="$DEV_ID" ARCHS="arm64"
+
+      - name: Notarize the Apple Silicon app
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: Tools/notarize.sh build/Kylmora.app
+
+      - name: Package the Apple Silicon .dmg
+        run: |
+          ./dmgvenv/bin/dmgbuild -D app="build/Kylmora.app" \
+            -s Tools/dmg-settings.py "Kylmora" "build/Kylmora-AppleSilicon.dmg"
+
+      - name: Sign and notarize the Apple Silicon .dmg
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          codesign --force --sign "$DEV_ID" --timestamp build/Kylmora-AppleSilicon.dmg
+          Tools/notarize.sh build/Kylmora-AppleSilicon.dmg
+          spctl --assess --type open --context context:primary-signature -vv build/Kylmora-AppleSilicon.dmg
+
       # Only reached once the app and the disk image are notarized and
       # stapled, so an unnotarised build can never become a release.
       - name: Publish the GitHub Release
@@ -155,6 +204,7 @@ jobs:
         with:
           files: |
             build/Kylmora.dmg
+            build/Kylmora-AppleSilicon.dmg
             build/Kylmora.pkg
           generate_release_notes: true
           fail_on_unmatched_files: true
@@ -163,13 +213,19 @@ jobs:
           body: |
             ### Install
 
-            Download `Kylmora.dmg` below, open it, and drag
-            **Kylmora** to Applications.
+            | Download | For |
+            |---|---|
+            | `Kylmora.dmg` | Any Mac — Apple Silicon or Intel |
+            | `Kylmora-AppleSilicon.dmg` | Apple Silicon only, a smaller download |
+
+            Open it and drag **Kylmora** to Applications. If you are not sure
+            which one you want, take `Kylmora.dmg` — it runs everywhere.
 
             Signed with a Developer ID and notarized by Apple, so it opens
             normally — no security warning to click through.
 
-            Requires macOS 14 or later.
+            Requires macOS 14 or later. Page translation needs macOS 15 and
+            extensions need macOS 15.4; the rest works on macOS 14.
 
             ### For IT administrators
 
