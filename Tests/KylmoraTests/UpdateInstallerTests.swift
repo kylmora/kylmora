@@ -125,6 +125,33 @@ struct UpdateInstallerTests {
         #expect(!UpdateInstaller.canReplace(URL(fileURLWithPath: "/System/Applications/Chess.app")))
     }
 
+    @Test("lipo -archs is read into the slices a bundle carries")
+    func architecturesAreParsed() {
+        // What `lipo -archs` actually prints, with its trailing newline.
+        #expect(UpdateInstaller.parseArchitectures("arm64\n") == ["arm64"])
+        #expect(UpdateInstaller.parseArchitectures("x86_64 arm64\n") == ["x86_64", "arm64"])
+        #expect(UpdateInstaller.parseArchitectures("") == [])
+    }
+
+    @Test("A build for the other kind of Mac is not offered as an update")
+    func wrongArchitectureIsRefused() {
+        // The danger this guards: an Apple Silicon only release is validly
+        // signed, notarised and newer, so nothing else in `verify` objects to
+        // it. On an Intel Mac installing it would replace a working browser
+        // with one that cannot launch.
+        let appleSiliconOnly = UpdateInstaller.parseArchitectures("arm64\n")
+        #expect(!appleSiliconOnly.contains("x86_64"))
+
+        // The universal build is the one that is safe for everybody, which is
+        // why the update feed names it.
+        let universal = UpdateInstaller.parseArchitectures("x86_64 arm64\n")
+        #expect(universal.contains("x86_64"))
+        #expect(universal.contains("arm64"))
+
+        // Whatever this test is running as, the universal build carries it.
+        #expect(universal.contains(UpdateInstaller.runningArchitecture))
+    }
+
     @Test("Every failure explains itself in a sentence")
     func failuresReadAsEnglish() {
         let failures: [UpdateInstaller.Failure] = [
@@ -133,6 +160,7 @@ struct UpdateInstallerTests {
             .noAppInImage,
             .signatureRejected("code object is not signed at all"),
             .wrongTeam(expected: "S5QL4CMLV8", found: "XYZ123"),
+            .wrongArchitecture(found: "arm64", running: "x86_64"),
             .notNewer(found: "0.1.4", running: "0.1.4"),
             .stageFailed("out of space"),
             .launchFailed("permission denied"),

@@ -50,7 +50,11 @@ NOTARY_PROFILE ?=
 # identity, which is a separate certificate from the Application one. Left
 # empty, `make pkg` builds an unsigned package, which an MDM still installs.
 INSTALLER_ID   ?=
-PKG            := $(BUILD_DIR)/$(APP_NAME).pkg
+# A suffix on the package's file name, so an architecture-specific package can
+# sit beside the universal one in the same build/ directory. Empty gives
+# Kylmora.pkg; "-AppleSilicon" gives Kylmora-AppleSilicon.pkg.
+PKG_SUFFIX     ?=
+PKG            := $(BUILD_DIR)/$(APP_NAME)$(PKG_SUFFIX).pkg
 
 # swift-testing's macro plugin ships in a subdirectory that SwiftPM does not
 # search automatically when only Command Line Tools are installed.
