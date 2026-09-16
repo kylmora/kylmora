@@ -85,17 +85,42 @@ enum CrashReporter {
         case .ask:
             let alert = NSAlert()
             alert.messageText = "Kylmora crashed the last time it ran."
-            alert.informativeText = "Keep the crash report? It is a short text file in Kylmora's own folder, and nothing is sent anywhere."
+            alert.informativeText = """
+                Keep the crash report? It is a short text file in Kylmora's own folder, \
+                and nothing is sent anywhere. Send It writes you an email draft with the \
+                top of the report in it -- you read it and press Send, or don't.
+                """
             alert.addButton(withTitle: "Keep Report")
+            alert.addButton(withTitle: "Send It\u{2026}")
             alert.addButton(withTitle: "Delete")
-            if alert.runModal() == .alertFirstButtonReturn { keep(report) }
+            switch alert.runModal() {
+            case .alertFirstButtonReturn:
+                keep(report)
+            case .alertSecondButtonReturn:
+                // Kept as well as sent: the draft carries an excerpt, and the
+                // file the user is shown is the whole thing, to attach if we
+                // ask for it.
+                let saved = keep(report)
+                SupportContact.compose(.crash(SupportContact.excerpt(of: report)))
+                if let saved { NSWorkspace.shared.activateFileViewerSelecting([saved]) }
+            default:
+                return
+            }
         }
     }
 
-    private static func keep(_ report: String) {
+    /// Writes the report into Kylmora's own folder and returns where it went.
+    @discardableResult
+    private static func keep(_ report: String) -> URL? {
         try? FileManager.default.createDirectory(at: reportsDirectory, withIntermediateDirectories: true)
         let stamp = ISO8601DateFormatter().string(from: .now).replacingOccurrences(of: ":", with: "-")
-        try? Data(report.utf8).write(to: reportsDirectory.appending(path: "Kylmora-\(stamp).txt"))
+        let destination = reportsDirectory.appending(path: "Kylmora-\(stamp).txt")
+        do {
+            try Data(report.utf8).write(to: destination)
+            return destination
+        } catch {
+            return nil
+        }
     }
 
     static var reportCount: Int {

@@ -27,7 +27,19 @@ enum MainMenu {
         root.addItem(dynamicMenuItem(titled: "History", delegate: history))
         root.addItem(windowMenuItem())
         root.addItem(submenu("Help", [
-            item("Keyboard Shortcuts", #selector(BrowserWindowController.showShortcutCheatSheet(_:)), "/")
+            item("Keyboard Shortcuts", #selector(BrowserWindowController.showShortcutCheatSheet(_:)), "/"),
+            .separator(),
+            // Kylmora sends nothing on its own, so these are the whole of how
+            // we ever hear that something is wrong. They belong in the menu
+            // macOS has taught people to open when they are stuck.
+            item("Report a Problem\u{2026}", #selector(AppDelegate.reportAProblem(_:))),
+            item("Suggest a Feature\u{2026}", #selector(AppDelegate.suggestAFeature(_:))),
+            item("Contact Support\u{2026}", #selector(AppDelegate.contactSupport(_:))),
+            .separator(),
+            item("Issues on GitHub", #selector(AppDelegate.openIssues(_:))),
+            item("Report a Security Issue\u{2026}", #selector(AppDelegate.reportSecurityIssue(_:))),
+            .separator(),
+            item("\(appName) Website", #selector(AppDelegate.openWebsite(_:)))
         ]))
         ShortcutManager.shared.apply(to: root)
         return root

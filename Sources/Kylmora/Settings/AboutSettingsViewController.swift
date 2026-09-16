@@ -34,6 +34,13 @@ final class AboutSettingsViewController: NSViewController {
             letter at a glance and as a fold of paper on a second look, which is \
             the browser in a shape: simple on the surface, with more underneath.
             """
+        static let contact = """
+            Kylmora collects nothing, so the only way we learn that something is \
+            broken is that you tell us. Write it here and it goes straight to \
+            us -- no mail client needed -- with the version and the kind of Mac \
+            shown to you first, and nothing sent until you press Send. There is \
+            a button for mailing it yourself if you would rather.
+            """
         static let copyright = "© 2026 Kylmora"
     }
 
@@ -41,6 +48,8 @@ final class AboutSettingsViewController: NSViewController {
     private let autoDownloadCheckbox = NSButton(checkboxWithTitle: "Automatically download updates", target: nil, action: nil)
     private let checkButton = NSButton(title: "Check for Updates\u{2026}", target: nil, action: nil)
     private let downloadButton = NSButton(title: "Update Now", target: nil, action: nil)
+    private let reportButton = NSButton(title: "Report a Problem\u{2026}", target: nil, action: nil)
+    private let featureButton = NSButton(title: "Suggest a Feature\u{2026}", target: nil, action: nil)
     private let updateStatus = NSTextField(wrappingLabelWithString: "")
     private var checking = false
     private var downloadURL: URL?
@@ -78,6 +87,9 @@ final class AboutSettingsViewController: NSViewController {
         form.addRow("The logo", Self.paragraph(Copy.logo), alignment: .top)
 
         form.addSeparator()
+        addContactRows(to: form)
+
+        form.addSeparator()
         autoCheckCheckbox.state = Settings.shared.automaticallyCheckForUpdates ? .on : .off
         autoCheckCheckbox.target = self
         autoCheckCheckbox.action = #selector(autoCheckToggled(_:))
@@ -106,6 +118,37 @@ final class AboutSettingsViewController: NSViewController {
 
         form.addSeparator()
         form.addRow("", Self.value(Copy.copyright, secondary: true))
+    }
+
+    // MARK: - Contact
+
+    /// The card that says how to reach us, and opens a draft that is already
+    /// most of the way written.
+    private func addContactRows(to form: SettingsForm) {
+        form.addRow("Contact", Self.paragraph(Copy.contact), alignment: .top)
+        form.addRow("Email", Self.mailLink(SupportContact.Address.support))
+
+        reportButton.target = self
+        reportButton.action = #selector(reportProblem)
+        reportButton.bezelStyle = .rounded
+        featureButton.target = self
+        featureButton.action = #selector(suggestFeature)
+        featureButton.bezelStyle = .rounded
+        form.addRow("", [reportButton, featureButton])
+
+        form.addRow("Issues and ideas", Self.link("github.com/kylmora/kylmora", url: SupportContact.issues))
+        form.addRow("Security", Self.mailLink(SupportContact.Address.security))
+        form.addNote("A vulnerability goes to security@ or to GitHub\u{2019}s private advisory form, never to a public issue. See SECURITY.md.")
+        form.addRow("Press", Self.mailLink(SupportContact.Address.press))
+        form.addRow("Privacy", Self.mailLink(SupportContact.Address.privacy))
+    }
+
+    @objc private func reportProblem() {
+        (NSApp.delegate as? AppDelegate)?.showFeedback(kind: .bug)
+    }
+
+    @objc private func suggestFeature() {
+        (NSApp.delegate as? AppDelegate)?.showFeedback(kind: .feature)
     }
 
     /// The icon, the name, the tagline and the version, centred.
@@ -155,6 +198,11 @@ final class AboutSettingsViewController: NSViewController {
         let field = NSTextField(labelWithString: text)
         if secondary { field.textColor = .secondaryLabelColor }
         return field
+    }
+
+    /// An address shown as itself, linking to a draft addressed to it.
+    private static func mailLink(_ address: String) -> NSTextField {
+        link(address, url: URL(string: "mailto:\(address)") ?? SupportContact.contactPage)
     }
 
     private static func link(_ text: String, url: URL) -> NSTextField {
