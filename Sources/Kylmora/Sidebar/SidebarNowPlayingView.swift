@@ -78,6 +78,28 @@ final class SidebarNowPlayingView: NSView {
         textStack.translatesAutoresizingMaskIntoConstraints = false
         textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
         textStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // A stack does not pass a compression resistance on to what it holds:
+        // what makes it refuse to squeeze its arranged views is the clipping
+        // resistance, which starts at `.defaultHigh`. Left there, the track
+        // title's full width is demanded no matter what the two lines above
+        // say.
+        textStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+
+        // The track title yields before the sidebar does. Same reason as the
+        // space name in `MenuLabelButton`, and the same fix.
+        //
+        // These labels truncate, but truncating is not the same as being
+        // willing to: at the default resistance they still *ask* for their
+        // full width. This card's width is pinned to the sidebar's, so that
+        // ask travels up to the split view, which holds the sidebar at
+        // `.defaultLow` and widens it to grant it. A YouTube title is long,
+        // and the card only appears once something plays -- so the sidebar
+        // was shoved wide the moment a video started and would not be dragged
+        // back, because every layout pass asked for the width again.
+        for view in [titleLabel, subtitleLabel, self] as [NSView] {
+            view.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+            view.setContentHuggingPriority(.init(1), for: .horizontal)
+        }
 
         let controlsStack = NSStackView(views: [playPauseButton, muteButton, pipButton])
         controlsStack.orientation = .horizontal
@@ -100,11 +122,39 @@ final class SidebarNowPlayingView: NSView {
 
             textStack.leadingAnchor.constraint(equalTo: iconView.trailingAnchor, constant: 6),
             textStack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            textStack.trailingAnchor.constraint(lessThanOrEqualTo: controlsStack.leadingAnchor, constant: -6),
+            // Exactly the space between the icon and the controls, not "at
+            // most" it. The text now yields at a priority below its own
+            // hugging, so left free to choose it would choose nothing and the
+            // track title would disappear. This hands it the gap and lets it
+            // truncate inside it.
+            textStack.trailingAnchor.constraint(equalTo: controlsStack.leadingAnchor, constant: -6),
 
             controlsStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             controlsStack.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
+
+        // What actually stops the title asking for room.
+        //
+        // A low compression resistance only says the text *may* be squeezed;
+        // it takes something pushing the other way for it to be. Nothing here
+        // pushed, and a fitting size satisfies even the weakest wish when it
+        // is unopposed -- so the card went on reporting the full width of the
+        // title, which for a YouTube video measured 1604 points against the
+        // 126 of a short one.
+        //
+        // This is that opposition: a width of nothing, ranked one step above
+        // the text's own resistance so it wins that argument, and far below
+        // the card's real width -- which comes, at `.required`, from the
+        // sidebar it is pinned to. So the card still fills the sidebar when it
+        // is drawn; all this decides is the answer to "how little could you
+        // live with", which is the answer that travels up to the split view.
+        //
+        // It goes on the card rather than the text stack for that reason: the
+        // stack has no required width to save it, and squeezing it there
+        // collapsed the title to nothing in the sidebar itself.
+        let squeeze = widthAnchor.constraint(equalToConstant: 0)
+        squeeze.priority = .init(2)
+        squeeze.isActive = true
     }
 
     required init?(coder: NSCoder) {

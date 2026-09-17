@@ -192,6 +192,70 @@ struct MediaControlsTests {
         #expect(nowPlaying.isHidden)
     }
 
+    @Test("A long track title does not shove the sidebar wider")
+    func nowPlayingYieldsRatherThanWidenTheSidebar() {
+        // The card's width is pinned to the sidebar's, and the split view holds
+        // the sidebar at `.defaultLow` -- so anything the card insists on, the
+        // sidebar is widened to grant. A YouTube title is long, and the card
+        // appears the moment a video starts: the sidebar was shoved wide on
+        // opening YouTube and could not be dragged back, because every layout
+        // pass asked for the width again.
+        func fittingWidth(forTitle title: String, artist: String) -> CGFloat {
+            let nowPlaying = SidebarNowPlayingView()
+            let tab = Tab(url: URL(string: "https://www.youtube.com/watch?v=x")!, identity: .standard)
+            tab.setMediaState(
+                isPlaying: true,
+                hasAudio: true,
+                hasVideo: true,
+                isMuted: false,
+                title: title,
+                artist: artist
+            )
+            nowPlaying.update(with: tab)
+            nowPlaying.layoutSubtreeIfNeeded()
+            return nowPlaying.fittingSize.width
+        }
+
+        let short = fittingWidth(forTitle: "Hi", artist: "A")
+        let long = fittingWidth(
+            forTitle: String(repeating: "A very long video title indeed ", count: 8),
+            artist: String(repeating: "A rather long channel name ", count: 8)
+        )
+
+        #expect(long == short, "the title truncates, it does not ask for room")
+        #expect(
+            long < Style.Metrics.sidebarWidth,
+            "what it asks for is under the sidebar's resting width, so playing something cannot push the divider out"
+        )
+    }
+
+    @Test("The track title still gets the room between the icon and the controls")
+    func nowPlayingTitleIsNotSqueezedToNothing() {
+        // The other side of the fix above: the labels yield at a priority below
+        // their own hugging, so left to choose their width they would choose
+        // none and the title would vanish. The gap is handed to them instead.
+        let nowPlaying = SidebarNowPlayingView()
+        let tab = Tab(url: URL(string: "https://www.youtube.com/watch?v=x")!, identity: .standard)
+        tab.setMediaState(
+            isPlaying: true,
+            hasAudio: true,
+            hasVideo: true,
+            isMuted: false,
+            title: "A very long video title indeed, the kind YouTube gives you",
+            artist: "Some Channel"
+        )
+        nowPlaying.update(with: tab)
+        nowPlaying.frame = NSRect(x: 0, y: 0, width: Style.Metrics.sidebarWidth, height: 44)
+        nowPlaying.layoutSubtreeIfNeeded()
+
+        let labels = UITestSupport.textFields(in: nowPlaying)
+        #expect(!labels.isEmpty, "the card has labels to measure")
+        #expect(
+            labels.allSatisfy { $0.frame.width > 0 },
+            "the title is truncated to fit, not squeezed out of existence"
+        )
+    }
+
     @Test("Command catalog includes Picture in Picture and Mute commands")
     func testCommandCatalogMediaCommands() {
         let pip = CommandCatalog.all.first { $0.id == "pip-video" }

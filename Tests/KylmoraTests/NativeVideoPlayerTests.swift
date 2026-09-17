@@ -52,10 +52,32 @@ struct NativeVideoPlayerTests {
         #expect(script.contains("visibilitychange"))
         #expect(script.contains("controls = true"))
         #expect(script.contains("disablePictureInPicture = false"))
-        #expect(script.contains("ytp-chrome-bottom"))
         #expect(script.contains("ytp-skip-ad-button"))
 
         #expect(SiteBehaviourScripts.documentStart.contains(SiteBehaviourScripts.nativeVideoPlayer))
+    }
+
+    @Test("YouTube keeps its own player controls")
+    func youTubeKeepsItsControls() {
+        // Hiding the player's chrome was how the pause button, the scrubber
+        // and fullscreen went missing: the native controls promised in their
+        // place never stood in for them.
+        let script = SiteBehaviourScripts.nativeVideoPlayer
+        #expect(!script.contains("ytp-chrome-bottom"))
+        #expect(!script.contains("ytp-chrome-top"))
+        #expect(!script.contains("ytp-pause-overlay"))
+        #expect(!script.contains("ytp-contextmenu"))
+        // The ad overlays are still swept.
+        #expect(script.contains("ytp-ad-player-overlay"))
+        #expect(script.contains("video-ads"))
+    }
+
+    @Test("A blur is only swallowed when it is the window's own")
+    func blurIsNotSwallowedForEveryField() {
+        // `blur` does not bubble but does capture, so a capturing listener on
+        // the window sees every field's blur too. Swallowing those took away
+        // the event a search box uses to close its suggestions.
+        #expect(SiteBehaviourScripts.nativeVideoPlayer.contains("e.target !== window"))
     }
 
     @Test("CommandCatalog registers toggle-native-video command")

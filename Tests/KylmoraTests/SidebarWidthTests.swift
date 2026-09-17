@@ -92,6 +92,30 @@ struct SidebarWidthTests {
         #expect(session.activeSpace.look.sidebarWidth == 300)
     }
 
+    @Test("The seam can be grabbed, though it is drawn at no width at all")
+    func theDividerHasSomethingToTakeHoldOf() {
+        // The divider is drawn at zero thickness so the page card sits flush
+        // against the sidebar. A rect of zero width catches no mouse, so the
+        // sidebar could not be dragged wider or narrower at all; the rect the
+        // pointer is tested against is widened around the drawn line.
+        let controller = KylmoraSplitViewController()
+        controller.loadView()
+        let split = controller.splitView
+        let drawn = NSRect(x: 245, y: 0, width: 0, height: 800)
+
+        let effective = controller.splitView(
+            split,
+            effectiveRect: drawn,
+            forDrawnRect: drawn,
+            ofDividerAt: 0
+        )
+
+        #expect(effective.width >= 8, "a seam you cannot hit is a seam you cannot drag")
+        #expect(effective.contains(NSPoint(x: 245, y: 400)), "the drawn line is still inside it")
+        #expect(effective.midX == drawn.midX, "and it is centred on the line, not beside it")
+        #expect(effective.height == drawn.height, "the length of the seam is unchanged")
+    }
+
     @Test("Both scopes are offered, shared first")
     func theSettingOffersBoth() {
         #expect(SidebarWidthScope.allCases.map(\.rawValue) == [0, 1])
