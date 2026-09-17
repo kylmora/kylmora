@@ -274,3 +274,61 @@ struct SpaceBadgeTests {
         #expect(SpaceGrid.maximumCellWidth >= longest + chips)
     }
 }
+
+@Suite("A theme file belongs to a space that has a look")
+@MainActor
+struct ThemeFileRowTests {
+    private func all<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+        view.subviews.flatMap { ($0 as? T).map { [$0] } ?? all(type, in: $0) }
+    }
+
+    /// The form row holding the export and import buttons.
+    private func themeFileRow(in view: NSView) -> SettingsFormRow? {
+        guard let button = all(NSButton.self, in: view).first(where: {
+            $0.title.hasPrefix("Export Theme")
+        }) else { return nil }
+        var current: NSView? = button
+        while let found = current {
+            if let row = found as? SettingsFormRow { return row }
+            current = found.superview
+        }
+        return nil
+    }
+
+    private func pane(_ configure: (BrowserSession, Space) -> Void) -> NSView {
+        let session = TestSession.make().0
+        let space = session.activeSpace
+        configure(session, space)
+        let pane = SpacesSettingsViewController(session: session)
+        let view = pane.view
+        view.frame = NSRect(x: 0, y: 0, width: Style.SettingsUI.contentMaxWidth, height: 1600)
+        pane.select(space)
+        view.layoutSubtreeIfNeeded()
+        return view
+    }
+
+    @Test("Hidden for a plain window, which has no look to write down")
+    func hiddenWhenPlain() {
+        // Automatic, Light and Dark: no colour, no gradient, no border. The row
+        // offered to export nothing, under a note listing six things the space
+        // did not have.
+        let view = pane { session, space in
+            // A new space is already plain; said out loud so the test states
+            // the case it is about rather than relying on the default.
+            var look = space.look
+            look.appearance = .system
+            look.gradient = nil
+            session.setLook(look, for: space)
+            session.setTheme(.neutral, for: space)
+        }
+        #expect(themeFileRow(in: view)?.isHidden == true)
+    }
+
+    @Test("Shown once the space has a colour of its own")
+    func shownWhenCustomised() {
+        let view = pane { session, space in
+            session.setCustomColor(.systemTeal, for: space)
+        }
+        #expect(themeFileRow(in: view)?.isHidden == false)
+    }
+}

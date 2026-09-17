@@ -21,6 +21,8 @@ final class Settings {
         static let compactRevealsOnHover = "compactModeRevealsOnHover"
         static let sidebarMode = "sidebarDisplayMode"
         static let sidebarPosition = "sidebarPosition"
+        static let sidebarWidth = "sidebarWidth"
+        static let sidebarWidthPerSpace = "sidebarWidthPerSpace"
         static let sidebarHoverDelay = "sidebarHoverDelay"
         static let sidebarDensity = "sidebarDensity"
         static let showsTabStrip = "showsTabStrip"
@@ -871,6 +873,37 @@ final class Settings {
             defaults.set(newValue == .compact || newValue == .iconsOnly, forKey: Key.compactMode)
             NotificationCenter.default.post(name: .sidebarModeDidChange, object: newValue)
         }
+    }
+
+    /// How wide the sidebar rests, in points.
+    ///
+    /// Remembered across launches. It used to be taken from `Style.Metrics`
+    /// every time a window opened, so dragging the divider lasted exactly as
+    /// long as that window did.
+    var sidebarWidth: CGFloat {
+        get {
+            let stored = defaults.double(forKey: Key.sidebarWidth)
+            guard stored > 0 else { return Style.Metrics.sidebarWidth }
+            // Clamped on the way out rather than only on the way in: the bounds
+            // are what the split view will accept, and a value saved by an
+            // older build -- or on a much wider screen -- has to land inside
+            // them or the window opens with a sidebar it cannot draw.
+            return min(max(stored, Style.Metrics.sidebarMinWidth), Style.Metrics.sidebarMaxWidth)
+        }
+        set { defaults.set(Double(newValue), forKey: Key.sidebarWidth) }
+    }
+
+    /// Whether each space keeps a sidebar width of its own.
+    ///
+    /// Off by default: one width, and dragging the divider in any space sets it
+    /// everywhere, which is what a person expects of a window. On, a space
+    /// remembers how wide you left it and switching spaces restores it -- which
+    /// is worth having when one space is a list of long titles and another is
+    /// six pinned tabs, and worth avoiding otherwise, because the sidebar then
+    /// moves under you every time you switch.
+    var sidebarWidthIsPerSpace: Bool {
+        get { defaults.bool(forKey: Key.sidebarWidthPerSpace) }
+        set { defaults.set(newValue, forKey: Key.sidebarWidthPerSpace) }
     }
 
     /// Docking position of the sidebar (Left or Right).

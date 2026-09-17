@@ -35,7 +35,10 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     private var mouseGestureController: MouseGestureController?
     /// Remembered across a detach: a sidebar that is out of the split view has
     /// no width left to read.
-    private var lastSidebarWidth = Style.Metrics.sidebarWidth
+    private var lastSidebarWidth = Settings.shared.sidebarWidth
+    /// True while the code below is moving the divider, so that its own move is
+    /// not mistaken for a drag and written back to the model.
+    private var isApplyingSidebarWidth = false
     private var sidebarCollapseObservation: NSKeyValueObservation?
     private var isSidebarCollapsed = false
     private var isTopBarHovered = false
@@ -170,6 +173,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             self?.content.showSpaceGradient(space.washGradient(for: space.activeTab), animatedOver: duration)
             self?.root.border.show(space.effectiveBorder, animatedOver: duration)
             self?.applyLook(of: space)
+            self?.applySidebarWidthOnSpaceChange(to: space)
         }
         sidebar.onShownSpaceBlend = { [weak self] space, fraction in
             self?.content.blendSpaceWash(toward: space?.wash(for: space?.activeTab), fraction: fraction)
@@ -344,10 +348,101 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
 
     /// Opens the sidebar at its resting width.
     ///
-    /// Run once per window, from the first layout pass wide enough for the
-    /// request to survive: after that the divider belongs to whoever drags it.
+    /// Run from the first layout pass wide enough for the request to survive;
+    /// after that the divider belongs to whoever drags it, except that in
+    /// per-space mode each space restores its own on the way in.
     private func applyRestingSidebarWidth() {
-        let resting = Style.Metrics.sidebarWidth
+        applySidebarWidth(for: sidebar.shownSpaceForLook)
+        // Only now does a divider move mean anything. Hooked up here rather
+        // than where the split view is built, because the split view resizes
+        // its subviews inside its own `viewDidLoad` -- which runs while this
+        // controller is still being assembled, and answering it that early
+        // reached for a sidebar and a window that did not exist yet.
+        splitViewController.onDividerMoved = { [weak self] in self?.rememberSidebarWidth() }
+    }
+
+    /// What the sidebar rests at while this space is in front.
+    ///
+    /// One width for every space unless the General pane says otherwise, in
+    /// which case a space that has been sized keeps that size and one that has
+    /// not falls back to the shared width -- so a space made today opens where
+    /// the last one did rather than snapping to a number from `Style`.
+    private func restingSidebarWidth(for space: Space) -> CGFloat {
+        let shared = Settings.shared.sidebarWidth
+        guard Settings.shared.sidebarWidthIsPerSpace,
+              let own = space.look.sidebarWidth
+        else { return shared }
+        return min(max(CGFloat(own), Style.Metrics.sidebarMinWidth), Style.Metrics.sidebarMaxWidth)
+    }
+
+    /// Set `KYLMORA_SIDEBAR_LOG=1` to have every change to the sidebar's width
+    /// printed, with what caused it.
+    ///
+    /// The same trick as `KYLMORA_GESTURE_LOG`, and for the same reason: a
+    /// trackpad swipe cannot be sent from a script, so when the sidebar creeps
+    /// wider over a run of swipes the only way to find out which step did it is
+    /// to have the app say so while a person swipes.
+    private static let logsSidebarWidth =
+        ProcessInfo.processInfo.environment["KYLMORA_SIDEBAR_LOG"] == "1"
+
+    private func logSidebarWidth(_ moment: String) {
+        guard Self.logsSidebarWidth else { return }
+        let space = sidebar.shownSpaceForLook
+        NSLog(
+            "kylmora.sidebar: %@ width=%.2f fitting=%.2f stored=%.2f own=%@ space=%@ perSpace=%d collapsed=%d compact=%d",
+            moment,
+            sidebar.view.frame.width,
+            sidebar.view.fittingSize.width,
+            Settings.shared.sidebarWidth,
+            space.look.sidebarWidth.map { String(format: "%.2f", $0) } ?? "none",
+            space.name,
+            Settings.shared.sidebarWidthIsPerSpace ? 1 : 0,
+            isSidebarCollapsed ? 1 : 0,
+            compact.controller.state.isEnabled ? 1 : 0
+        )
+    }
+
+    /// What a space change does to the divider, which with one shared width is
+    /// nothing at all.
+    ///
+    /// This is the whole point of the setting. The sidebar in this window is
+    /// already the width its owner left it at; moving it back to the stored
+    /// number every time you switch space is the jumping the shared setting
+    /// exists to prevent -- and it is what the setting did at first, so a
+    /// window that had been dragged to a different width lurched on every
+    /// swipe while claiming to be shared.
+    ///
+    /// Only a space with a width of its own is allowed to move the divider.
+    private func applySidebarWidthOnSpaceChange(to space: Space) {
+        logSidebarWidth("space change to \(space.name)")
+        guard Settings.shared.sidebarWidthIsPerSpace else {
+            // Nothing is done, but the width is sampled once the switch has
+            // settled: if it moved anyway, something else moved it, and that is
+            // the thing worth catching.
+            if Self.logsSidebarWidth {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                    self?.logSidebarWidth("settled after switch")
+                }
+            }
+            return
+        }
+        applySidebarWidth(for: space)
+        logSidebarWidth("applied for \(space.name)")
+    }
+
+    /// Moves the divider to where this space wants it.
+    ///
+    /// A no-op when it is already there, which is the common case: it must not
+    /// shove the page a fraction of a point sideways for nothing.
+    private func applySidebarWidth(for space: Space) {
+        guard !isSidebarCollapsed, !compact.controller.state.isEnabled else { return }
+        let resting = restingSidebarWidth(for: space)
+        guard abs(sidebar.view.frame.width - resting) > 0.5 else {
+            lastSidebarWidth = resting
+            return
+        }
+        isApplyingSidebarWidth = true
+        defer { isApplyingSidebarWidth = false }
         if Settings.shared.sidebarPosition == .trailing {
             let width = splitViewController.view.bounds.width
             guard width > resting else { return }
@@ -356,6 +451,36 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             splitViewController.splitView.setPosition(resting, ofDividerAt: 0)
         }
         lastSidebarWidth = resting
+    }
+
+    /// Writes the width the user just dragged to wherever it belongs.
+    ///
+    /// Called when the divider is let go, and only then: a split view reports
+    /// every resize of its subviews, and almost none of them are a decision
+    /// anybody made -- a window restoring its frame, a second window opening at
+    /// its autosaved position, compact mode taking the sidebar out and putting
+    /// it back. Saving those meant, with two windows open, that the narrower
+    /// one silently overwrote the width set in the other.
+    private func rememberSidebarWidth() {
+        guard window != nil,
+              !isApplyingSidebarWidth,
+              window?.inLiveResize != true,
+              !isSidebarCollapsed,
+              !compact.controller.state.isEnabled
+        else { return }
+        let width = sidebar.view.frame.width
+        logSidebarWidth("divider let go at \(width)")
+        guard width >= Style.Metrics.sidebarMinWidth else { return }
+        lastSidebarWidth = width
+        if Settings.shared.sidebarWidthIsPerSpace {
+            let space = sidebar.shownSpaceForLook
+            guard space.look.sidebarWidth != Double(width) else { return }
+            var look = space.look
+            look.sidebarWidth = Double(width)
+            session.setLook(look, for: space)
+        } else {
+            Settings.shared.sidebarWidth = width
+        }
     }
 
     /// Puts the buttons the layout asks for on the bar, in its order.
@@ -2452,6 +2577,20 @@ final class KylmoraSplitViewController: NSSplitViewController {
         // edge is still the separation; resizing keeps working because
         // an NSSplitView still tracks a drag on a zero-width divider.
         override var dividerThickness: CGFloat { 0 }
+
+        /// The user let go of the divider.
+        ///
+        /// `NSSplitView` tracks the drag inside `super.mouseDown`, which does
+        /// not return until the mouse is released -- the same shape as the
+        /// press handling in `IconButton`. That makes this the one moment that
+        /// is unambiguously "a person moved this", as against the dozen resizes
+        /// a window restore or a second window opening sends through.
+        var onDragEnded: (() -> Void)?
+
+        override func mouseDown(with event: NSEvent) {
+            super.mouseDown(with: event)
+            onDragEnded?()
+        }
     }
 
     /// The narrowest the page is ever squeezed to. Named because the split
@@ -2466,6 +2605,10 @@ final class KylmoraSplitViewController: NSSplitViewController {
     /// opening divider position -- right after the items are added -- is the
     /// one place where the answer is guaranteed to be thrown away.
     var onReadyForRestingWidth: (() -> Void)?
+    /// The user finished dragging the divider. See `ClearDividerSplitView`.
+    var onDividerMoved: (() -> Void)? {
+        didSet { (splitView as? ClearDividerSplitView)?.onDragEnded = onDividerMoved }
+    }
 
     private var hasSetRestingWidth = false
 
