@@ -91,7 +91,7 @@ comma-separated string.
 | `PasswordManagerDisabled` | bool | No saving or autofilling of credentials (for fleets that mandate a separate password manager). | `true` |
 | `ContentBlockingForced` | bool | Ad and tracker blocking stays on; the switches in Privacy are locked. | `true` |
 | `AutoUpdateForced` | bool | Automatic update checks stay on; the switch in About is locked. | `true` |
-| `DNSOverHTTPSURL` | string | Sends every DNS query to this DNS-over-HTTPS resolver. | `"https://dns.acme.com/dns-query"` |
+| `DNSOverHTTPSURL` | string | Preselects this DNS-over-HTTPS resolver in Settings ▸ Advanced and locks the picker. It does not change DNS by itself: page loads use the Mac's DNS settings, which only a `com.apple.dnsSettings.managed` profile can switch to encrypted DNS. Push that profile through your MDM alongside this policy; Kylmora's "Install DNS Profile" button makes the same profile for a single Mac. | `"https://dns.acme.com/dns-query"` |
 | `RAMCacheOnlyForced` | bool | Web cache is kept in memory only, never written to disk. | `true` |
 
 ## 4. Checking that it worked

@@ -8,6 +8,8 @@ build/
 # Local-only working files, not published.
 _local/
 CLAUDE.md
+TOOLS.md
+AGENT_BROWSER.md
 
 # Research notes: read locally, never published. The feature comparison and the
 # threads it was read from are working material, not part of the browser.
@@ -24,3 +26,6 @@ signing/
 
 WEBSITES.md
 BRAND_EMAIL.md
+
+scrap/
+final/

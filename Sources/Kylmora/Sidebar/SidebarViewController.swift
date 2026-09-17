@@ -1418,17 +1418,27 @@ final class SidebarViewController: NSViewController {
         let sheet = NewSpaceSheet(
             suggestedColor: session.nextUnusedTheme().color,
             initialPrivate: initialPrivate
-        ) { [weak self] name, isPrivate, choice in
+        ) { [weak self] options in
             guard let self else { return }
-            let space = session.addSpace(named: name, isPrivate: isPrivate)
-            switch choice {
-            case .theme:
-                break
-            case .solid(let colour):
-                session.setCustomColor(colour, for: space)
-            case .gradient(let gradient):
-                session.setSpaceGradient(gradient, for: space)
+            let space = session.addSpace(named: options.name, isPrivate: options.isPrivate)
+            if options.keepsItsOwnColour {
+                switch options.wash {
+                case .solid(let colour):
+                    session.setCustomColor(colour, for: space)
+                case .gradient(let gradient):
+                    session.setSpaceGradient(gradient, for: space)
+                }
+            } else {
+                // A plain window, or one the page colours: the space carries no
+                // colour of its own. Exactly what the Spaces pane does when you
+                // choose anything but Customized.
+                session.setTheme(.neutral, for: space)
             }
+            // The rest of the sheet, applied in one go: appearance, how
+            // strongly the colour washes, and whether the bookmarks bar shows.
+            // The colour above went through the session's own setters because
+            // each clears the other's fill; these are plain fields of the look.
+            session.setLook(options.look(from: space.look), for: space)
         }
         presentAsSheet(sheet)
     }

@@ -15,7 +15,7 @@ final class SpacesSettingsViewController: NSViewController {
     private let nameField = NSTextField()
     private let picker = SpaceThemePicker()
     private let borderSummary = NSTextField(labelWithString: "")
-    private let appearanceControl = NSSegmentedControl(labels: AppearanceChoice.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
+    private let appearanceControl = NSSegmentedControl(labels: SpaceAppearanceChoice.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
     /// Under Customized: a solid colour, or a two-stop gradient.
     private let fillControl = NSSegmentedControl(labels: ["Solid", "Gradient"], trackingMode: .selectOne, target: nil, action: nil)
     private let gradientStartWell = NSColorWell()
@@ -518,7 +518,7 @@ final class SpacesSettingsViewController: NSViewController {
     /// segments, and, while customised, the solid/gradient fill and its
     /// controls. Only the rows for the current fill are shown.
     private func updateColorControls(for space: Space) {
-        let choice = AppearanceChoice.of(space)
+        let choice = SpaceAppearanceChoice.of(space)
         appearanceControl.selectedSegment = choice.rawValue
 
         let customised = choice == .customized
@@ -571,7 +571,7 @@ final class SpacesSettingsViewController: NSViewController {
     /// colour and lets the window follow the system for light and dark.
     @objc private func appearanceChoiceChanged() {
         guard let editing else { return }
-        let choice = AppearanceChoice(rawValue: appearanceControl.selectedSegment) ?? .automatic
+        let choice = SpaceAppearanceChoice(rawValue: appearanceControl.selectedSegment) ?? .automatic
         switch choice {
         case .automatic, .light, .dark:
             var look = editing.look
@@ -753,48 +753,5 @@ final class SpacesSettingsViewController: NSViewController {
 
     // MARK: - The four appearance choices
 
-    /// The Appearance control's four segments. The first three are the plain,
-    /// untinted looks (a `neutral` space in that appearance); the fourth stands
-    /// for "this space has a colour of its own". Which one a space shows as is
-    /// read back from its state, so there is no separate flag to keep in sync.
-    private enum AppearanceChoice: Int, CaseIterable {
-        case automatic, light, dark, customized, website
-
-        var title: String {
-            switch self {
-            case .automatic: return "Automatic"
-            case .light: return "Light"
-            case .dark: return "Dark"
-            case .customized: return "Customized"
-            case .website: return "Website"
-            }
-        }
-
-        /// The plain appearance a preset paints in. `nil` for Customized and
-        /// Website, which follow the system rather than fixing light or dark.
-        var presetAppearance: AppearancePreference? {
-            switch self {
-            case .automatic: return .system
-            case .light: return .light
-            case .dark: return .dark
-            case .customized, .website: return nil
-            }
-        }
-
-        /// Which segment a space currently reads as. Website wins when the
-        /// space lets pages colour it; else a space with a colour of its own --
-        /// a tint or a gradient -- is customised, and an untinted one is its
-        /// plain appearance.
-        @MainActor
-        static func of(_ space: Space) -> AppearanceChoice {
-            if space.look.allowsWebsiteThemeColor { return .website }
-            guard space.look.gradient == nil, !space.theme.tintsChrome else { return .customized }
-            switch space.look.appearance {
-            case .system: return .automatic
-            case .light: return .light
-            case .dark: return .dark
-            }
-        }
-    }
 }
 

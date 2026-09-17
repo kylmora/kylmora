@@ -14,6 +14,18 @@ final class ThemePreview: NSView {
     private var theme: TabGroupAppearance = .standard
     private var tint: NSColor = .controlAccentColor
 
+    /// Words to draw in place of the mock bars.
+    ///
+    /// The bars say "something is written here" without saying what, which in
+    /// a group's editor is right -- the group already has its rows behind the
+    /// sheet. In the New Space sheet there is nothing behind it, and two grey
+    /// bars on a coloured card read as a thing that failed to load. Given the
+    /// name being typed and a tab under it, the same card reads as the sidebar
+    /// this space is about to have.
+    var labels: (title: String, tab: String)? {
+        didSet { needsDisplay = true }
+    }
+
     override var isFlipped: Bool { true }
 
     override init(frame frameRect: NSRect) {
@@ -56,11 +68,24 @@ final class ThemePreview: NSView {
         // A mock header (a filled dot and a bar) and a mock tab under it, so the
         // preview shows what the colour sits behind.
         let readable = theme.fill == .standard ? Style.Colors.secondaryText : bestTextColour()
-        drawMockRow(y: plate.minY + 18, dot: readable, barWidth: 96, filledDot: true, colour: readable)
-        drawMockRow(y: plate.minY + 46, dot: readable, barWidth: 74, filledDot: false, colour: readable.withAlphaComponent(0.7))
+        drawMockRow(
+            y: plate.minY + 18, barWidth: 96, filledDot: true, colour: readable,
+            text: labels?.title, weight: .semibold
+        )
+        drawMockRow(
+            y: plate.minY + 46, barWidth: 74, filledDot: false,
+            colour: readable.withAlphaComponent(0.7), text: labels?.tab, weight: .regular
+        )
     }
 
-    private func drawMockRow(y: CGFloat, dot: NSColor, barWidth: CGFloat, filledDot: Bool, colour: NSColor) {
+    private func drawMockRow(
+        y: CGFloat,
+        barWidth: CGFloat,
+        filledDot: Bool,
+        colour: NSColor,
+        text: String?,
+        weight: NSFont.Weight
+    ) {
         let x: CGFloat = 18
         let dotRect = NSRect(x: x, y: y - 5, width: 10, height: 10)
         colour.setFill()
@@ -72,8 +97,29 @@ final class ThemePreview: NSView {
             colour.setStroke()
             ring.stroke()
         }
-        let bar = NSRect(x: x + 18, y: y - 3.5, width: barWidth, height: 7)
-        NSBezierPath(roundedRect: bar, xRadius: 3.5, yRadius: 3.5).fill()
+
+        guard let text, !text.isEmpty else {
+            let bar = NSRect(x: x + 18, y: y - 3.5, width: barWidth, height: 7)
+            NSBezierPath(roundedRect: bar, xRadius: 3.5, yRadius: 3.5).fill()
+            return
+        }
+
+        // Clipped to what is left of the card, and ellipsised: a name near the
+        // limit must not run off the edge of its own preview.
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        let drawn = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: weight),
+            .foregroundColor: colour,
+            .paragraphStyle: paragraph
+        ])
+        let height = drawn.size().height
+        drawn.draw(in: NSRect(
+            x: x + 18,
+            y: y - height / 2,
+            width: max(0, bounds.width - (x + 18) - 18),
+            height: height
+        ))
     }
 
     /// White or near-black, whichever reads better over the middle of the fill.
@@ -96,6 +142,18 @@ final class SegmentedPills: NSView {
 
     private let titles: [String]
     private var segmentRects: [NSRect] = []
+    /// Air either side of a title inside its pill.
+    private static let titlePadding: CGFloat = 12
+
+    /// What this control needs to lay `titles` out on one line, so a panel can
+    /// be built wide enough to hold it rather than the words being squeezed.
+    static func width(forTitles titles: [String]) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 11.5, weight: .semibold)
+        return titles.reduce(0) { total, title in
+            total + ceil((title as NSString).size(withAttributes: [.font: font]).width)
+                + titlePadding * 2
+        }
+    }
 
     init(titles: [String]) {
         self.titles = titles
@@ -107,6 +165,12 @@ final class SegmentedPills: NSView {
         setAccessibilityRole(.radioGroup)
     }
 
+    /// What a title needs, so a pill is as wide as its word rather than as wide
+    /// as its share of the control.
+    private func width(of title: String) -> CGFloat {
+        Self.width(forTitles: [title])
+    }
+
     required init?(coder: NSCoder) { fatalError("SegmentedPills is created in code only") }
 
     /// Moves the thumb without reporting a choice, for loading a value in.
@@ -116,10 +180,35 @@ final class SegmentedPills: NSView {
         needsDisplay = true
     }
 
+    /// Each pill is either its share of the control or its own word, whichever
+    /// is larger.
+    ///
+    /// Equal shares are right for three short words -- the pills read as one
+    /// control rather than as separate buttons. They are wrong for five long
+    /// ones: "Automatic, Light, Dark, Customized, Website" is what the Spaces
+    /// pane offers and so what the New Space sheet offers, and an equal share
+    /// of that sheet is 68 points where "Customized" needs 85. So a control
+    /// whose words do not fit their shares gives each word the room it needs,
+    /// and whoever placed it gives the control the width that adds up to --
+    /// `NewSpaceSheet.width` is that sum.
     override func layout() {
         super.layout()
-        let width = bounds.width / CGFloat(titles.count)
-        segmentRects = titles.indices.map { NSRect(x: CGFloat($0) * width, y: 0, width: width, height: bounds.height) }
+        guard bounds.width > 0 else { return }
+        let widths = titles.map(width(of:))
+        let share = bounds.width / CGFloat(titles.count)
+
+        guard let widest = widths.max(), widest > share else {
+            segmentRects = titles.indices.map {
+                NSRect(x: CGFloat($0) * share, y: 0, width: share, height: bounds.height)
+            }
+            return
+        }
+
+        var x: CGFloat = 0
+        segmentRects = widths.map { width in
+            defer { x += width }
+            return NSRect(x: x, y: 0, width: width, height: bounds.height)
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -145,6 +234,10 @@ final class SegmentedPills: NSView {
             text.draw(at: point, withAttributes: attributes)
         }
     }
+
+    /// Where each pill was placed, so a test can check that no word was given
+    /// less room than it needs.
+    var segmentFramesForTesting: [NSRect] { segmentRects }
 
     /// The squeeze the track gives under a click. See `SpringPress`.
     ///
