@@ -288,7 +288,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         sidebarItem.holdingPriority = .defaultLow
 
         let contentItem = NSSplitViewItem(viewController: content)
-        contentItem.minimumThickness = 400
+        contentItem.minimumThickness = KylmoraSplitViewController.pageMinimumThickness
 
         let webPanelItem = NSSplitViewItem(viewController: webPanel)
         webPanelItem.minimumThickness = WebPanelStore.minWidth
@@ -326,15 +326,36 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             }
         }
         // The autosaved position wins over the item's thickness bounds, so the
-        // measured width has to be asked for explicitly.
-        if isTrailing {
-            let width = splitViewController.view.bounds.width
-            if width > Style.Metrics.sidebarWidth {
-                splitViewController.splitView.setPosition(width - Style.Metrics.sidebarWidth, ofDividerAt: 0)
-            }
-        } else {
-            splitViewController.splitView.setPosition(Style.Metrics.sidebarWidth, ofDividerAt: 0)
+        // measured width has to be asked for explicitly -- but not from here.
+        //
+        // The split view is only a few hundred points wide at this point,
+        // because the window has not been given its real frame yet. Asking for
+        // a 245-point sidebar inside a 569-point split whose page insists on
+        // 400 is a request that cannot be met, so it is silently clamped to the
+        // minimum, and when the window does reach its full size AppKit shares
+        // the slack out proportionally. That is why this number appeared to do
+        // nothing: whatever it said, the sidebar ended up at roughly a fifth of
+        // the window. It is asked for again on the first layout that is wide
+        // enough to honour it.
+        splitViewController.onReadyForRestingWidth = { [weak self] in
+            self?.applyRestingSidebarWidth()
         }
+    }
+
+    /// Opens the sidebar at its resting width.
+    ///
+    /// Run once per window, from the first layout pass wide enough for the
+    /// request to survive: after that the divider belongs to whoever drags it.
+    private func applyRestingSidebarWidth() {
+        let resting = Style.Metrics.sidebarWidth
+        if Settings.shared.sidebarPosition == .trailing {
+            let width = splitViewController.view.bounds.width
+            guard width > resting else { return }
+            splitViewController.splitView.setPosition(width - resting, ofDividerAt: 0)
+        } else {
+            splitViewController.splitView.setPosition(resting, ofDividerAt: 0)
+        }
+        lastSidebarWidth = resting
     }
 
     /// Puts the buttons the layout asks for on the bar, in its order.
@@ -2433,12 +2454,36 @@ final class KylmoraSplitViewController: NSSplitViewController {
         override var dividerThickness: CGFloat { 0 }
     }
 
+    /// The narrowest the page is ever squeezed to. Named because the split
+    /// view has to know it too, to tell whether it is yet wide enough to give
+    /// the sidebar its resting width without the request being clamped away.
+    static let pageMinimumThickness: CGFloat = 400
+
+    /// Called once, on the first layout at a width that can actually hold a
+    /// resting-width sidebar beside a full-width page.
+    ///
+    /// A window is built before it is sized, so the obvious place to set the
+    /// opening divider position -- right after the items are added -- is the
+    /// one place where the answer is guaranteed to be thrown away.
+    var onReadyForRestingWidth: (() -> Void)?
+
+    private var hasSetRestingWidth = false
+
     override func loadView() {
         let split = ClearDividerSplitView()
         split.isVertical = true
         split.dividerStyle = .thin
         splitView = split
         super.loadView()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        guard !hasSetRestingWidth,
+              view.bounds.width >= Style.Metrics.sidebarWidth + Self.pageMinimumThickness
+        else { return }
+        hasSetRestingWidth = true
+        onReadyForRestingWidth?()
     }
 }
 

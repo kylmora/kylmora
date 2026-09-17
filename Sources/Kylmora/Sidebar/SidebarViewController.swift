@@ -102,7 +102,39 @@ final class SidebarViewController: NSViewController {
         case tab(Tab, depth: Int, isEscaping: Bool)
         case liveStatus(TabGroup, LiveFolderStatus, depth: Int)
         case newTab
+
+        /// What makes a row *the same row* across a rebuild.
+        ///
+        /// Deliberately only the thing the row stands for, and none of what it
+        /// currently looks like: a tab that moved into a folder, changed depth,
+        /// started loading or was renamed is still the same tab, and a list
+        /// that treated it as a different one would animate it out and back in
+        /// for a title change. Depth and state are content, and content is
+        /// refreshed rather than animated.
+        enum Identity: Hashable {
+            case group(TabGroup.ID)
+            case tab(Tab.ID)
+            case liveStatus(TabGroup.ID)
+            case newTab
+        }
+
+        var identity: Identity {
+            switch self {
+            case .group(let group, _, _): .group(group.id)
+            case .tab(let tab, _, _): .tab(tab.id)
+            case .liveStatus(let group, _, _): .liveStatus(group.id)
+            case .newTab: .newTab
+            }
+        }
     }
+
+    /// Rows the next `viewFor` should spring into place rather than simply
+    /// hand over.
+    ///
+    /// Keyed by identity rather than by row index because the table asks for
+    /// its views part-way through applying the update, when an index means one
+    /// thing before the batch and another after it.
+    private var pendingEntrances: Set<SidebarRow.Identity> = []
 
     init(session: BrowserSession) {
         self.session = session
@@ -909,12 +941,116 @@ final class SidebarViewController: NSViewController {
     /// Recomputed on every rebuild; cheap, tens of tabs.
     private var duplicateIDs: Set<Tab.ID> = []
 
+    /// The space the rows on screen belong to, so the next rebuild can tell a
+    /// list that changed from a different list altogether.
+    private var shownRowsSpaceID: Space.ID?
+
     private func reloadTabs() {
         duplicateIDs = session.duplicateTabIDs(in: shownSpace)
         if previewSpace == nil { ensureContentAtRest() }
+
+        // Row animations are only meaningful *within* one space's list. Moving
+        // to another space does not close ten tabs and open eight others -- it
+        // shows a different list, which happens to be made of rows too, and
+        // animating that produces exactly the churn it looks like: every row
+        // sliding out while unrelated ones slide in.
+        //
+        // It also has to be instant rather than merely tidy. Switching spaces
+        // photographs the neighbouring space by drawing it into the sidebar and
+        // drawing the real one back before the window is flushed, twice in one
+        // turn of the run loop (`makeNeighbourStill`). An animation started
+        // there outlives the turn it was started in, so it is still running --
+        // and visible -- long after the frame it was supposed to be invisible
+        // for. The still-image crossfade is the space switch's animation, and
+        // it is the only one it should have.
+        let sameSpace = shownRowsSpaceID == shownSpace.id
+        shownRowsSpaceID = shownSpace.id
+
+        let before = rows.map(\.identity)
         rebuildRows()
-        tableView.reloadData()
+
+        if sameSpace {
+            applyRowChanges(from: before, to: rows.map(\.identity))
+        } else {
+            pendingEntrances = []
+            tableView.reloadData()
+        }
         syncActiveTab()
+    }
+
+    /// Hands the rebuild to the table as the change it actually was.
+    ///
+    /// `reloadData` is correct and was what this did, but it throws every row
+    /// away and builds them again, so opening a tab and closing one look
+    /// exactly alike: the list simply is different now. Telling the table which
+    /// rows arrived and which left instead lets it open and close the gaps
+    /// itself, and gives the arriving row something to spring out of.
+    ///
+    /// It falls back to `reloadData` whenever the change is not expressible as
+    /// insertions and removals -- a reorder, or the first fill -- because a
+    /// table told a half-truth about its own contents raises rather than
+    /// misdraws, and a dragged tab is a reorder.
+    private func applyRowChanges(from before: [SidebarRow.Identity], to after: [SidebarRow.Identity]) {
+        pendingEntrances = []
+
+        let removed: IndexSet
+        let inserted: IndexSet
+        switch RowChangePlan.change(from: before, to: after) {
+        case .reload:
+            tableView.reloadData()
+            return
+        case .contentOnly:
+            // Nothing came or went, so nothing should move. A plain reload is
+            // what this has always done and is still the right answer: the
+            // rows are in their places and only what is drawn inside them has
+            // changed, so there is no animation to preserve by being cleverer.
+            tableView.reloadData()
+            return
+        case .edits(let removals, let insertions):
+            removed = removals
+            inserted = insertions
+        }
+
+        pendingEntrances = Set(inserted.map { after[$0] })
+
+        tableView.beginUpdates()
+        // Leaving is a collapse and a fade, which is AppKit's own and is
+        // already the right shape: the gap the row occupied closes behind it.
+        tableView.removeRows(at: removed, withAnimation: [.effectFade, .slideUp])
+        // Arriving is a fade while the gap opens; the travel is added by the
+        // cell itself, in `viewFor`, because only a spring can overshoot and
+        // `NSTableView.AnimationOptions` has no spring in it.
+        tableView.insertRows(at: inserted, withAnimation: .effectFade)
+        tableView.endUpdates()
+
+        refreshRows(excluding: inserted)
+    }
+
+    /// Brings the rows that kept their views across the update back up to date.
+    ///
+    /// Those views can be stale in two ways that matter: a tab's own content
+    /// may have changed in the same breath, and -- more easily missed -- a row
+    /// that did not itself change can still need redrawing because its
+    /// *neighbour* did. A folder plate's rounded bottom belongs to whichever
+    /// row is currently last inside it, so closing a tab hands that corner to
+    /// the row above.
+    ///
+    /// The rows that were just inserted are excluded by index rather than by
+    /// consulting `pendingEntrances`, which by now is empty: the table asks for
+    /// their views during `endUpdates`, and each ask takes its row out of that
+    /// set. Reloading them here would hand them a second, fresh view and throw
+    /// away the entrance the first one was in the middle of.
+    private func refreshRows(excluding inserted: IndexSet) {
+        let kept = IndexSet(integersIn: rows.indices).subtracting(inserted)
+        guard !kept.isEmpty else { return }
+        tableView.reloadData(forRowIndexes: kept, columnIndexes: IndexSet(integer: 0))
+        // The plates live on the row view rather than the cell, so reloading
+        // the cells does not reach them.
+        tableView.enumerateAvailableRowViews { [weak self] rowView, index in
+            guard let self, let plate = rowView as? FolderPlateRowView else { return }
+            plate.slices = self.slices.indices.contains(index) ? self.slices[index] : []
+        }
+        tableView.noteHeightOfRows(withIndexesChanged: kept)
     }
 
     /// Groups first, each followed by its tabs when open, then everything that
@@ -2064,7 +2200,19 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard rows.indices.contains(row) else { return nil }
-        switch rows[row] {
+        let cell = cellView(for: rows[row], row: row)
+        // A row the table has just been told to insert springs in from the
+        // leading edge. Done here rather than after the batch because this is
+        // the one moment the view certainly exists: a row scrolled out of sight
+        // is never built, and never needs an entrance either.
+        if let cell, pendingEntrances.remove(rows[row].identity) != nil {
+            SpringPresence.slideIn(cell, from: CGVector(dx: -Style.Motion.entrySlide, dy: 0))
+        }
+        return cell
+    }
+
+    private func cellView(for sidebarRow: SidebarRow, row: Int) -> NSView? {
+        switch sidebarRow {
         case .group(let group, let depth, _):
             return groupHeaderCell(for: group, depth: depth)
         case .liveStatus(_, let status, let depth):

@@ -109,8 +109,12 @@ final class BreadcrumbView: NSView {
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
 
+    /// The squeeze the breadcrumb gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
     override func mouseDown(with event: NSEvent) {
         guard isEnabled else { return }
+        if acceptsSpringPress { press.flick() }
         onActivate?()
     }
 

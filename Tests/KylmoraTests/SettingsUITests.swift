@@ -742,6 +742,56 @@ struct SettingsControlSkinTests {
         }
     }
 
+    @Test("The shortcuts table's column captions are the window's, not AppKit's")
+    func shortcutsTableHeaderIsOurs() {
+        // The stock header is a grey bar with a bevel and a rule between every
+        // column, which was the last piece of system chrome in the pane and
+        // read as a spreadsheet dropped into a window of glass and cards.
+        let pane = ShortcutsSettingsViewController()
+        let view = pane.view
+        view.frame = NSRect(x: 0, y: 0, width: Style.SettingsUI.contentMaxWidth, height: 900)
+        view.layoutSubtreeIfNeeded()
+
+        guard let table = all(NSTableView.self, in: view).first else {
+            Issue.record("the pane should hold a table")
+            return
+        }
+        #expect(table.headerView is SettingsTableHeader)
+    }
+
+    @Test("Restyling the captions did not change how tall the header is")
+    func shortcutsTableHeaderKeepsItsHeight() {
+        // The pane gives the table its full height by asking the header how
+        // tall it is and adding the rows, so a header that came out a
+        // different height would leave the list short or trailing space.
+        let pane = ShortcutsSettingsViewController()
+        let view = pane.view
+        view.frame = NSRect(x: 0, y: 0, width: Style.SettingsUI.contentMaxWidth, height: 900)
+        view.layoutSubtreeIfNeeded()
+
+        guard let header = all(NSTableView.self, in: view).first?.headerView else {
+            Issue.record("the pane should hold a table with a header")
+            return
+        }
+        #expect(header.frame.height == SettingsTableHeader.height)
+    }
+
+    @Test("A column's title is drawn uppercase, not stored that way")
+    func shortcutsTableHeaderLeavesTitlesAlone() {
+        // The caption is uppercased as it is drawn. Uppercasing the column
+        // itself would put "ACTION" into the accessibility tree and into every
+        // menu that offers to show or hide a column.
+        let pane = ShortcutsSettingsViewController()
+        let view = pane.view
+        view.layoutSubtreeIfNeeded()
+
+        guard let table = all(NSTableView.self, in: view).first else {
+            Issue.record("the pane should hold a table")
+            return
+        }
+        #expect(table.tableColumns.map(\.title).contains("Action"))
+    }
+
     @Test("The shortcuts list passes the wheel on to the page")
     func shortcutsTableDoesNotSwallowTheWheel() {
         // The table has no scroller of its own, but a scroll view takes the
@@ -788,7 +838,9 @@ struct SettingsControlSkinTests {
         view.layoutSubtreeIfNeeded()
 
         let tables = all(NSTableView.self, in: view)
-        #expect(tables.count == 2, "the categories and the configured sites")
+        // One, now: the configured sites. The categories beside them became a
+        // rail of the window's own rows -- see "Two rails, one row".
+        #expect(tables.count == 1, "the configured sites")
         for table in tables {
             guard let scroller = table.enclosingScrollView else {
                 Issue.record("a table with no scroll view around it")
@@ -802,6 +854,96 @@ struct SettingsControlSkinTests {
                 scroller.frame.height <= rows + 100,
                 "a table \(scroller.frame.height) tall holding \(rows) of rows"
             )
+        }
+    }
+
+    @Test("The websites pane's column captions are the window's too")
+    func websitesTableHeaderIsOurs() {
+        // The category list beside it has no header at all, so the stock one
+        // over the configured sites was the only bevelled thing on the pane.
+        let pane = WebsitesSettingsViewController()
+        let view = pane.view
+        view.frame = NSRect(x: 0, y: 0, width: 900, height: 900)
+        view.layoutSubtreeIfNeeded()
+
+        let headers = all(NSTableView.self, in: view).compactMap(\.headerView)
+        #expect(headers.count == 1, "only the sites table names its columns")
+        #expect(headers.allSatisfy { $0 is SettingsTableHeader })
+    }
+
+    @Test("A column caption fits the column it names, at the narrowest the window goes")
+    func websitesColumnCaptionFits() {
+        // "Configured Websites" was drawn as "CONFIGURED WEBSI" -- a caption
+        // sliced at whatever letter the column edge landed on. Laid out at the
+        // window's own floor, because that is the narrowest a column can get
+        // and the width the truncation was reported at; a caption checked in a
+        // 900-point test view fits with room to spare and proves nothing.
+        // Uppercasing widens a title, so fitting mixed-case is not enough.
+        let controller = SettingsWindowController(
+            session: TestSession.make().0,
+            settings: Settings(defaults: UserDefaults(suiteName: "kylmora.tests.\(UUID().uuidString)")!)
+        )
+        controller.select(.websites)
+        guard let window = controller.window, let content = window.contentView else {
+            Issue.record("the settings window should have a content view")
+            return
+        }
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+
+        guard let table = all(NSTableView.self, in: content).first(where: { $0.headerView != nil }) else {
+            Issue.record("the sites table should name its columns")
+            return
+        }
+        for column in table.tableColumns where !column.title.isEmpty {
+            let drawn = NSAttributedString(
+                string: column.title.uppercased(),
+                attributes: [.font: Style.Fonts.settingsGroup, .kern: 0.6]
+            ).size().width
+            #expect(
+                drawn <= column.width,
+                "\(column.title) needs \(drawn) points in a column \(column.width) wide"
+            )
+        }
+    }
+
+    @Test("One dropdown per website, with air between them")
+    func websitesDropdownsDoNotTouch() {
+        // The house dropdown is a fixed 30 points tall and the rows were 28, so
+        // two of them overlapped by two points: the plates met with no gap and
+        // read as one block rather than as one control per website.
+        let hosts = ["zoom-a.example", "zoom-b.example"]
+        guard let option = SiteSettingCategory.pageZoom.options.first?.id else {
+            Issue.record("page zoom should offer options")
+            return
+        }
+        SiteSettings.shared.update { state in
+            for host in hosts { state.set(option, for: host, in: .pageZoom) }
+        }
+        defer {
+            SiteSettings.shared.update { state in
+                for host in hosts { state.remove(host, from: .pageZoom) }
+            }
+        }
+
+        let pane = WebsitesSettingsViewController()
+        let view = pane.view
+        view.frame = NSRect(x: 0, y: 0, width: 900, height: 900)
+        view.layoutSubtreeIfNeeded()
+
+        guard let table = all(NSTableView.self, in: view).first(where: { $0.headerView != nil }) else {
+            Issue.record("the sites table should name its columns")
+            return
+        }
+        #expect(table.rowHeight >= SettingsChoiceControl.height, "a row has to hold its dropdown")
+
+        let plates = all(SettingsChoiceControl.self, in: table)
+            .map { $0.convert($0.bounds, to: table) }
+        #expect(plates.count >= 2, "a dropdown for each configured website")
+        for (index, plate) in plates.enumerated() {
+            for other in plates.dropFirst(index + 1) {
+                #expect(!plate.intersects(other), "\(plate) touches \(other)")
+            }
         }
     }
 
@@ -1195,5 +1337,166 @@ struct SettingsWindowAppearanceTests {
         let defaults = UserDefaults(suiteName: "kylmora.tests.\(UUID().uuidString)")!
         Settings(defaults: defaults).settingsWindowAppearance = .dark
         #expect(Settings(defaults: defaults).settingsWindowAppearance == .dark)
+    }
+}
+
+// The invitation to make Kylmora the default browser. It used to be the last
+// row on the General pane, dressed like the settings it was buried among; it is
+// now the first thing on it, and it leaves for good once there is nothing left
+// to ask for.
+
+@Suite("The default browser invitation")
+@MainActor
+struct DefaultBrowserBannerTests {
+    private func pane() -> GeneralSettingsViewController {
+        let controller = GeneralSettingsViewController(
+            settings: Settings(defaults: UserDefaults(suiteName: "kylmora.tests.\(UUID().uuidString)")!)
+        )
+        let view = controller.view
+        view.frame = NSRect(x: 0, y: 0, width: Style.SettingsUI.contentMaxWidth, height: 1200)
+        view.layoutSubtreeIfNeeded()
+        return controller
+    }
+
+    private func all<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+        view.subviews.flatMap { ($0 as? T).map { [$0] } ?? all(type, in: $0) }
+    }
+
+    /// The form row a view sits in, which is the thing that is hidden or shown.
+    private func row(of view: NSView) -> SettingsFormRow? {
+        var current: NSView? = view
+        while let found = current {
+            if let row = found as? SettingsFormRow { return row }
+            current = found.superview
+        }
+        return nil
+    }
+
+    @Test("It is the first thing on the pane")
+    func bannerLeadsThePane() {
+        let controller = pane()
+        guard let banner = all(DefaultBrowserBanner.self, in: controller.view).first else {
+            Issue.record("the General pane should carry the invitation")
+            return
+        }
+        guard let bannerRow = row(of: banner),
+              let stack = bannerRow.superview as? NSStackView else {
+            Issue.record("the banner should sit in a row of the form's stack")
+            return
+        }
+        // By order in the stack rather than by coordinates: a vertical stack
+        // arranges top to bottom whichever way the view it is in is flipped.
+        #expect(stack.arrangedSubviews.count > 1, "there are other settings on the pane")
+        #expect(stack.arrangedSubviews.first === bannerRow, "the invitation should lead the pane")
+    }
+
+    @Test("It is shown only while there is something to ask for")
+    func bannerHidesWhenAlreadyDefault() {
+        // Whether this Mac's default browser is Kylmora is not ours to set, so
+        // the rule is checked against the machine's own answer: shown when it
+        // is not the default, gone when it is.
+        let controller = pane()
+        guard let banner = all(DefaultBrowserBanner.self, in: controller.view).first,
+              let bannerRow = row(of: banner) else {
+            Issue.record("the General pane should carry the invitation")
+            return
+        }
+        #expect(bannerRow.isHidden == DefaultBrowser.isKylmora)
+    }
+
+    @Test("The buried row it replaced is gone")
+    func oldRowIsGone() {
+        // Two places to be told the same thing, one of them a row you had to
+        // scroll past nine settings to reach.
+        let controller = pane()
+        let said = all(NSTextField.self, in: controller.view).map(\.stringValue)
+        #expect(!said.contains { $0.contains("default web browser") })
+    }
+
+    @Test("The button is sized by its title, so the words cannot be clipped")
+    func buttonFitsItsTitle() {
+        let short = BannerActionButton(title: "Set", onClick: {})
+        let long = BannerActionButton(title: "Set as Default", onClick: {})
+        #expect(long.intrinsicContentSize.width > short.intrinsicContentSize.width)
+        #expect(short.intrinsicContentSize.height == long.intrinsicContentSize.height)
+    }
+}
+
+// The Websites pane's category list. It was a plain table beside the window's
+// own spine: no hover, no press, a larger tile at a different distance from its
+// label, and AppKit's selection under it. Both rails are one row type now.
+
+@Suite("Two rails, one row")
+@MainActor
+struct SettingsRailRowTests {
+    private func all<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+        view.subviews.flatMap { ($0 as? T).map { [$0] } ?? all(type, in: $0) }
+    }
+
+    private func websitesPane() -> NSView {
+        let pane = WebsitesSettingsViewController()
+        let view = pane.view
+        view.frame = NSRect(x: 0, y: 0, width: 900, height: 1200)
+        view.layoutSubtreeIfNeeded()
+        return view
+    }
+
+    @Test("The categories are the window's own rows, not table rows")
+    func categoriesAreRailRows() {
+        let view = websitesPane()
+        let rows = all(SettingsRailRow.self, in: view)
+        #expect(rows.count == SiteSettingCategory.allCases.count)
+    }
+
+    @Test("Only the sites table is left on the pane")
+    func onlyOneTableRemains() {
+        // The category table is gone entirely; the configured sites are still
+        // a table, because they are rows of two columns.
+        let view = websitesPane()
+        #expect(all(NSTableView.self, in: view).count == 1)
+    }
+
+    @Test("Exactly one category is lit at a time")
+    func oneCategoryIsChosen() {
+        let view = websitesPane()
+        let rows = all(SettingsRailRow.self, in: view)
+        #expect(rows.filter(\.isChosen).count == 1, "the pane opens on one category")
+    }
+
+    @Test("A row is a name, a mark and a press -- it knows nothing of panes")
+    func rowIsGeneral() {
+        // What made it shareable. If this ever needs a pane to be built, the
+        // Websites pane cannot use it.
+        var pressed = 0
+        let row = SettingsRailRow(
+            title: "Reader Mode", symbolName: "doc.plaintext", accent: .systemBlue
+        ) { pressed += 1 }
+        row.frame = NSRect(x: 0, y: 0, width: 200, height: Style.SettingsUI.spineRowHeight)
+        row.layoutSubtreeIfNeeded()
+        #expect(row.accessibilityLabel() == "Reader Mode")
+        #expect(row.accessibilityPerformPress())
+        #expect(pressed == 1)
+    }
+
+    @Test("Both rails place their marks and labels identically")
+    func railsAgreeOnGeometry() {
+        // The old table put a 28-point tile 10 points from its label at a row
+        // height of 32; the spine used 24, 10 and 34. Side by side in one
+        // window, the two lists did not line up.
+        let controller = SettingsWindowController(
+            session: TestSession.make().0,
+            settings: Settings(defaults: UserDefaults(suiteName: "kylmora.tests.\(UUID().uuidString)")!)
+        )
+        controller.select(.websites)
+        guard let content = controller.window?.contentView else {
+            Issue.record("the settings window should have a content view")
+            return
+        }
+        content.layoutSubtreeIfNeeded()
+
+        let rows = all(SettingsRailRow.self, in: content)
+        #expect(rows.count > SiteSettingCategory.allCases.count, "the spine's rows and the pane's")
+        let heights = Set(rows.map(\.frame.height))
+        #expect(heights == [Style.SettingsUI.spineRowHeight], "every row in the window is one height")
     }
 }

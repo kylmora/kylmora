@@ -19,7 +19,9 @@ final class PassingScrollView: NSScrollView {
 final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane, NSTableViewDataSource, NSTableViewDelegate {
     private let manager: ShortcutManager
 
-    private let searchField = NSSearchField()
+    private let searchField = SettingsSearchField(
+        skin: .control, placeholder: "Search shortcuts\u{2026}"
+    )
     /// The category filter. A pop-up rather than a segmented control: six
     /// segments and a button could not both fit the pane's width, and a
     /// segmented control given less room than it needs does not shrink -- it
@@ -54,9 +56,7 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane,
         container.translatesAutoresizingMaskIntoConstraints = false
         self.view = container
 
-        searchField.placeholderString = "Search shortcuts\u{2026}"
-        searchField.target = self
-        searchField.action = #selector(filterChanged)
+        searchField.onChange = { [weak self] _ in self?.updateFilter() }
         searchField.setContentHuggingPriority(.init(1), for: .horizontal)
 
         categoryPopUp.addItem(withTitle: "All")
@@ -70,12 +70,13 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane,
 
         // Every control at its own size with the search field taking the slack,
         // so nothing is ever asked to draw where something else already is.
+        // At its own size: `fill` would give it the width of a control
+        // column, which on a button is just a very wide button.
+        let restorePlate = SettingsControlPlate(restoreDefaultsButton, width: nil)
         let header = NSStackView(views: [
             searchField,
             SettingsForm.fill(categoryPopUp),
-            // At its own size: `fill` would give it the width of a control
-            // column, which on a button is just a very wide button.
-            SettingsControlPlate(restoreDefaultsButton, width: nil)
+            restorePlate
         ])
         header.orientation = .horizontal
         header.alignment = .centerY
@@ -83,6 +84,12 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane,
         header.spacing = 10
         header.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(header)
+
+        // The field is exactly as tall as the plate beside it, rather than as
+        // tall as a number that happens to agree with it today. A control plate
+        // takes its height from whatever control it holds, so pinning to the
+        // plate is the only thing that stays level with it if that changes.
+        searchField.heightAnchor.constraint(equalTo: restorePlate.heightAnchor).isActive = true
 
         let colAction = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Action"))
         colAction.title = "Action"
@@ -108,7 +115,7 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane,
         // The action column takes whatever width the window has to give, so
         // the table fills the pane instead of stopping short of it.
         tableView.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
-        tableView.headerView = NSTableHeaderView()
+        tableView.headerView = SettingsTableHeader()
         // Tall enough for the key cap and air on either side of it. At 32 the
         // caps sat two points apart and read as one column of buttons.
         tableView.rowHeight = 40
@@ -197,7 +204,7 @@ final class ShortcutsSettingsViewController: NSViewController, SettingsWidePane,
     }
 
     private func updateFilter() {
-        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let query = searchField.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let selectedCategoryIndex = categoryPopUp.indexOfSelectedItem
 
         filteredDefinitions = manager.definitions.filter { def in

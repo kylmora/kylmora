@@ -22,10 +22,23 @@ enum Style {
         /// why the chrome reads as one system rather than several.
         static let elementSeparation: CGFloat = 8
 
-        /// Resting sidebar width. Some browsers have no default at all -- the
-        /// splitter keeps wherever it was left -- so this is only where a
-        /// first launch starts.
-        static let sidebarWidth: CGFloat = 306
+        /// Resting sidebar width.
+        ///
+        /// Twenty per cent under the 306 this was measured at, at the user's
+        /// request. The page is what the window is for, and 306 points of
+        /// chrome beside it claimed more of the window than a list of tab
+        /// titles needs. Titles truncate sooner at this width and the pinned
+        /// strip fits fewer tiles across before it wraps, which is the trade
+        /// being made rather than an oversight.
+        ///
+        /// Still comfortably above `sidebarMinWidth`, so nothing that degrades
+        /// gracefully further down has to start doing so here.
+        ///
+        /// This is where every window opens, not only a first launch: an
+        /// autosaved divider position outranks a split item's own thickness
+        /// bounds, so `BrowserWindowController.buildSplitView` sets the divider
+        /// from this number explicitly each time it builds one.
+        static let sidebarWidth: CGFloat = 245
         /// Our own floor. A common floor is 150; some designs let it go about
         /// a third narrower still, and the tile strip already wraps to one
         /// column before this, so nothing breaks down there.
@@ -395,6 +408,108 @@ enum Style {
         static var curve: CAMediaTimingFunction {
             CAMediaTimingFunction(controlPoints: 0.2, 0, 0, 1)
         }
+
+        // MARK: Press
+
+        /// How long the squeeze takes to go down.
+        ///
+        /// A press is the one moment in the interface that is not feedback
+        /// about a state change but feedback about a finger, so it has to keep
+        /// up with the finger: the surface should already be down by the time
+        /// the user notices they have pressed it. The same 90ms a hover takes,
+        /// and for the same reason -- anything slower reads as the control
+        /// lagging behind the click rather than yielding to it.
+        static let pressDown: CFTimeInterval = 0.09
+
+        /// How long the rebound takes to settle.
+        ///
+        /// Longer than anything else here, because this is the one animation
+        /// the user is *meant* to watch: the overshoot is the whole point, and
+        /// a bounce that is over in 150ms reads as a glitch rather than as
+        /// springiness. This is the perceptual duration -- roughly when the
+        /// motion looks finished -- not the settling time, which is longer
+        /// because a spring technically never stops.
+        static let pressSettle: CFTimeInterval = 0.34
+
+        /// How far past its resting size a released surface swings.
+        ///
+        /// Core Animation's `bounce` is 0 for a spring that glides to a stop
+        /// and 1 for one that barely damps at all. A third is the point where
+        /// the overshoot is plainly visible on a 29-point button without the
+        /// control wobbling afterwards -- one clear swing past and back, which
+        /// is what a physical key does.
+        static let pressBounce: Double = 0.34
+
+        /// How many points the longest edge of a pressed surface gives up,
+        /// in total across both of its ends.
+        ///
+        /// A press cannot be a fixed *ratio*, which is the obvious thing to
+        /// reach for and is wrong: 0.94 on a 29-point button is a two-point
+        /// squeeze, and the same 0.94 on a 250-point tab row is a fifteen-point
+        /// lurch. Scaling instead so that the long edge always loses the same
+        /// few points makes a button and a row feel like the same material,
+        /// which a shared ratio emphatically does not.
+        static let pressTravel: CGFloat = 6
+
+        /// The smallest scale a press is allowed to reach.
+        ///
+        /// `pressTravel` alone would squeeze a 29-point button to 0.79, which
+        /// is a cartoon. On anything smaller than about 75 points the floor is
+        /// what actually applies, and it is set where the squeeze is still
+        /// clearly visible -- a little over two points on an icon button -- and
+        /// not yet comic.
+        static let pressScaleFloor: CGFloat = 0.92
+
+        /// The scale to squeeze a surface of this size to.
+        ///
+        /// Derived from the two numbers above rather than stored per control,
+        /// so a new button gets the right press without anyone choosing one.
+        static func pressScale(for size: CGSize) -> CGFloat {
+            let longest = max(size.width, size.height)
+            guard longest > 0 else { return pressScaleFloor }
+            return max(pressScaleFloor, 1 - pressTravel / longest)
+        }
+
+        // MARK: Presence
+
+        /// The size a surface arrives at, and leaves at, when it springs in.
+        ///
+        /// A flat ratio is right here where it was wrong for a press: a toast
+        /// or a card is appearing from nothing rather than yielding under a
+        /// finger, so what has to read consistently is the *proportion* it
+        /// grows through, not the number of points it travels.
+        static let entryScale: CGFloat = 0.94
+
+        /// How long an arrival takes to look finished.
+        ///
+        /// Longer than a press rebound. A press is answering something the user
+        /// just did and must not keep them waiting; an arrival is the surface
+        /// introducing itself, and has a moment to do it in.
+        static let entrySettle: CFTimeInterval = 0.42
+
+        /// How far an arriving surface overshoots.
+        ///
+        /// Less bouncy than a press. A control springing under the hand is
+        /// playful; a notification that wobbles on its way in is a notification
+        /// that is harder to read, and reading it is the entire point.
+        static let entryBounce: Double = 0.24
+
+        /// How far a row slides as a list opens a place for it.
+        ///
+        /// Rows arrive from the leading edge rather than from nowhere, because
+        /// a list has a direction and a new row joining it should look like it
+        /// came from somewhere. Far enough to read as travel at a glance, and
+        /// short enough that a burst of new tabs does not turn the sidebar into
+        /// a rolling wave.
+        static let entrySlide: CGFloat = 28
+
+        /// How long a surface takes to leave.
+        ///
+        /// Departures do not spring at all. A spring is anticipation -- it
+        /// overshoots because something is arriving -- and a thing on its way
+        /// out has nothing to anticipate; bouncing it merely keeps it on screen
+        /// after the user is done with it.
+        static let exit: CFTimeInterval = 0.14
 
         /// Whether to move at all. Reduce Motion is a request for state to
         /// change without travelling, which every animated surface here honours

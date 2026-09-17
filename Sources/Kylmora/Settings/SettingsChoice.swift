@@ -303,8 +303,18 @@ final class SettingsSegments: NSView {
         override func mouseEntered(with event: NSEvent) { isHovered = true }
         override func mouseExited(with event: NSEvent) { isHovered = false }
 
+        /// The squeeze the option gives under a click. See `SpringPress`.
+        private lazy var press = SpringPress(view: self)
+
+        override func mouseDown(with event: NSEvent) {
+            if acceptsSpringPress { press.down() }
+            super.mouseDown(with: event)
+        }
+
         override func mouseUp(with event: NSEvent) {
-            guard isEnabled, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+            let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+            if inside { press.up() } else { press.cancel() }
+            guard isEnabled, inside else { return }
             onClick()
         }
 

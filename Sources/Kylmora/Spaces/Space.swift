@@ -40,6 +40,31 @@ final class Space: Identifiable {
         static func makeEphemeral() -> Identity { .ephemeral(UUID()) }
     }
 
+    /// The longest a space's name may be.
+    ///
+    /// A space's name is a label, not a sentence: it is read in the sidebar
+    /// header, in the space menu, on a card in Settings and in every window
+    /// title that names it. Nothing stopped a name being a paragraph, and a
+    /// paragraph turned every one of those places into an ellipsis.
+    ///
+    /// Twenty-four characters, because that is what fits: it holds the names
+    /// people actually use ("Personal", "Work", "Daily Dashboard", "Read Later
+    /// BF9059") with room to spare, and it is short enough that a card sized
+    /// to hold the longest legal name is still a card rather than a column.
+    /// `SpaceGrid` takes its cell width from exactly this number.
+    nonisolated static let maximumNameLength = 24
+
+    /// A name as it will actually be stored: trimmed, and cut to the limit.
+    ///
+    /// Applied in `BrowserSession` rather than at each call site, so a name
+    /// arriving from the companion iPhone or from a restored session file is
+    /// held to the same rule as one typed into a sheet.
+    nonisolated static func clampName(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > maximumNameLength else { return trimmed }
+        return String(trimmed.prefix(maximumNameLength)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     let id = UUID()
 
     var name: String

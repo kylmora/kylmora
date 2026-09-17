@@ -5,7 +5,9 @@ import AppKit
 @MainActor
 final class WebsitesSettingsViewController: NSViewController, SettingsWidePane {
     private let categories = SiteSettingCategory.allCases
-    private let categoryTable = NSTableView()
+    /// One row per category, built from the same `SettingsRailRow` the window's
+    /// spine is built from -- see that file for why this is not a table.
+    private var categoryRows: [SiteSettingCategory: SettingsRailRow] = [:]
     private let sitesTable = NSTableView()
     private let defaultPopUp = NSPopUpButton()
     private let instruction = NSTextField(labelWithString: "")
@@ -33,31 +35,34 @@ final class WebsitesSettingsViewController: NSViewController, SettingsWidePane {
         header.font = .systemFont(ofSize: 13, weight: .semibold)
         header.textColor = .secondaryLabelColor
 
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("category"))
-        column.resizingMask = .autoresizingMask
-        categoryTable.addTableColumn(column)
-        categoryTable.headerView = nil
-        // Every category on screen at once: twenty rows of 32 fit where ten
-        // of 40 hid the other ten behind a scroller nobody could see.
-        categoryTable.rowHeight = 32
-        categoryTable.style = .plain
-        categoryTable.backgroundColor = .clear
-        categoryTable.dataSource = self
-        categoryTable.delegate = self
-        let categoryScroll = PassingScrollView()
-        categoryScroll.documentView = categoryTable
-        categoryScroll.drawsBackground = false
-        categoryScroll.hasVerticalScroller = false
-        categoryScroll.translatesAutoresizingMaskIntoConstraints = false
-        categoryScroll.heightAnchor.constraint(
-            equalToConstant: CGFloat(categories.count) * categoryTable.rowHeight + 4
-        ).isActive = true
+        // A rail, not a table. Every category on screen at once, each one the
+        // window's own row: the mark keeps its colour whatever is selected, the
+        // pill lights under the pointer, and the row squeezes when it is
+        // pressed -- none of which a table row did.
+        let rail = NSStackView()
+        rail.orientation = .vertical
+        rail.alignment = .leading
+        rail.spacing = 0
+        rail.translatesAutoresizingMaskIntoConstraints = false
+        for category in categories {
+            let row = SettingsRailRow(
+                title: category.title,
+                symbolName: category.symbolName,
+                accent: category.tileColour
+            ) { [weak self] in self?.show(category) }
+            categoryRows[category] = row
+            rail.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: rail.widthAnchor).isActive = true
+        }
 
-        let left = NSStackView(views: [header, categoryScroll])
+        let left = NSStackView(views: [header, rail])
         left.orientation = .vertical
         left.alignment = .leading
         left.spacing = 6
         let leftBox = boxed(left, padding: Style.SettingsUI.cardPadding)
+        // The rows run the width of the box, so a pill is a pill rather than a
+        // lozenge as wide as the longest category's name.
+        rail.widthAnchor.constraint(equalTo: left.widthAnchor).isActive = true
         // Wide enough for the longest category. At 230 "Tab Sleeping & Archiving"
         // was cut off mid-word.
         leftBox.widthAnchor.constraint(equalToConstant: 268).isActive = true
@@ -76,7 +81,12 @@ final class WebsitesSettingsViewController: NSViewController, SettingsWidePane {
         line.translatesAutoresizingMaskIntoConstraints = false
 
         let hostColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("host"))
-        hostColumn.title = "Configured Websites"
+        // "Website", not "Configured Websites": the line directly above the
+        // table already says these are the websites you have configured, and
+        // the longer caption did not fit the column at any pane width the
+        // window actually opens at -- it was being shortened to "CONFIGURED
+        // WEBSI". A column caption names one row, and each row is a website.
+        hostColumn.title = "Website"
         hostColumn.resizingMask = .autoresizingMask
         let settingColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("setting"))
         settingColumn.title = "Setting"
@@ -88,7 +98,15 @@ final class WebsitesSettingsViewController: NSViewController, SettingsWidePane {
         // The site names take whatever width is left; the setting column
         // keeps its own, so it is never squeezed out of the table.
         sitesTable.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
-        sitesTable.rowHeight = 28
+        // The window's own column captions rather than AppKit's grey bar. The
+        // categories beside this list have no header at all, so a stock one
+        // here was the only bevelled thing on the pane.
+        sitesTable.headerView = SettingsTableHeader()
+        // A row is the dropdown it holds plus air on both sides. The house
+        // dropdown is a fixed 30 points tall, so at a row height of 28 two of
+        // them overlapped by two points: the plates touched and read as one
+        // block rather than as one control per website.
+        sitesTable.rowHeight = SettingsChoiceControl.height + 8
         sitesTable.style = .plain
         // Banding on rows that are not there is what filled the plate with
         // three hundred points of empty grey stripes.
@@ -196,9 +214,7 @@ final class WebsitesSettingsViewController: NSViewController, SettingsWidePane {
 
     private func show(_ category: SiteSettingCategory) {
         self.category = category
-        if let row = categories.firstIndex(of: category), categoryTable.selectedRow != row {
-            categoryTable.selectRowIndexes([row], byExtendingSelection: false)
-        }
+        for (each, row) in categoryRows { row.isChosen = each == category }
         defaultPopUp.removeAllItems()
         defaultPopUp.addItems(withTitles: category.options.map(\.title))
         instruction.stringValue = category.instruction
@@ -270,32 +286,10 @@ extension WebsitesSettingsViewController: NSTableViewDataSource, NSTableViewDele
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        tableView === categoryTable ? categories.count : hosts.count
+        hosts.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        if tableView === categoryTable {
-            guard categories.indices.contains(row) else { return nil }
-            let category = categories[row]
-            let tile = SettingsSwitchRow.tileView(.symbol(category.symbolName, category.tileColour), side: 28)
-            let label = NSTextField(labelWithString: category.title)
-            label.setAccessibilityElement(false)
-            let stack = NSStackView(views: [tile, label])
-            stack.orientation = .horizontal
-            stack.spacing = 10
-            stack.alignment = .centerY
-            stack.translatesAutoresizingMaskIntoConstraints = false
-            let cell = NSTableCellView()
-            cell.addSubview(stack)
-            cell.textField = label
-            NSLayoutConstraint.activate([
-                stack.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
-                stack.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
-            ])
-            cell.setAccessibilityLabel(category.title)
-            return cell
-        }
-
         guard hosts.indices.contains(row) else { return nil }
         let host = hosts[row]
         if tableColumn?.identifier.rawValue == "host" {
@@ -320,16 +314,24 @@ extension WebsitesSettingsViewController: NSTableViewDataSource, NSTableViewDele
         popUp.target = self
         popUp.action = #selector(siteOptionChanged(_:))
         popUp.setAccessibilityLabel("\(category.title) for \(host)")
-        return SettingsForm.fill(popUp)
+        // Centred in the row rather than handed to the table bare. A view given
+        // to a table is stretched to the row, and this one is a plate with a
+        // height of its own: stretched, it draws outside its row and into the
+        // one below.
+        let dressed = SettingsForm.fill(popUp)
+        dressed.translatesAutoresizingMaskIntoConstraints = false
+        let cell = NSView()
+        cell.addSubview(dressed)
+        NSLayoutConstraint.activate([
+            dressed.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 4),
+            dressed.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -4),
+            dressed.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
+        ])
+        return cell
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let table = notification.object as? NSTableView else { return }
-        if table === categoryTable {
-            guard categories.indices.contains(table.selectedRow) else { return }
-            show(categories[table.selectedRow])
-        } else {
-            removeButton.isEnabled = table.selectedRow >= 0
-        }
+        removeButton.isEnabled = table.selectedRow >= 0
     }
 }

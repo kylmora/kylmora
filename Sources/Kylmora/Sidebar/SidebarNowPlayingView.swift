@@ -132,11 +132,21 @@ final class SidebarNowPlayingView: NSView {
         isHovered = false
     }
 
+    /// The squeeze the plate gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
+    override func mouseDown(with event: NSEvent) {
+        if acceptsSpringPress { press.down() }
+        super.mouseDown(with: event)
+    }
+
     override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         if bounds.contains(point), let currentTab {
+            press.up()
             onSelectTab?(currentTab)
         } else {
+            press.cancel()
             super.mouseUp(with: event)
         }
     }

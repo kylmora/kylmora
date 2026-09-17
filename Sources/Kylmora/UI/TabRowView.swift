@@ -617,11 +617,30 @@ final class TabRowView: NSTableCellView {
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
 
+    /// The squeeze the row gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
+    /// The press is flicked rather than held, and the event is passed on
+    /// untouched.
+    ///
+    /// Selecting a tab is the table view's job, and it is the table that
+    /// decides whether this press is a selection or the start of a reorder
+    /// drag -- so the event has to reach it exactly as it would have. The
+    /// squeeze is therefore feedback only: it says the click landed, and makes
+    /// no claim about what the click turned out to mean.
+    override func mouseDown(with event: NSEvent) {
+        if acceptsSpringPress { press.flick() }
+        super.mouseDown(with: event)
+    }
+
     /// A recycled row must not inherit the previous tab's hover state, and the
     /// close handler must be cleared before the next configure so a stale
     /// closure cannot close the wrong tab.
     override func prepareForReuse() {
         super.prepareForReuse()
+        // A cell handed to a different tab must not finish the previous one's
+        // rebound, nor arrive still squeezed.
+        press.reset()
         onClose = nil
         // Whatever this cell shows next arrives already correct rather than
         // fading out of the previous row's selection.

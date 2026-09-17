@@ -340,7 +340,13 @@ private final class PinnedTileView: NSView {
 
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
-    override func mouseDown(with event: NSEvent) { onClick?() }
+    /// The squeeze the tile gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
+    override func mouseDown(with event: NSEvent) {
+        if acceptsSpringPress { press.flick() }
+        onClick?()
+    }
 
     override func accessibilityPerformPress() -> Bool {
         onClick?()
@@ -432,7 +438,13 @@ private final class EmptyTileView: NSView {
 
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
-    override func mouseDown(with event: NSEvent) { onClick?() }
+    /// The squeeze the tile gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
+    override func mouseDown(with event: NSEvent) {
+        if acceptsSpringPress { press.flick() }
+        onClick?()
+    }
 
     override func accessibilityPerformPress() -> Bool {
         onClick?()

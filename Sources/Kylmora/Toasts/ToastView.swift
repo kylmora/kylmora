@@ -148,7 +148,13 @@ final class ToastView: NSView {
     override func mouseEntered(with event: NSEvent) { onHoverChange(true) }
     override func mouseExited(with event: NSEvent) { onHoverChange(false) }
 
-    override func mouseDown(with event: NSEvent) { onDismiss() }
+    /// The squeeze the toast gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
+    override func mouseDown(with event: NSEvent) {
+        if acceptsSpringPress { press.flick() }
+        onDismiss()
+    }
 }
 
 /// The one button a toast may carry.
@@ -218,6 +224,20 @@ private final class ToastActionButton: NSButton {
 
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
+
+    /// The squeeze the button gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
+    /// Held across `NSButton`'s own tracking loop, as `IconButton` does.
+    override func mouseDown(with event: NSEvent) {
+        guard acceptsSpringPress else {
+            super.mouseDown(with: event)
+            return
+        }
+        press.down()
+        super.mouseDown(with: event)
+        press.up()
+    }
 
     @objc private func fire() { onClick() }
 }

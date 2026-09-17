@@ -292,6 +292,10 @@ final class TabCardView: NSView {
         if closeButton.bounds.contains(pointInClose) {
             return
         }
+        if acceptsSpringPress { press.flick() }
         onSelect?(tab, space)
     }
+
+    /// The squeeze the card gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
 }

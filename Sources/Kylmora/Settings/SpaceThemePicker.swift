@@ -161,7 +161,13 @@ final class SpaceThemePicker: NSView {
             ring.stroke()
         }
 
-        override func mouseDown(with event: NSEvent) { onClick?() }
+        /// The squeeze the swatch gives under a click. See `SpringPress`.
+        private lazy var press = SpringPress(view: self)
+
+        override func mouseDown(with event: NSEvent) {
+            if acceptsSpringPress { press.flick() }
+            onClick?()
+        }
 
         override func accessibilityPerformPress() -> Bool {
             onClick?()
@@ -214,7 +220,13 @@ final class SpaceThemePicker: NSView {
             ring.stroke()
         }
 
-        override func mouseDown(with event: NSEvent) { onClick?() }
+        /// The squeeze the swatch gives under a click. See `SpringPress`.
+        private lazy var press = SpringPress(view: self)
+
+        override func mouseDown(with event: NSEvent) {
+            if acceptsSpringPress { press.flick() }
+            onClick?()
+        }
 
         override func accessibilityPerformPress() -> Bool {
             onClick?()

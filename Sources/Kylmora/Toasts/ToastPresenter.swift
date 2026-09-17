@@ -22,10 +22,6 @@ final class ToastPresenter {
     /// the toast arriving rather than as a panel sliding, which is the
     /// difference between a notification and a sheet.
     private static let entryOffset: CGFloat = 12
-    /// Kylmora's one animation duration. A toast is chrome
-    /// appearing, not a user-driven gesture, so it gets the same 0.12 s as
-    /// everything else rather than a spring.
-    private static let animationDuration: TimeInterval = 0.12
     /// A toast never spans a wide window: a line of text 500 points long is
     /// read as a banner, and the eye has to travel to find the button.
     private static let maxWidth: CGFloat = 460
@@ -114,15 +110,14 @@ final class ToastPresenter {
         toastView = view
         bottomConstraint = bottom
 
-        hostView.layoutSubtreeIfNeeded()
-        view.alphaValue = 0
+        // Laid out at its resting position first, and then sprung *to* it
+        // from below. The constraint no longer animates: a constraint cannot
+        // overshoot, and an entry animation split between Auto Layout and a
+        // spring would have the toast's frame and its transform disagreeing
+        // about where it is for the whole of the bounce.
         bottom.constant = -ToastMetrics.edgeOffset
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.animationDuration
-            context.allowsImplicitAnimation = true
-            view.animator().alphaValue = 1
-            hostView.layoutSubtreeIfNeeded()
-        }
+        hostView.layoutSubtreeIfNeeded()
+        SpringPresence.appear(view, rising: Self.entryOffset)
 
         startCountdown(for: toast)
     }
@@ -134,17 +129,11 @@ final class ToastPresenter {
 
         guard let view = toastView else { return }
         toastView = nil
-        bottomConstraint?.constant = -ToastMetrics.edgeOffset + Self.entryOffset
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.animationDuration
-            context.allowsImplicitAnimation = true
-            view.animator().alphaValue = 0
-            view.superview?.layoutSubtreeIfNeeded()
-        } completionHandler: {
-            // AppKit runs this on the main queue but does not say so in its
-            // type, so the isolation is asserted rather than hopped to: a hop
-            // would let the view outlive the animation by a turn of the loop.
-            MainActor.assumeIsolated { view.removeFromSuperview() }
+        // It leaves the way it came, back down and slightly smaller, and only
+        // then leaves the view tree. No spring on the way out: see
+        // `SpringPresence`.
+        SpringPresence.disappear(view, falling: Self.entryOffset) {
+            view.removeFromSuperview()
         }
         bottomConstraint = nil
     }

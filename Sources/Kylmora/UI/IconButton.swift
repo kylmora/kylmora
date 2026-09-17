@@ -171,6 +171,26 @@ final class IconButton: NSButton {
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
 
+    /// The squeeze the button gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
+    /// Held down for exactly as long as the button is.
+    ///
+    /// `NSButton` tracks the mouse itself, inside `super.mouseDown`, which does
+    /// not return until the button has been released and the action sent. That
+    /// makes the two lines around it the true edges of the press -- including
+    /// the case where the pointer is dragged off the button and back on, which
+    /// the cell handles and which nothing here has to know about.
+    override func mouseDown(with event: NSEvent) {
+        guard acceptsSpringPress else {
+            super.mouseDown(with: event)
+            return
+        }
+        press.down()
+        super.mouseDown(with: event)
+        press.up()
+    }
+
     @objc private func fire() {
         onClick?()
     }

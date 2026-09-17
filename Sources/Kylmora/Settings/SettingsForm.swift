@@ -1083,11 +1083,15 @@ final class SettingsFormRow: NSView {
     /// ring at the far edge is not a target.
     override func mouseDown(with event: NSEvent) {
         if let radio = control as? SettingsInlineRadio {
+            if acceptsSpringPress { press.flick() }
             radio.choose()
         } else {
             super.mouseDown(with: event)
         }
     }
+
+    /// The squeeze the row gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
 
     /// A note on its own, spanning the row.
     ///

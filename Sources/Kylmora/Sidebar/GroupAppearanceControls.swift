@@ -146,9 +146,17 @@ final class SegmentedPills: NSView {
         }
     }
 
+    /// The squeeze the track gives under a click. See `SpringPress`.
+    ///
+    /// The whole track squeezes, not the one segment that was hit: the track is
+    /// the control, and a single segment shrinking inside a fixed frame would
+    /// read as the segment coming loose rather than as the control yielding.
+    private lazy var press = SpringPress(view: self)
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         guard let index = segmentRects.firstIndex(where: { $0.contains(point) }) else { return }
+        if acceptsSpringPress { press.flick() }
         if index != selectedIndex {
             selectedIndex = index
             needsDisplay = true
@@ -213,7 +221,13 @@ final class SwatchTile: NSControl {
         ring.stroke()
     }
 
-    override func mouseDown(with event: NSEvent) { onClick?() }
+    /// The squeeze the swatch gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
+    override func mouseDown(with event: NSEvent) {
+        if acceptsSpringPress { press.flick() }
+        onClick?()
+    }
     override func accessibilityPerformPress() -> Bool { onClick?(); return true }
 }
 
@@ -254,7 +268,13 @@ final class ColorChip: NSControl {
         edge.stroke()
     }
 
-    override func mouseDown(with event: NSEvent) { onClick?() }
+    /// The squeeze the swatch gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
+    override func mouseDown(with event: NSEvent) {
+        if acceptsSpringPress { press.flick() }
+        onClick?()
+    }
     override func accessibilityPerformPress() -> Bool { onClick?(); return true }
 }
 
@@ -324,9 +344,13 @@ final class DirectionPicker: NSView {
         NSBezierPath(roundedRect: thumb, xRadius: radius - 2, yRadius: radius - 2).fill()
     }
 
+    /// The squeeze the track gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         guard let index = cellRects.firstIndex(where: { $0.contains(point) }) else { return }
+        if acceptsSpringPress { press.flick() }
         let direction = directions[index]
         if direction != selected {
             selected = direction
@@ -419,7 +443,13 @@ final class SolidSwatch: NSControl {
         ring.stroke()
     }
 
-    override func mouseDown(with event: NSEvent) { onClick?() }
+    /// The squeeze the swatch gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
+    override func mouseDown(with event: NSEvent) {
+        if acceptsSpringPress { press.flick() }
+        onClick?()
+    }
     override func accessibilityPerformPress() -> Bool { onClick?(); return true }
 }
 

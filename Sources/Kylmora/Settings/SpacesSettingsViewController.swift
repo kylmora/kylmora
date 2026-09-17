@@ -11,8 +11,7 @@ import Combine
 @MainActor
 final class SpacesSettingsViewController: NSViewController {
     private let session: BrowserSession
-    private let tableView = NSTableView()
-    private let scrollView = NSScrollView()
+    private let grid = SpaceGridView()
     private let nameField = NSTextField()
     private let picker = SpaceThemePicker()
     private let borderSummary = NSTextField(labelWithString: "")
@@ -64,8 +63,6 @@ final class SpacesSettingsViewController: NSViewController {
     private let sleepPopUp = NSPopUpButton()
     private let zoomPopUp = NSPopUpButton()
     private let userAgentField = NSTextField()
-    /// The list is as tall as the spaces in it.
-    private var listHeight: NSLayoutConstraint?
 
     init(session: BrowserSession) {
         self.session = session
@@ -92,29 +89,11 @@ final class SpacesSettingsViewController: NSViewController {
     // MARK: - Layout
 
     private func buildLayout(in form: SettingsForm) {
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("space"))
-        column.resizingMask = .autoresizingMask
-        tableView.addTableColumn(column)
-        tableView.headerView = nil
-        tableView.rowHeight = 30
-        tableView.style = .plain
-        tableView.backgroundColor = .clear
-        tableView.gridStyleMask = []
-        tableView.intercellSpacing = NSSize(width: 0, height: 0)
-        tableView.dataSource = self
-        tableView.delegate = self
-
-        // On the card, not in a box on the card. The bezel and the scroller
-        // made a second card inside the first one, and dressing it as a control
-        // squeezed four spaces into a column 280 points wide.
-        scrollView.documentView = tableView
-        scrollView.hasVerticalScroller = false
-        scrollView.drawsBackground = false
-        scrollView.borderType = .noBorder
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        let listHeight = scrollView.heightAnchor.constraint(equalToConstant: 130)
-        listHeight.isActive = true
-        self.listHeight = listHeight
+        // A grid, not a column. See `SpaceGridView`: spaces are short-named
+        // things you pick from, and a one-column list of them left five hundred
+        // points of card empty beside every name.
+        grid.onSelect = { [weak self] space in self?.select(space) }
+        grid.translatesAutoresizingMaskIntoConstraints = false
 
         let createButton = NSButton(title: "Create Space\u{2026}", target: self, action: #selector(createSpace))
         privateButton.target = self
@@ -136,23 +115,34 @@ final class SpacesSettingsViewController: NSViewController {
         // an arranged view, and a button that has been dressed is no longer one.
         buttons.setCustomSpacing(20, after: privatePlate)
 
-        let list = NSStackView(views: [scrollView, buttons])
+        // The key to the chips, directly under the cards that carry them.
+        let key = SpaceBadgeKeyView()
+
+        let list = NSStackView(views: [grid, key, buttons])
         list.orientation = .vertical
         list.alignment = .leading
         list.distribution = .fill
         list.spacing = 10
+        // The key belongs to the grid above it, not to the buttons below.
+        list.setCustomSpacing(6, after: grid)
+        list.setCustomSpacing(14, after: key)
         list.translatesAutoresizingMaskIntoConstraints = false
         // The list runs the width of the card with its label above it: it is a
         // list of things, not a value sitting in a control column.
         form.addRow("Spaces", list, alignment: .top)
-        scrollView.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
-        resizeList()
+        // The grid runs the width of the row it is in, which is what tells it
+        // how many columns it has room for.
+        grid.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+        reloadGrid()
         form.addNote("Every space keeps its own cookies, logins and site data, so the same site can be signed in as a different account in each one. The window takes the colour of whichever space is in front.")
 
         form.addSeparator()
 
         nameField.target = self
         nameField.action = #selector(nameCommitted)
+        // The field refuses the character past the limit rather than letting a
+        // long name be typed and silently cut when it is stored.
+        nameField.formatter = LimitedLengthFormatter(limit: Space.maximumNameLength)
         form.addRow("Space name", SettingsForm.fill(nameField))
         form.addNote(detailLabel)
 
@@ -333,8 +323,7 @@ final class SpacesSettingsViewController: NSViewController {
     /// selected across a rename or a recolour.
     func reload() {
         let keep = editing
-        tableView.reloadData()
-        resizeList()
+        reloadGrid()
         if EnterprisePolicyManager.shared.isPrivateBrowsingDisabled {
             privateButton.isEnabled = false
             privateButton.toolTip = "Private spaces are disabled by your organization"
@@ -349,21 +338,17 @@ final class SpacesSettingsViewController: NSViewController {
         }
     }
 
-    /// The list shows every space at once rather than four at a time behind a
-    /// scroller, up to the point where it would take over the page.
-    private func resizeList() {
-        let rows = CGFloat(session.spaces.count)
-            * (tableView.rowHeight + tableView.intercellSpacing.height)
-        listHeight?.constant = min(max(rows + 4, 38), 360)
+    /// Every space on the card at once. The grid wraps, so twelve spaces are
+    /// four rows of three rather than twelve rows behind a scroller.
+    private func reloadGrid() {
+        grid.show(session.spaces, selected: editing, active: session.activeSpace)
     }
 
     /// Opens a space in the editor. Public so the space menu's "Space
     /// Settings" can land on the one the user was looking at.
     func select(_ space: Space) {
         editing = space
-        if let index = session.spaces.firstIndex(where: { $0 === space }) {
-            tableView.selectRowIndexes([index], byExtendingSelection: false)
-        }
+        reloadGrid()
         nameField.stringValue = space.name
         picker.show(space.theme)
         picker.showCustomColor(space.look.customColor)
@@ -795,54 +780,3 @@ final class SpacesSettingsViewController: NSViewController {
     }
 }
 
-// MARK: - The list
-
-extension SpacesSettingsViewController: NSTableViewDataSource, NSTableViewDelegate {
-    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-        SettingsTableRow()
-    }
-
-    func numberOfRows(in tableView: NSTableView) -> Int {
-        session.spaces.count
-    }
-
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard session.spaces.indices.contains(row) else { return nil }
-        let space = session.spaces[row]
-
-        let dot = NSImageView(image: space.dotImage(side: 12))
-        dot.setAccessibilityElement(false)
-        let label = NSTextField(labelWithString: space.name)
-        label.setAccessibilityElement(false)
-
-        let stack = NSStackView(views: [dot, label])
-        stack.orientation = .horizontal
-        stack.spacing = 8
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        if space.isPrivate {
-            let badge = NSTextField(labelWithString: "Private")
-            badge.font = .systemFont(ofSize: 10)
-            badge.textColor = .secondaryLabelColor
-            badge.setAccessibilityElement(false)
-            stack.addArrangedSubview(badge)
-        }
-
-        let cell = NSTableCellView()
-        cell.addSubview(stack)
-        cell.textField = label
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -6),
-            stack.centerYAnchor.constraint(equalTo: cell.centerYAnchor)
-        ])
-        cell.setAccessibilityLabel(space.isPrivate ? "\(space.name), private" : space.name)
-        return cell
-    }
-
-    func tableViewSelectionDidChange(_ notification: Notification) {
-        let row = tableView.selectedRow
-        guard session.spaces.indices.contains(row) else { return }
-        select(session.spaces[row])
-    }
-}

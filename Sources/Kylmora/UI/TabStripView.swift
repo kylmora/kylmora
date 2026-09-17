@@ -88,9 +88,27 @@ final class TabStripView: NSView {
         fatalError("TabStripView is created in code only")
     }
 
+    /// The tabs the strip is currently showing, so the next fill can tell an
+    /// arrival from a redraw.
+    private var shownIDs: Set<UUID> = []
+
     /// Rebuilds the cells. Tens of tabs, not thousands, so cheap enough on
     /// every change.
     func show(_ tabs: [Tab], activeID: UUID?, isPrivate: Bool) {
+        // Which tabs are genuinely new, worked out before the cells are thrown
+        // away. Every cell is rebuilt on every change, so without this a tab
+        // that merely changed its title would spring in beside one that was
+        // actually just opened, and the movement would stop meaning anything.
+        //
+        // Nothing arrives on a first fill, and nothing arrives when the strip
+        // and its previous contents have no tab at all in common: that is a
+        // different space's list rather than this one's list changing, and
+        // animating it sends every cell across the strip at once. A space
+        // switch has its own transition and does not want this one on top.
+        let ids = Set(tabs.map(\.id))
+        let arrived = ids.isDisjoint(with: shownIDs) ? [] : ids.subtracting(shownIDs)
+        shownIDs = ids
+
         for cell in cells { cell.removeFromSuperview() }
         cells = tabs.map { tab in
             let cell = TabStripCell(tab: tab, isPrivate: isPrivate)
@@ -112,6 +130,14 @@ final class TabStripView: NSView {
             row.addArrangedSubview(cell)
             cell.widthAnchor.constraint(equalToConstant: Self.cellWidth).isActive = true
             cell.heightAnchor.constraint(equalToConstant: Self.height - 8).isActive = true
+            if arrived.contains(tab.id) {
+                // In from the leading edge, the same direction the sidebar's
+                // rows arrive from, so the two lists agree about which way a
+                // new tab comes from.
+                SpringPresence.slideIn(
+                    cell, from: CGVector(dx: -Style.Motion.entrySlide, dy: 0), fading: true
+                )
+            }
             return cell
         }
         if let active = cells.first(where: \.isActive) {
@@ -267,10 +293,14 @@ final class TabStripCell: NSView {
     override func mouseEntered(with event: NSEvent) { hovering = true; updateLook() }
     override func mouseExited(with event: NSEvent) { hovering = false; updateLook() }
 
+    /// The squeeze the tab gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command) { return }
         pressPoint = convert(event.locationInWindow, from: nil)
         isDragging = false
+        if acceptsSpringPress { press.down() }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -284,10 +314,17 @@ final class TabStripCell: NSView {
     override func mouseUp(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         defer { pressPoint = nil; isDragging = false }
-        guard pressPoint != nil else { return }
+        guard pressPoint != nil else {
+            press.cancel()
+            return
+        }
         if isDragging {
+            // A tab that was dragged into a new position has not been clicked,
+            // and springing would say it had.
+            press.cancel()
             onDrop?(point)
         } else {
+            press.up()
             onSelect?()
         }
     }
