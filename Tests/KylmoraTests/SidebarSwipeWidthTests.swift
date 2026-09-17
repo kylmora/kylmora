@@ -40,12 +40,22 @@ struct SidebarSwipeWidthTests {
         let midSwipe = sidebar.view.fittingSize.width
 
         // The test is worthless unless the swipe actually put a still on the
-        // sidebar, which is the thing suspected of demanding the width.
+        // sidebar, which is the thing suspected of demanding the width -- so
+        // say which case is being exercised rather than passing either way.
+        //
+        // Both branches are real: a machine that reduces motion has no
+        // filmstrip to drag, and `applySwipe` returns before making one. CI
+        // runs that way, which is how this test first failed there while
+        // passing on a desk.
         func stills(in view: NSView) -> [NSView] {
             view.subviews.filter { "\(type(of: $0))".contains("SpaceStill") }
                 + view.subviews.flatMap { stills(in: $0) }
         }
-        #expect(!stills(in: sidebar.view).isEmpty, "the swipe should have made a still")
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            #expect(stills(in: sidebar.view).isEmpty, "reduced motion slides nothing")
+        } else {
+            #expect(!stills(in: sidebar.view).isEmpty, "the swipe should have made a still")
+        }
 
         #expect(
             midSwipe <= atRest + 1,
