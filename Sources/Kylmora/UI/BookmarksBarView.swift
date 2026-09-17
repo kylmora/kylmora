@@ -223,7 +223,13 @@ final class BookmarksBarView: NSView {
 
         override func mouseEntered(with event: NSEvent) { isHovered = true }
         override func mouseExited(with event: NSEvent) { isHovered = false }
-        override func mouseDown(with event: NSEvent) { onActivate?(self) }
+        /// The squeeze the chip gives under a click. See `SpringPress`.
+        private lazy var press = SpringPress(view: self)
+
+        override func mouseDown(with event: NSEvent) {
+            if acceptsSpringPress { press.flick() }
+            onActivate?(self)
+        }
         override func accessibilityPerformPress() -> Bool {
             onActivate?(self)
             return true

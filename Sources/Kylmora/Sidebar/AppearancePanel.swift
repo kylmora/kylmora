@@ -130,10 +130,21 @@ final class PanelButton: NSControl {
 
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
-    override func mouseDown(with event: NSEvent) { isPressed = true }
+    /// The squeeze the swatch gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
+    override func mouseDown(with event: NSEvent) {
+        isPressed = true
+        if acceptsSpringPress { press.down() }
+    }
     override func mouseUp(with event: NSEvent) {
         isPressed = false
-        if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
+        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+        // Released off the swatch is not a click, so it settles back without
+        // the bounce -- the same distinction a folder header draws between a
+        // toggle and a drag.
+        if inside { press.up() } else { press.cancel() }
+        if inside { onClick?() }
     }
     override func accessibilityPerformPress() -> Bool { onClick?(); return true }
 }
@@ -223,6 +234,12 @@ final class PanelToggle: NSControl {
         onToggle?(isOn)
     }
 
-    override func mouseDown(with event: NSEvent) { flip() }
+    /// The squeeze the toggle gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
+    override func mouseDown(with event: NSEvent) {
+        if acceptsSpringPress { press.flick() }
+        flip()
+    }
     override func accessibilityPerformPress() -> Bool { flip(); return true }
 }

@@ -94,6 +94,10 @@ final class NewSpaceSheet: NSViewController {
         buttons.spacing = 10
         buttons.distribution = .fillEqually
 
+        // A name longer than a space may keep cannot be typed here, rather
+        // than being accepted and quietly cut when the space is made.
+        nameField.field.formatter = LimitedLengthFormatter(limit: Space.maximumNameLength)
+
         let divider = PanelStyle.divider()
         let sections: [NSView] = [
             heading,

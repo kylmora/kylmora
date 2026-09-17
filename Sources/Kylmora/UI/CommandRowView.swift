@@ -146,7 +146,20 @@ final class CommandRowView: NSView {
         onHover?()
     }
 
+    /// The squeeze the row gives under a click. See `SpringPress`.
+    ///
+    /// This row is one of the few that acts on `mouseUp`, so it can hold the
+    /// squeeze for as long as the button is actually held rather than flicking
+    /// on a fixed clock.
+    private lazy var press = SpringPress(view: self)
+
+    override func mouseDown(with event: NSEvent) {
+        if acceptsSpringPress { press.down() }
+        super.mouseDown(with: event)
+    }
+
     override func mouseUp(with event: NSEvent) {
+        press.up()
         onClick?()
     }
 

@@ -302,12 +302,18 @@ final class SettingsWindowController: NSWindowController {
             spine.leadingAnchor.constraint(equalTo: canvas.leadingAnchor),
             spine.bottomAnchor.constraint(equalTo: canvas.bottomAnchor),
 
-            // Sixteen points of name, where a header band used to be a hundred.
+            // The name sits where a header band used to be a hundred points.
+            //
+            // Its baseline is lined up with the search field's centre across
+            // the way rather than hung from the top of the window: the two are
+            // the only things on this row, and a title floating a few points
+            // above or below the field beside it is precisely the sort of
+            // near-miss that reads as untidy without being nameable.
             eyebrow.leadingAnchor.constraint(equalTo: spine.trailingAnchor, constant: gutter),
             eyebrow.trailingAnchor.constraint(lessThanOrEqualTo: canvas.trailingAnchor, constant: -gutter),
-            eyebrow.topAnchor.constraint(
+            eyebrow.centerYAnchor.constraint(
                 equalTo: canvas.topAnchor,
-                constant: Style.SettingsUI.titlebarHeight + 4
+                constant: Style.SettingsUI.titlebarHeight + Style.SettingsUI.spineRowHeight / 2
             ),
 
             scroll.topAnchor.constraint(
@@ -398,18 +404,26 @@ final class SettingsWindowController: NSWindowController {
     private func show(_ pane: Pane) {
         spine.select(pane)
         guard pane != shown else { return }
+        let previous = shown
         shown = pane
 
         let controller = panes[pane] ?? make(pane)
         panes[pane] = controller
         window?.title = "Settings \u{2014} \(pane.title)"
 
+        // The pane's name, at the size the type scale already reserved for it.
+        //
+        // It was set in the 11.5-point group font, upper-cased and tracked out,
+        // which is the treatment for a caption *over* something -- and there
+        // was nothing over. On its own above an empty row it read as a stray
+        // label rather than as the page's title, which is what it is. The
+        // 22-point `settingsTitle` has existed all along, documented as "the
+        // pane's name at the top of the detail side", and was used nowhere.
         eyebrow.attributedStringValue = NSAttributedString(
-            string: pane.title.uppercased(),
+            string: pane.title,
             attributes: [
-                .font: Style.Fonts.settingsGroup,
-                .foregroundColor: pane.accent,
-                .kern: 1.2
+                .font: Style.Fonts.settingsTitle,
+                .foregroundColor: pane.accent
             ]
         )
         // The pane's hue runs through its page: the eyebrow, and the edge down
@@ -434,6 +448,20 @@ final class SettingsWindowController: NSWindowController {
             view.trailingAnchor.constraint(equalTo: paneContainer.trailingAnchor),
             view.bottomAnchor.constraint(equalTo: paneContainer.bottomAnchor)
         ])
+
+        // The pane arrives from the side of the spine it was chosen from: a
+        // pane further down the list comes up from below, one further up comes
+        // down from above. A pane that always slid the same way would say the
+        // list has a direction and then contradict it half the time; this way
+        // the movement and the spine agree, and the window reads as one surface
+        // being scrolled rather than as pages being swapped.
+        //
+        // Nothing to travel from on the first pane of a freshly opened window:
+        // it is not replacing anything, so it simply fades up.
+        let travel = previous.map {
+            pane.rawValue > $0.rawValue ? Style.Motion.entrySlide : -Style.Motion.entrySlide
+        } ?? 0
+        SpringPresence.slideIn(view, from: CGVector(dx: 0, dy: travel), fading: true)
 
         // Every pane starts at its top. Carrying the last pane's scroll offset
         // into a shorter one lands the reader in the middle of a page they have

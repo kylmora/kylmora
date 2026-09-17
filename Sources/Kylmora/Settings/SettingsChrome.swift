@@ -407,7 +407,11 @@ final class SettingsInlineRadio: NSView {
         setAccessibilityValue(radio.state == .on ? "selected" : "")
     }
 
+    /// The squeeze the row gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
     override func mouseDown(with event: NSEvent) {
+        if acceptsSpringPress { press.flick() }
         choose()
     }
 
@@ -456,6 +460,94 @@ final class SettingsInlineRadio: NSView {
                 ring.stroke()
             }
         }
+    }
+}
+
+/// The column captions over one of the window's tables.
+///
+/// AppKit's own header is a grey bar with a bevelled bottom edge, a vertical
+/// rule between every column and the system's header font -- a spreadsheet's
+/// chrome, dropped onto a window that is glass and cards everywhere else. It
+/// was the last stock control left in the shortcuts pane, and next to the
+/// house-styled search field and plates beside it, it read as a different
+/// program.
+///
+/// This draws the same thing the spine's group headings do -- small uppercase
+/// caption, tertiary ink, over a hairline -- because that is what a column
+/// title is: a label for the rows under it. Nothing paints a background, so
+/// the card's glass shows through the header as it does through the rows.
+@MainActor
+final class SettingsTableHeader: NSTableHeaderView {
+    /// Tall enough for an 11.5-point caption with air above and below it, and
+    /// no taller: the header is a label for the table, not a row of it. The
+    /// stock header is 28 as well, so the table's height arithmetic, which
+    /// asks the header how tall it is, is unchanged.
+    static let height: CGFloat = 28
+
+    /// Where a column's caption starts, measured from the column's own edge.
+    ///
+    /// A cell view is inset by half the table's intercell spacing, and the
+    /// label inside it is laid out four points in from that. The caption
+    /// stands directly over the text it names, so it repeats that sum rather
+    /// than taking a number that merely looks close at one column width.
+    private var titleInset: CGFloat {
+        (tableView?.intercellSpacing.width ?? 0) / 2 + 4
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        self.frame.size.height = Self.height
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("SettingsTableHeader is created in code only")
+    }
+
+    /// Everything, rather than a pass over `super`. The bevel, the fill and
+    /// the column rules all come from the stock drawing, so there is nothing
+    /// of it left to keep.
+    override func draw(_ dirtyRect: NSRect) {
+        guard let tableView else { return }
+
+        for (index, column) in tableView.tableColumns.enumerated() where !column.isHidden {
+            let title = column.title
+            guard !title.isEmpty else { continue }
+            let rect = headerRect(ofColumn: index)
+            guard rect.intersects(dirtyRect) else { continue }
+
+            // Ellipsised rather than cut. A caption wider than its column --
+            // "Configured Websites" over a list of hostnames in a half-width
+            // pane -- was being sliced mid-word at whatever letter the edge
+            // landed on, which reads as a bug rather than as a shortened word.
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byTruncatingTail
+            let caption = NSAttributedString(
+                string: title.uppercased(),
+                attributes: [
+                    .font: Style.Fonts.settingsGroup,
+                    .foregroundColor: Style.Colors.tertiaryText,
+                    .kern: 0.6,
+                    .paragraphStyle: paragraph
+                ]
+            )
+            // Drawn into the column's own box, so a caption can never be the
+            // thing that draws over the one beside it, and so the truncation
+            // has an edge to happen at.
+            let height = caption.size().height
+            caption.draw(in: NSRect(
+                x: rect.minX + titleInset,
+                y: ((bounds.height - height) / 2).rounded(),
+                width: max(0, rect.width - titleInset * 2),
+                height: height
+            ))
+        }
+
+        // The same hairline that divides the rows, so the caption sits on the
+        // top edge of the table rather than in a bar of its own. The view is
+        // flipped, so the bottom edge is at `maxY`.
+        let thin = 1 / (window?.backingScaleFactor ?? 2)
+        Style.Colors.settingsHairline.setFill()
+        NSRect(x: 0, y: bounds.maxY - thin, width: bounds.width, height: thin).fill()
     }
 }
 
@@ -991,15 +1083,21 @@ final class SettingsToggle: NSControl {
         CATransaction.commit()
     }
 
+    /// The squeeze the switch gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
     override func mouseDown(with event: NSEvent) {
         guard isEnabled else { return }
         isPressed = true
+        if acceptsSpringPress { press.down() }
     }
 
     override func mouseUp(with event: NSEvent) {
         guard isEnabled, isPressed else { return }
         isPressed = false
-        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+        if inside { press.up() } else { press.cancel() }
+        guard inside else { return }
         flip()
     }
 

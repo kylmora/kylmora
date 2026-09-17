@@ -19,7 +19,6 @@ final class PrivacySettingsViewController: NSViewController {
     private let cookiesSwitch = NSSwitch()
     private let trackersSwitch = NSSwitch()
     private let autoUpdate = NSButton(checkboxWithTitle: "Auto-update content blockers", target: nil, action: nil)
-    private let updatedLabel = NSTextField(labelWithString: "")
     private let rulesLabel = NSTextField(labelWithString: "")
     private let updateButton = NSButton(title: "Update Now", target: nil, action: nil)
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
@@ -148,7 +147,6 @@ final class PrivacySettingsViewController: NSViewController {
         // What is in force, with the buttons that change it beside it.
         rulesLabel.lineBreakMode = .byTruncatingTail
         form.addRow(rulesLabel, [updateButton, manageLists])
-        form.addNote(updatedLabel)
         form.addNote(statusLabel)
 
         form.addSection("Browser lock")
@@ -232,19 +230,19 @@ final class PrivacySettingsViewController: NSViewController {
         hardwareMaskingCheckbox.isEnabled = fpActive
     }
 
-    /// The lines under the card: when the lists were fetched, what is in
+    /// The line under the card: when the lists were fetched, what is in
     /// force, and anything still downloading or failing.
+    ///
+    /// One line rather than two. Freshness and progress are the same thought
+    /// -- both answer "are these lists any good right now?" -- and each is a
+    /// short phrase, so stacking them left two near-empty notes under the card
+    /// where one reads as a single caption. They are joined the way the
+    /// downloading and failing counts already were, with a middle dot.
     private func reloadStatus() {
-        if let updated = blocker.lastUpdated {
-            updatedLabel.stringValue = "Last updated \u{2013} \(updated.formatted(date: .numeric, time: .shortened))"
-        } else {
-            updatedLabel.stringValue = blocker.activeLists.isEmpty ? "No lists are in use." : "Not yet downloaded."
-        }
         let summary = blocker.activeSummary
         let lists = summary.lists == 1 ? "1 active list" : "\(summary.lists) active lists"
         rulesLabel.stringValue = "\(Self.formatted(summary.rules)) active rules from \(lists)."
 
-        var parts: [String] = []
         var fetching = 0
         var failed = 0
         for list in blocker.activeLists {
@@ -254,9 +252,21 @@ final class PrivacySettingsViewController: NSViewController {
             default: break
             }
         }
+
+        // Each fragment is written without its own full stop so the joined
+        // line ends in exactly one, wherever it happens to stop.
+        var parts: [String] = []
+        if let updated = blocker.lastUpdated {
+            parts.append("Last updated \u{2013} \(updated.formatted(date: .numeric, time: .shortened))")
+        } else {
+            parts.append(blocker.activeLists.isEmpty ? "No lists are in use" : "Not yet downloaded")
+        }
         if fetching > 0 { parts.append(fetching == 1 ? "1 list downloading" : "\(fetching) lists downloading") }
         if failed > 0 { parts.append(failed == 1 ? "1 list could not be downloaded" : "\(failed) lists could not be downloaded") }
-        statusLabel.stringValue = parts.isEmpty ? "Changes apply to pages as they load." : parts.joined(separator: " \u{00b7} ") + "."
+        // Only when nothing is in flight: while a list is downloading, what
+        // happens next is the news, not the standing rule.
+        if fetching == 0 && failed == 0 { parts.append("Changes apply to pages as they load") }
+        statusLabel.stringValue = parts.joined(separator: " \u{00b7} ") + "."
         updateButton.isEnabled = fetching == 0
     }
 

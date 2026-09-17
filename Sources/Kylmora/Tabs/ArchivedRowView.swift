@@ -189,8 +189,12 @@ final class ArchivedRowView: NSTableCellView {
     /// A press anywhere but the remove button puts the tab back. The button
     /// takes its own clicks, because hit testing hands it the event first.
     override func mouseDown(with event: NSEvent) {
+        if acceptsSpringPress { press.flick() }
         onPick?()
     }
+
+    /// The squeeze the row gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
 
     override func accessibilityPerformPress() -> Bool {
         onPick?()
@@ -201,6 +205,9 @@ final class ArchivedRowView: NSTableCellView {
     /// handler that would have put a different tab back, or its icon.
     override func prepareForReuse() {
         super.prepareForReuse()
+        // A cell handed to a different record must not finish the previous
+        // one's rebound, nor arrive still squeezed.
+        press.reset()
         onPick = nil
         onRemove = nil
         isHovered = false

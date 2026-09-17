@@ -141,14 +141,13 @@ final class TabOverviewGridViewController: NSViewController {
             ])
         }
 
-        view.alphaValue = 0
         reloadGrid()
 
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            self.view.animator().alphaValue = 1.0
-        }
+        // The grid springs open from slightly under its own size rather than
+        // fading in flat, so the overview reads as the window pulling back to
+        // show everything at once. No vertical travel: it is not arriving from
+        // anywhere, it is the same window seen from further away.
+        SpringPresence.appear(view, rising: 0)
 
         // Focus search field
         DispatchQueue.main.async { [weak self] in
@@ -161,11 +160,7 @@ final class TabOverviewGridViewController: NSViewController {
     func dismissOverview() {
         guard isOpen else { return }
 
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.15
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            self.view.animator().alphaValue = 0.0
-        }, completionHandler: { [weak self] in
+        SpringPresence.disappear(view, falling: 0) { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.view.removeFromSuperview()
@@ -175,7 +170,7 @@ final class TabOverviewGridViewController: NSViewController {
                 }
                 self.onDismissHandler?()
             }
-        })
+        }
     }
 
     private func observeSessionChanges() {

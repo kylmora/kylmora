@@ -212,8 +212,14 @@ final class TabGroupHeaderView: NSView {
     override func mouseDown(with event: NSEvent) {
         let start = event.locationInWindow
         let threshold: CGFloat = 4
+        // Squeezed for as long as the press lasts, and released either way --
+        // but only the release that was a click gets the bounce. A header that
+        // sprang back after being dragged would report a toggle that never
+        // happened.
+        if acceptsSpringPress { press.down() }
         while let next = window?.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
             if next.type == .leftMouseUp {
+                press.up()
                 toggle()
                 return
             }
@@ -222,11 +228,15 @@ final class TabGroupHeaderView: NSView {
                 next.locationInWindow.y - start.y
             )
             if moved > threshold {
+                press.cancel()
                 super.mouseDown(with: event)
                 return
             }
         }
     }
+
+    /// The squeeze the header gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
 
     override func accessibilityPerformPress() -> Bool {
         toggle()

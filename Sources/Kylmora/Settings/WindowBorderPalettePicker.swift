@@ -158,8 +158,12 @@ final class WindowBorderPalettePicker: NSView {
             }
         }
 
+        /// The squeeze the swatch gives under a click. See `SpringPress`.
+        private lazy var press = SpringPress(view: self)
+
         override func mouseDown(with event: NSEvent) {
             guard isEnabled else { return }
+            if acceptsSpringPress { press.flick() }
             onClick?()
         }
 

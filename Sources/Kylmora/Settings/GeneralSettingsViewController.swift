@@ -13,8 +13,10 @@ final class GeneralSettingsViewController: NSViewController {
     private let suspensionPopUp = NSPopUpButton()
     private let archivePopUp = NSPopUpButton()
     private let idleBadgePopUp = NSPopUpButton()
-    private let defaultBrowserLabel = NSTextField(labelWithString: "")
-    private let setDefaultButton = NSButton(title: "Set Default\u{2026}", target: nil, action: nil)
+    private let defaultBrowserBanner = DefaultBrowserBanner()
+    /// The row the banner sits in, so the whole block can be taken off the
+    /// pane rather than left behind as an empty gap.
+    private var defaultBrowserRow: SettingsFormRow?
     private let locationPopUp = NSPopUpButton()
     private let removalPopUp = NSPopUpButton()
     private let safeFiles = NSButton(checkboxWithTitle: "Open \u{201c}safe\u{201d} files after downloading", target: nil, action: nil)
@@ -53,6 +55,15 @@ final class GeneralSettingsViewController: NSViewController {
     }
 
     private func buildLayout(in form: SettingsForm) {
+        // First on the pane, before anything you came here to change. Hidden
+        // for good once Kylmora is the default; see `DefaultBrowserBanner`.
+        defaultBrowserBanner.onSet = { [weak self] in self?.setDefaultBrowser() }
+        let bannerRow = form.addHero(defaultBrowserBanner)
+        defaultBrowserRow = bannerRow
+        // A hero is centred by default. This one is a banner: it runs the
+        // width of the pane like the cards under it.
+        defaultBrowserBanner.widthAnchor.constraint(equalTo: bannerRow.widthAnchor).isActive = true
+
         opensWithPopUp.addItems(withTitles: ["Tabs and spaces from last session", "A new tab"])
         opensWithPopUp.target = self
         opensWithPopUp.action = #selector(opensWithChanged)
@@ -153,13 +164,6 @@ final class GeneralSettingsViewController: NSViewController {
         quitWarning.action = #selector(quitWarningChanged)
         form.addRow("Quitting", quitWarning)
 
-        form.addSeparator()
-
-        defaultBrowserLabel.alignment = .left
-        setDefaultButton.target = self
-        setDefaultButton.action = #selector(setDefaultBrowser)
-        setDefaultButton.bezelStyle = .rounded
-        form.addRow("Default browser", [defaultBrowserLabel, setDefaultButton])
     }
 
     private func reload() {
@@ -190,12 +194,16 @@ final class GeneralSettingsViewController: NSViewController {
         reloadDefaultBrowser()
     }
 
+    /// Shows the banner only while there is something to ask for.
+    ///
+    /// The default browser can change outside Kylmora, so this runs on every
+    /// appearance rather than once at build time -- and a banner that came
+    /// back after the user had already set the default would be the most
+    /// annoying thing on the pane.
     private func reloadDefaultBrowser() {
         let isDefault = DefaultBrowser.isKylmora
-        defaultBrowserLabel.stringValue = isDefault
-            ? "Kylmora is your default web browser."
-            : "Kylmora is not your default web browser."
-        setDefaultButton.isHidden = isDefault
+        defaultBrowserRow?.isHidden = isDefault
+        if !isDefault { defaultBrowserBanner.resetMessage() }
     }
 
     private static func suspensionTitle(_ minutes: Int) -> String {
@@ -300,14 +308,36 @@ final class GeneralSettingsViewController: NSViewController {
     }
 
     @objc private func setDefaultBrowser() {
-        setDefaultButton.isEnabled = false
+        defaultBrowserBanner.isEnabled = false
         Task { [weak self] in
             let outcome = await DefaultBrowser.makeKylmoraDefault()
-            self?.setDefaultButton.isEnabled = true
-            self?.reloadDefaultBrowser()
-            if case .failure(let message) = outcome {
-                self?.defaultBrowserLabel.stringValue = message
+            guard let self else { return }
+            self.defaultBrowserBanner.isEnabled = true
+            switch outcome {
+            case .done:
+                // Taken away with the same spring everything else leaves by,
+                // so the pane answers the click rather than simply having one
+                // fewer thing on it the next time you look.
+                self.dismissBanner()
+            case .failure(let message):
+                self.defaultBrowserBanner.report(message)
             }
+        }
+    }
+
+    /// Lets the banner fall away, then takes its row out of the form.
+    ///
+    /// The row is hidden only once the animation has finished: hiding it first
+    /// would collapse the stack under it and there would be nothing left to
+    /// animate.
+    private func dismissBanner() {
+        guard let row = defaultBrowserRow, !row.isHidden else { return }
+        SpringPresence.disappear(defaultBrowserBanner, falling: 0) { [weak self] in
+            row.isHidden = true
+            // Put back the way it was, so a banner shown again -- the user
+            // made something else the default in the meantime -- is not still
+            // wearing the exit.
+            self?.defaultBrowserBanner.alphaValue = 1
         }
     }
 }

@@ -145,7 +145,14 @@ final class MenuLabelButton: NSView {
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
 
+    /// The squeeze the header gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
     override func mouseDown(with event: NSEvent) {
+        // Flicked before the menu opens rather than held through it: a menu
+        // runs its own event loop, so a held press would stay squeezed for as
+        // long as the menu is on screen.
+        if acceptsSpringPress { press.flick() }
         presentMenu()
     }
 

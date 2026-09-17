@@ -22,7 +22,7 @@ final class SettingsSpineView: NSView {
     private let stack = TopDownStackView()
     private var rows: [SettingsWindowController.Pane: RowView] = [:]
     private var headings: [SettingsWindowController.PaneGroup: NSView] = [:]
-    private let search = NSSearchField()
+    private let search = SettingsSearchField()
     private let empty = NSTextField(labelWithString: "No settings match")
 
     /// The window's own light, dark or automatic was chosen.
@@ -75,13 +75,7 @@ final class SettingsSpineView: NSView {
         scroll.documentView = stack
         addSubview(scroll)
 
-        search.placeholderString = "Search settings"
-        search.font = Style.Fonts.settingsRow
-        search.target = self
-        search.action = #selector(searchChanged)
-        search.sendsSearchStringImmediately = true
-        search.sendsWholeSearchString = false
-        search.translatesAutoresizingMaskIntoConstraints = false
+        search.onChange = { [weak self] query in self?.onSearch?(query) }
         addSubview(search)
 
         empty.font = Style.Fonts.settingsNote
@@ -122,7 +116,7 @@ final class SettingsSpineView: NSView {
                 constant: Style.SettingsUI.titlebarHeight
             ),
             search.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-            search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset - 1),
+            search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             empty.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 14),
             empty.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset + 8),
             scroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 10),
@@ -150,7 +144,9 @@ final class SettingsSpineView: NSView {
                 heading.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
                 lastGroup = pane.group
             }
-            let row = RowView(pane: pane) { [weak self] in self?.onSelect?(pane) }
+            let row = RowView(
+                title: pane.title, symbolName: pane.symbolName, accent: pane.accent
+            ) { [weak self] in self?.onSelect?(pane) }
             rows[pane] = row
             stack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -183,9 +179,7 @@ final class SettingsSpineView: NSView {
         window.beginSheet(sheetWindow) { _ in }
     }
 
-    @objc private func searchChanged() {
-        onSearch?(search.stringValue)
-    }
+
 
     @objc private func appearanceChanged() {
         let choices = AppearancePreference.allCases
@@ -237,7 +231,7 @@ final class SettingsSpineView: NSView {
     }
 
     /// Puts the keyboard in the search field.
-    func focusSearch() { window?.makeFirstResponder(search) }
+    func focusSearch() { search.focus() }
 
     /// A stack that fills from the top.
     ///
@@ -284,185 +278,9 @@ final class SettingsSpineView: NSView {
 
     // MARK: - A pane row
 
-    final class RowView: NSView {
-        private let pane: SettingsWindowController.Pane
-        private let mark = SettingsPlateView()
-        private let icon = NSImageView()
-        private let label = NSTextField(labelWithString: "")
-        private let onClick: () -> Void
-        private var trackingArea: NSTrackingArea?
-        private let pill = CALayer()
+    /// The rows are `SettingsRailRow`, which the Websites pane's category list
+    /// uses too. It began here, as a private class; it moved out the moment a
+    /// second list in the window needed to look and behave the same.
+    typealias RowView = SettingsRailRow
 
-        var isChosen = false {
-            didSet {
-                guard isChosen != oldValue else { return }
-                apply()
-            }
-        }
-        /// Whether the row is drawing itself as under the pointer.
-        var isLit: Bool { isHovered }
-
-        private var isHovered = false {
-            didSet {
-                guard isHovered != oldValue else { return }
-                apply()
-            }
-        }
-
-        init(pane: SettingsWindowController.Pane, onClick: @escaping () -> Void) {
-            self.pane = pane
-            self.onClick = onClick
-            super.init(frame: .zero)
-            translatesAutoresizingMaskIntoConstraints = false
-            wantsLayer = true
-            layer?.addSublayer(pill)
-
-            // The mark keeps its colour whether the row is chosen or not: it is
-            // the thing you learn the pane by, so it must not change under you.
-            mark.fill = pane.accent
-            mark.cornerRadius = Style.SettingsUI.spineTileRadius
-            addSubview(mark)
-
-            icon.image = NSImage(systemSymbolName: pane.symbolName, accessibilityDescription: nil)
-            icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
-            icon.contentTintColor = .white
-            icon.imageScaling = .scaleProportionallyDown
-            icon.translatesAutoresizingMaskIntoConstraints = false
-            icon.setAccessibilityElement(false)
-            addSubview(icon)
-
-            label.stringValue = pane.title
-            label.font = Style.Fonts.settingsRow
-            label.lineBreakMode = .byTruncatingTail
-            label.translatesAutoresizingMaskIntoConstraints = false
-            label.setAccessibilityElement(false)
-            addSubview(label)
-
-            let inset = Style.SettingsUI.railInset
-            let side = Style.SettingsUI.spineTileSide
-            NSLayoutConstraint.activate([
-                heightAnchor.constraint(equalToConstant: Style.SettingsUI.spineRowHeight),
-                mark.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset + 7),
-                mark.centerYAnchor.constraint(equalTo: centerYAnchor),
-                mark.widthAnchor.constraint(equalToConstant: side),
-                mark.heightAnchor.constraint(equalToConstant: side),
-                icon.centerXAnchor.constraint(equalTo: mark.centerXAnchor),
-                icon.centerYAnchor.constraint(equalTo: mark.centerYAnchor),
-                label.leadingAnchor.constraint(
-                    equalTo: mark.trailingAnchor,
-                    constant: Style.SettingsUI.spineTileGapToLabel
-                ),
-                label.centerYAnchor.constraint(equalTo: centerYAnchor),
-                label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10)
-            ])
-
-            setAccessibilityRole(.button)
-            setAccessibilityLabel(pane.title)
-            apply()
-        }
-
-        required init?(coder: NSCoder) {
-            fatalError("RowView is created in code only")
-        }
-
-        override var wantsUpdateLayer: Bool { true }
-
-        override func updateLayer() {
-            // The shape is set without animation: a pill that eased into place
-            // on a window resize would smear along behind the row.
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            pill.frame = bounds.insetBy(dx: Style.SettingsUI.railInset, dy: 0)
-            pill.cornerCurve = .continuous
-            pill.cornerRadius = Style.SettingsUI.spineRowRadius
-            CATransaction.commit()
-
-            // The colour is. Choosing a pane and pointing at one are both worth
-            // seeing happen, and they now travel at the speeds the browser
-            // window's rows use rather than blinking on and off.
-            var colour: CGColor?
-            effectiveAppearance.performAsCurrentDrawingAppearance {
-                colour = isChosen
-                    ? Style.Colors.settingsRailSelected.cgColor
-                    : (isHovered ? Style.Colors.settingsRailHover.cgColor : nil)
-            }
-            let duration = Style.Motion.duration(
-                isChosen || wasChosen ? Style.Motion.selection : Style.Motion.hover
-            )
-            wasChosen = isChosen
-            CATransaction.begin()
-            CATransaction.setAnimationDuration(duration)
-            CATransaction.setAnimationTimingFunction(Style.Motion.curve)
-            CATransaction.setDisableActions(duration == 0)
-            pill.backgroundColor = colour
-            CATransaction.commit()
-        }
-
-        /// Whether this row was the chosen one when it last drew, so that
-        /// losing the selection travels at the same speed as gaining it.
-        private var wasChosen = false
-
-        /// Sized from `layout`, never by asking for a redraw from inside one:
-        /// a view that dirties itself while drawing never stops drawing.
-        override func layout() {
-            super.layout()
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            pill.frame = bounds.insetBy(dx: Style.SettingsUI.railInset, dy: 0)
-            CATransaction.commit()
-        }
-
-        override func viewDidChangeEffectiveAppearance() {
-            super.viewDidChangeEffectiveAppearance()
-            apply()
-        }
-
-        private func apply() {
-            label.textColor = isChosen ? Style.Colors.primaryText : Style.Colors.secondaryText
-            label.font = isChosen
-                ? .systemFont(ofSize: 13, weight: .semibold)
-                : Style.Fonts.settingsRow
-            mark.alphaValue = isChosen ? 1 : 0.85
-            setAccessibilityValue(isChosen ? "selected" : "")
-            needsDisplay = true
-        }
-
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            trackingArea = installHoverTracking(replacing: trackingArea)
-            refreshHover()
-        }
-
-        /// Works out for itself whether the pointer is on this row.
-        ///
-        /// Enter and exit do not always come in pairs. `activeInActiveApp`
-        /// means a row that the pointer leaves while the app is in the
-        /// background never hears about it, and a row that moves out from under
-        /// the pointer -- the list filtering as you type, or scrolling -- never
-        /// hears about that either. Either way the row is left lit, and after a
-        /// few app switches half the list looks selected. Asking where the
-        /// pointer actually is cannot come adrift that way.
-        func refreshHover() {
-            guard let window, window.isKeyWindow, NSApp.isActive else {
-                isHovered = false
-                return
-            }
-            let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
-            isHovered = bounds.contains(point) && visibleRect.contains(point)
-        }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            refreshHover()
-        }
-
-        override func mouseEntered(with event: NSEvent) { isHovered = true }
-        override func mouseExited(with event: NSEvent) { isHovered = false }
-        override func mouseDown(with event: NSEvent) { onClick() }
-
-        override func accessibilityPerformPress() -> Bool {
-            onClick()
-            return true
-        }
-    }
 }

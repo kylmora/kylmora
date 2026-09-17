@@ -151,6 +151,10 @@ final class PageDotsView: NSView {
         // right-hand half of the last dot is unambiguously a click on it.
         let index = min(Int((x / Style.Metrics.pageDotSpacing).rounded(.down)), count - 1)
         guard index >= 0 else { return }
+        if acceptsSpringPress { press.flick() }
         onSelect?(index)
     }
+
+    /// The squeeze the dot strip gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
 }

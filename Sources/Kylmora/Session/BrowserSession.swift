@@ -142,8 +142,11 @@ final class BrowserSession {
     ///     two spaces made in a row are told apart without a visit to Settings.
     @discardableResult
     func addSpace(named name: String, isPrivate: Bool = false, theme: SpaceTheme? = nil) -> Space {
+        // Held to the limit here rather than at each caller: a name reaches
+        // this from a sheet, from Settings, from the menu bar and from the
+        // companion iPhone, and only one of those is a text field we control.
         let space = Space(
-            name: name,
+            name: Space.clampName(name),
             identity: isPrivate ? .makeEphemeral() : .makeIsolated(),
             theme: theme ?? nextUnusedTheme()
         )
@@ -228,7 +231,7 @@ final class BrowserSession {
     }
 
     func rename(_ space: Space, to name: String) {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = Space.clampName(name)
         guard !trimmed.isEmpty, trimmed != space.name else { return }
         space.name = trimmed
         changes.send(.spaces)

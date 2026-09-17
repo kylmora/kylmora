@@ -102,7 +102,13 @@ final class ActionRowView: NSView {
 
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
-    override func mouseDown(with event: NSEvent) { onPress?() }
+    /// The squeeze the row gives under a click. See `SpringPress`.
+    private lazy var press = SpringPress(view: self)
+
+    override func mouseDown(with event: NSEvent) {
+        if acceptsSpringPress { press.flick() }
+        onPress?()
+    }
 
     override func accessibilityPerformPress() -> Bool {
         onPress?()
