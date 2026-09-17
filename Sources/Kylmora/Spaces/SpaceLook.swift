@@ -36,6 +36,15 @@ struct SpaceLook: Codable, Hashable, Sendable {
     var showsBookmarksBar = false
     var bookmarksBarStyle: BookmarksBarStyle = .iconAndText
     var fonts: WebFonts = .webKitDefaults
+    /// How wide the sidebar rests while this space is in front, or nil to use
+    /// the one width every space shares.
+    ///
+    /// Only consulted when the General pane is set to give each space its own;
+    /// it is remembered either way, so turning the setting off and on again
+    /// does not throw away the widths a user already set. Nil for a space made
+    /// before the setting existed, and for a new one -- a fresh space starts at
+    /// whatever width the window is already showing rather than snapping.
+    var sidebarWidth: Double?
 
     init() {}
 
@@ -51,7 +60,7 @@ struct SpaceLook: Codable, Hashable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case appearance, customColorHex, gradient, washOpacity, allowsWebsiteThemeColor
         case alwaysShowsToolbarInFullScreen, autoShowsSidebarInFullScreen, isOpaqueInFullScreen
-        case showsBookmarksBar, bookmarksBarStyle, fonts
+        case showsBookmarksBar, bookmarksBarStyle, fonts, sidebarWidth
     }
 
     init(from decoder: Decoder) throws {
@@ -68,6 +77,7 @@ struct SpaceLook: Codable, Hashable, Sendable {
         showsBookmarksBar = (try? container.decodeIfPresent(Bool.self, forKey: .showsBookmarksBar)) ?? fallback.showsBookmarksBar
         bookmarksBarStyle = (try? container.decodeIfPresent(String.self, forKey: .bookmarksBarStyle)).flatMap { $0 }.flatMap(BookmarksBarStyle.init(rawValue:)) ?? fallback.bookmarksBarStyle
         fonts = (try? container.decodeIfPresent(WebFonts.self, forKey: .fonts)) ?? fallback.fonts
+        sidebarWidth = try? container.decodeIfPresent(Double.self, forKey: .sidebarWidth)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -83,6 +93,9 @@ struct SpaceLook: Codable, Hashable, Sendable {
         try container.encode(showsBookmarksBar, forKey: .showsBookmarksBar)
         try container.encode(bookmarksBarStyle.rawValue, forKey: .bookmarksBarStyle)
         try container.encode(fonts, forKey: .fonts)
+        // Absent rather than zero when a space has never been sized, so "no
+        // width of its own" survives the round trip as itself.
+        try container.encodeIfPresent(sidebarWidth, forKey: .sidebarWidth)
     }
 }
 

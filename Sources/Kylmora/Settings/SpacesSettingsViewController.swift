@@ -55,6 +55,11 @@ final class SpacesSettingsViewController: NSViewController {
     /// in that space's own colours, so there is nothing to draw without one.
     private var borderRow: SettingsFormRow?
     private var borderNoteRow: SettingsFormRow?
+    /// Export and import, and the line under them. There is nothing to write
+    /// down about a space with no look of its own, so they show only for the
+    /// appearances that give a space one.
+    private var themeFileRow: SettingsFormRow?
+    private var themeFileNoteRow: SettingsFormRow?
 
     /// Kept by identity, not by index: a delete or a reorder moves indices, and
     /// the editor must not silently start pointing at a different space.
@@ -227,13 +232,18 @@ final class SpacesSettingsViewController: NSViewController {
         // this card, filled in -- so a break in front of it fenced a thing off
         // from the only settings it is about.
         //
-        // Shown whatever the appearance, unlike the rows above: importing a
-        // theme is one of the ways a plain space becomes a customised one, and
-        // hiding the button until it already was would close that door.
+        // Shown for Customized and Website, and hidden for the plain presets.
+        //
+        // This row used to show whatever the appearance, on the reasoning that
+        // importing a theme is one way a plain space becomes a customised one.
+        // But a space set to Automatic, Light or Dark has no colour, no
+        // gradient and no border -- there is nothing in it worth writing to a
+        // file -- so the row offered to export nothing, and sat under a note
+        // listing six things the space did not have.
         let exportTheme = NSButton(title: "Export Theme\u{2026}", target: self, action: #selector(exportTheme))
         let importTheme = NSButton(title: "Import Theme\u{2026}", target: self, action: #selector(importTheme))
-        form.addRow("Theme file", [exportTheme, importTheme])
-        form.addNote("This space's colour, gradient, appearance, fonts, bars and window border as a .kylmoratheme file, to share or to bring to another Mac. Tabs and logins stay here.")
+        themeFileRow = form.addRow("Theme file", [exportTheme, importTheme])
+        themeFileNoteRow = form.addNote("This space's colour, gradient, appearance, fonts, bars and window border as a .kylmoratheme file, to share or to bring to another Mac. Tabs and logins stay here.")
 
         form.addSeparator()
 
@@ -535,6 +545,14 @@ final class SpacesSettingsViewController: NSViewController {
         // with Customized too -- hidden for the plain presets and Website.
         borderRow?.isHidden = !customised
         borderNoteRow?.isHidden = !customised
+
+        // A theme file is a space's look written down, so it shows wherever a
+        // space has one to write: Customized, and Website -- whose fonts, bars
+        // and page-coloured wash are a look as much as a chosen colour is.
+        // Automatic, Light and Dark have nothing to export.
+        let hasALook = choice == .customized || choice == .website
+        themeFileRow?.isHidden = !hasALook
+        themeFileNoteRow?.isHidden = !hasALook
         let transparency = (1 - space.look.washOpacity) * 100
         transparencySlider.doubleValue = transparency
         transparencyValueLabel.stringValue = "\(Int(transparency.rounded()))%"

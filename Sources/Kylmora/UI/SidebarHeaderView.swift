@@ -101,6 +101,22 @@ final class MenuLabelButton: NSView {
         label.cell?.usesSingleLineMode = true
         label.setAccessibilityElement(false)
         label.translatesAutoresizingMaskIntoConstraints = false
+        // The name yields before the sidebar does.
+        //
+        // It truncates, but truncating is not the same as being willing to:
+        // at the default resistance the label still *asks* for its full width,
+        // and that ask travels up to the split view, which widens the sidebar
+        // to grant it. Switching to a space with a longer name therefore shoved
+        // the divider out -- "Read Later BF9059" wanted 240 points where
+        // "Studio" wanted 216 -- and switching away left it there. Walking
+        // through eleven spaces, the sidebar visibly grew at two of them.
+        //
+        // Lowered on both: the label is what has the intrinsic width, and this
+        // view is what passes it on.
+        for view in [label, self] as [NSView] {
+            view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            view.setContentHuggingPriority(.init(1), for: .horizontal)
+        }
         addSubview(label)
 
         NSLayoutConstraint.activate([

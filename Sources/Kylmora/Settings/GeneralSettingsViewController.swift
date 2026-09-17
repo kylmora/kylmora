@@ -22,6 +22,7 @@ final class GeneralSettingsViewController: NSViewController {
     private let safeFiles = NSButton(checkboxWithTitle: "Open \u{201c}safe\u{201d} files after downloading", target: nil, action: nil)
     private let languagePopUp = NSPopUpButton()
     private let spacePopUp = NSPopUpButton()
+    private let sidebarWidthScopePopUp = NSPopUpButton()
     private let externalPopUp = NSPopUpButton()
     private let quitWarning = NSButton(checkboxWithTitle: "Show warning before quitting", target: nil, action: nil)
     private let commandBarOnNewTab = NSButton(checkboxWithTitle: "Open Command Palette on New Tab (⌘T)", target: nil, action: nil)
@@ -158,6 +159,18 @@ final class GeneralSettingsViewController: NSViewController {
         externalPopUp.action = #selector(externalChanged)
         form.addRow("Open external links in", SettingsForm.fill(externalPopUp))
 
+        sidebarWidthScopePopUp.addItems(withTitles: SidebarWidthScope.allCases.map(\.title))
+        sidebarWidthScopePopUp.target = self
+        sidebarWidthScopePopUp.action = #selector(sidebarWidthScopeChanged)
+        form.addRow("Sidebar width", SettingsForm.fill(sidebarWidthScopePopUp))
+        form.addNote("""
+            Drag the edge of the sidebar to set it. Shared, every space opens at \
+            the width you last left it. Its own, each space remembers how wide you \
+            left it and switching spaces restores it -- worth having when one space \
+            is a list of long titles and another is six pinned tabs, and worth \
+            avoiding otherwise, because the sidebar then moves every time you switch.
+            """)
+
         form.addSeparator()
 
         quitWarning.target = self
@@ -171,6 +184,9 @@ final class GeneralSettingsViewController: NSViewController {
         removalPopUp.selectItem(at: DownloadRemoval.allCases.firstIndex(of: settings.downloadRemoval) ?? 0)
         safeFiles.state = settings.opensSafeFilesAfterDownloading ? .on : .off
         externalPopUp.selectItem(at: ExternalLinkTarget.allCases.firstIndex(of: settings.externalLinkTarget) ?? 0)
+        sidebarWidthScopePopUp.selectItem(
+            at: settings.sidebarWidthIsPerSpace ? SidebarWidthScope.perSpace.rawValue : SidebarWidthScope.shared.rawValue
+        )
         quitWarning.state = settings.warnsBeforeQuitting ? .on : .off
         spacePopUp.removeAllItems()
         if let session {
@@ -241,6 +257,11 @@ final class GeneralSettingsViewController: NSViewController {
     @objc private func defaultSpaceChanged() {
         guard let session, session.spaces.indices.contains(spacePopUp.indexOfSelectedItem) else { return }
         settings.defaultSpaceID = session.spaces[spacePopUp.indexOfSelectedItem].id
+    }
+
+    @objc private func sidebarWidthScopeChanged() {
+        settings.sidebarWidthIsPerSpace =
+            sidebarWidthScopePopUp.indexOfSelectedItem == SidebarWidthScope.perSpace.rawValue
     }
 
     @objc private func externalChanged() {
@@ -358,6 +379,20 @@ enum NewTabTarget: String, CaseIterable, Sendable {
 }
 
 /// Whether Kylmora handles web links for the system, and asking to.
+/// Whether the sidebar's width is one setting for the whole browser or one per
+/// space. See `Settings.sidebarWidthIsPerSpace` for why the shared one leads.
+enum SidebarWidthScope: Int, CaseIterable {
+    case shared
+    case perSpace
+
+    var title: String {
+        switch self {
+        case .shared: "Shared by every space"
+        case .perSpace: "Each space its own"
+        }
+    }
+}
+
 enum DefaultBrowser {
     enum Outcome: Equatable {
         case done
