@@ -292,7 +292,16 @@ final class SettingsWindowController: NSWindowController {
         let width = paneContainer.widthAnchor.constraint(
             equalTo: pageBody.widthAnchor, constant: -gutter * 2
         )
-        width.priority = .defaultHigh
+        // Above .defaultHigh on purpose. A wrapping label hugs its text at
+        // exactly .defaultHigh, so at that priority the two ties, and the
+        // solver is free to pick either: the pane is the gutter's width on one
+        // run and the widest label's natural width on the next. About, whose
+        // longest line settles around 585 points, is where the tie shows --
+        // the pane came out some four points narrow, and, being centred, wore
+        // half of that at each margin. The gutter is the rule; a label's
+        // natural width is a preference, and it now loses. The reading-width
+        // cap below is required, so it still wins over this.
+        width.priority = .required - 1
 
         NSLayoutConstraint.activate([
             canvas.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.floorSize.width),
