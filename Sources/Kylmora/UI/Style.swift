@@ -515,8 +515,19 @@ enum Style {
         /// change without travelling, which every animated surface here honours
         /// by using a zero duration rather than by skipping the change.
         @MainActor static var isReduced: Bool {
-            NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            reduceMotionOverride ?? NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         }
+
+        /// The answer the tests pin, when they are checking the motion itself
+        /// rather than whether it is wanted. Left `nil` in the app, so the only
+        /// thing that ever decides this in a user's hands is the user's own
+        /// accessibility setting.
+        ///
+        /// It exists because the machine otherwise decides: a CI runner is a
+        /// headless VM and reports Reduce Motion as on, which would leave the
+        /// squeeze -- the one thing those tests are for -- unchecked exactly
+        /// where checking it matters most.
+        @MainActor static var reduceMotionOverride: Bool?
 
         /// The duration to actually use, which is none under Reduce Motion.
         @MainActor static func duration(_ base: CFTimeInterval) -> CFTimeInterval {

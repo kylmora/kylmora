@@ -101,8 +101,10 @@ struct SpringPressTests {
 
     @Test("A held press really does scale the layer down")
     func pressScalesTheLayer() throws {
-        // Reduce Motion asks for no travel at all, so there is nothing to see.
-        try #require(!Style.Motion.isReduced)
+        // Pinned rather than skipped: a CI runner reports Reduce Motion as
+        // on, and the squeeze is precisely what this test is for.
+        Style.Motion.reduceMotionOverride = false
+        defer { Style.Motion.reduceMotionOverride = nil }
         let view = host()
         let press = SpringPress(view: view)
         press.down()
@@ -115,7 +117,10 @@ struct SpringPressTests {
 
     @Test("A release puts the layer back exactly, not nearly")
     func releaseRestoresIdentity() throws {
-        try #require(!Style.Motion.isReduced)
+        // Pinned rather than skipped: a CI runner reports Reduce Motion as
+        // on, and the squeeze is precisely what this test is for.
+        Style.Motion.reduceMotionOverride = false
+        defer { Style.Motion.reduceMotionOverride = nil }
         let view = host()
         let press = SpringPress(view: view)
         press.down()
@@ -145,7 +150,10 @@ struct SpringPressTests {
 
     @Test("The squeeze is centred, so a pressed control does not drift")
     func squeezeIsCentred() throws {
-        try #require(!Style.Motion.isReduced)
+        // Pinned rather than skipped: a CI runner reports Reduce Motion as
+        // on, and the squeeze is precisely what this test is for.
+        Style.Motion.reduceMotionOverride = false
+        defer { Style.Motion.reduceMotionOverride = nil }
         let view = host()
         let press = SpringPress(view: view)
         press.down()
