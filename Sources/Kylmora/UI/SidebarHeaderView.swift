@@ -113,8 +113,16 @@ final class MenuLabelButton: NSView {
         //
         // Lowered on both: the label is what has the intrinsic width, and this
         // view is what passes it on.
+        //
+        // Below `.defaultLow`, not at it. The split view holds the sidebar at
+        // `.defaultLow` too, so leaving the name there left the two asks tied
+        // at 250 and the solver free to satisfy either -- the same tie as the
+        // Settings pane's gutter. It happened to come out right while the Now
+        // Playing card was quietly holding the sidebar at 169 whatever the
+        // name said; with the card no longer doing that, a long name took the
+        // width again. One step above nothing, so the name always yields.
         for view in [label, self] as [NSView] {
-            view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            view.setContentCompressionResistancePriority(.init(1), for: .horizontal)
             view.setContentHuggingPriority(.init(1), for: .horizontal)
         }
         addSubview(label)

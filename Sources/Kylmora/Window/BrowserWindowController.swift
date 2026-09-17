@@ -2574,9 +2574,19 @@ final class KylmoraSplitViewController: NSSplitViewController {
         // Zero width so the page card sits flush against the sidebar with no
         // 1pt gap between them: that gap, revealing whatever is behind the
         // split view, is the faint line otherwise seen at the seam. The card's
-        // edge is still the separation; resizing keeps working because
-        // an NSSplitView still tracks a drag on a zero-width divider.
+        // edge is still the separation.
+        //
+        // A zero-width divider is also a zero-width target. `NSSplitView` hit
+        // tests a drag against the divider's rect, so at this thickness there
+        // is nothing to take hold of and the sidebar cannot be resized at all.
+        // `grabThickness` below is what gives the seam something to grab.
         override var dividerThickness: CGFloat { 0 }
+
+        /// How wide the seam is to the mouse, as against how wide it is drawn.
+        ///
+        /// Matches the slop AppKit gives its own thin dividers, so the pointer
+        /// finds the seam at the distance a thin divider trains you to expect.
+        static let grabThickness: CGFloat = 8
 
         /// The user let go of the divider.
         ///
@@ -2627,6 +2637,39 @@ final class KylmoraSplitViewController: NSSplitViewController {
         else { return }
         hasSetRestingWidth = true
         onReadyForRestingWidth?()
+    }
+
+    /// Where the seam is to the mouse, as against where it is drawn.
+    ///
+    /// The divider is drawn at zero thickness so the page card can sit flush
+    /// against the sidebar, and a rect of zero width catches no mouse: without
+    /// this the divider cannot be found, and so the sidebar cannot be dragged
+    /// wider or narrower. The drawn rect stays where it is; only the rect the
+    /// pointer is tested against grows, which is also the rect AppKit takes
+    /// the resize cursor from.
+    override func splitView(
+        _ splitView: NSSplitView,
+        effectiveRect proposedEffectiveRect: NSRect,
+        forDrawnRect drawnRect: NSRect,
+        ofDividerAt dividerIndex: Int
+    ) -> NSRect {
+        let grab = ClearDividerSplitView.grabThickness
+        var rect = super.splitView(
+            splitView,
+            effectiveRect: proposedEffectiveRect,
+            forDrawnRect: drawnRect,
+            ofDividerAt: dividerIndex
+        )
+        if splitView.isVertical {
+            guard rect.width < grab else { return rect }
+            rect.origin.x -= (grab - rect.width) / 2
+            rect.size.width = grab
+        } else {
+            guard rect.height < grab else { return rect }
+            rect.origin.y -= (grab - rect.height) / 2
+            rect.size.height = grab
+        }
+        return rect
     }
 }
 

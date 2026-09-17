@@ -445,26 +445,49 @@ enum SiteBehaviourScripts {
         }
       }, true);
 
-      // Protect against blur-induced pauses on window
+      // Protect against blur-induced pauses on window.
+      //
+      // Only the window's own blur, which is the one that pauses a video when
+      // you switch app. `blur` does not bubble, but it does still capture down
+      // from the window to its target, so a capturing listener here sees the
+      // blur of every field on the page -- and stopping those was swallowing
+      // the event a site uses to dismiss what the field opened. A search box
+      // whose suggestions never close is this line without the guard.
       window.addEventListener("blur", function (e) {
+        if (e.target !== window) { return; }
         if (\(policy).nativeVideoPlayer || "on") !== "off") {
           e.stopImmediatePropagation();
         }
       }, true);
 
       // 2. Native Controls Enforcement & Ad-Bypass for YouTube & HTML5 video
+      function isYouTube() {
+        return location.hostname.indexOf("youtube.com") !== -1 ||
+               location.hostname.indexOf("youtu.be") !== -1;
+      }
+
       function enhanceVideoElement(video) {
         if (!video || video.__kylmoraNativeVideo) { return; }
         video.__kylmoraNativeVideo = true;
 
-        // Force native controls & PiP
-        video.controls = true;
+        // Picture-in-Picture and background playback are what this setting is
+        // for, and they cost the page nothing, so they apply everywhere.
         video.disablePictureInPicture = false;
+
+        // Native controls do not, on YouTube. Its player is a real HTML5
+        // video under its own chrome, so forcing `controls` on stacks a
+        // second set of buttons under a bar that already has them -- and
+        // hiding that bar to make room, which is what this used to do, is
+        // how the pause button went missing. YouTube keeps its own player.
+        if (!isYouTube()) {
+          video.controls = true;
+        }
         if (typeof video.webkitAllowsInlineMediaPlayback !== "undefined") {
           video.webkitAllowsInlineMediaPlayback = true;
         }
 
         // Prevent page scripts from removing controls attribute
+        if (isYouTube()) { return; }
         var origSetAttribute = video.setAttribute;
         video.setAttribute = function (name, val) {
           if (name === "controls" && \(policy).nativeVideoPlayer || "on") !== "off") {
@@ -499,23 +522,23 @@ enum SiteBehaviourScripts {
           try { adShowing.currentTime = adShowing.duration; } catch (e) {}
         }
 
-        // Apply style to hide YouTube player overlay and expose native controls
+        // Hide what the ad left behind, and nothing else.
+        //
+        // The player's top and bottom bars are not overlay: they are the
+        // controls -- pause, the scrubber, volume, the clock, fullscreen, the
+        // title. They used to be hidden here on the promise that native
+        // controls would stand in for them, and what that left was a video
+        // with no way to pause it. The same went for the pause overlay and the
+        // player's own context menu, which are the player's, not an
+        // advertiser's. Only the ad selectors below are the browser's business.
         if (!document.getElementById("kylmora-native-video-style")) {
           var style = document.createElement("style");
           style.id = "kylmora-native-video-style";
           style.textContent = `
-            .ytp-chrome-bottom, .ytp-gradient-bottom, .ytp-chrome-top, .ytp-gradient-top,
-            .ytp-pause-overlay, .ytp-ad-module, .ytp-ad-player-overlay, .video-ads,
-            .ytp-ce-element, .annotation, .ytp-share-panel, .ytp-contextmenu {
+            .ytp-ad-module, .ytp-ad-player-overlay, .ytp-ad-overlay-container,
+            .ytp-ad-image-overlay, .video-ads, .ytp-ce-element, .annotation {
               display: none !important;
               pointer-events: none !important;
-            }
-            .html5-video-player video {
-              pointer-events: auto !important;
-              z-index: 20 !important;
-            }
-            .html5-video-player {
-              background: #000 !important;
             }
           `;
           (document.head || document.documentElement).appendChild(style);
