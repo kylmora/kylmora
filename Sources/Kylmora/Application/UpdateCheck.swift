@@ -56,9 +56,16 @@ struct AppVersion: Comparable, Equatable, CustomStringConvertible {
 ///       "notes": "What changed, in a sentence." }
 ///
 /// Nothing about this machine is sent: the request carries no cookies, no
-/// cache and no identifier, and it happens only when the user clicks the
-/// button. There is no background polling and no automatic download; the
-/// answer is a sentence and, when there is a newer version, a link.
+/// cache and no identifier. What the server can see is what any web server
+/// sees -- an address and a user agent -- and kylmora.com turns that into a
+/// daily count of distinct machines and then throws the inputs away; see
+/// worker/update-checks.ts in the website repository.
+///
+/// It is not only user-initiated. `UpdateController` runs this about ten
+/// seconds after launch when a day has passed since the last check, and every
+/// four hours while the app is open, unless automatic checks are switched off
+/// in Settings. Nothing downloads on its own: the answer is a sentence and,
+/// when there is a newer version, a link.
 enum UpdateCheck {
     static let feedURL = URL(string: "https://kylmora.com/releases/latest.json")!
 

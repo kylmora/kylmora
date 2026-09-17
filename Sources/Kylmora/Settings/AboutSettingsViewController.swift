@@ -23,9 +23,11 @@ final class AboutSettingsViewController: NSViewController {
         static let aboutUs = """
             Kylmora is made independently, by people who wanted a browser that is \
             fast, honest and quiet. Nothing in it is a mock: if a control is there, \
-            it does something. Nothing phones home: there is no telemetry, crash \
-            reports stay on your Mac unless you choose otherwise, and the browser \
-            contains no third-party code. It is built by hand, one decision at a \
+            it does something. There is no telemetry, crash reports stay on your Mac \
+            unless you choose otherwise, and the browser contains no third-party \
+            code. The one thing it sends anywhere is a daily check for a new \
+            version; we count those checks to know how many people use Kylmora, and \
+            keep nothing but a daily total. It is built by hand, one decision at a \
             time, and every decision is written down.
             """
         static let logo = """
@@ -113,7 +115,7 @@ final class AboutSettingsViewController: NSViewController {
         downloadButton.bezelStyle = .rounded
         downloadButton.isHidden = true
         form.addRow("", [checkButton, downloadButton])
-        updateStatus.stringValue = "Kylmora sends no telemetry during update checks. WebKit security patches arrive automatically with macOS updates."
+        updateStatus.stringValue = "An update check tells us nothing about you or your browsing; we count the checks themselves, and keep only a daily total. WebKit security patches arrive automatically with macOS updates."
         form.addNote(updateStatus)
 
         form.addSeparator()
