@@ -118,6 +118,14 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         compact.onTrafficLightHostChange = { [weak self] host in
             self?.lightsRideOnTopBar = host == .toolbar
             self?.updateTrafficLights()
+            // Compact mode takes the sidebar out of the layout and puts it
+            // back, which changes what is on the card's leading edge, so the
+            // card's gutter is recomputed here rather than only where the mode
+            // is set. A window that *starts* in compact mode never passes
+            // through `setSidebarMode` at all: it was restored with the card
+            // still flush to a divider that had already been taken away, which
+            // is why the corners were wrong again after every relaunch.
+            self?.updateCardInsets()
         }
         compact.setEnabled(Settings.shared.compactModeEnabled, animated: false)
         if Settings.shared.sidebarMode == .iconsOnly {
@@ -319,16 +327,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         // because the sidebar is what normally hosts them. The bar has to
         // step aside for them or its first button sits underneath the close
         // button.
-        sidebarCollapseObservation = sidebarItem.observe(\.isCollapsed, options: [.initial, .new]) { _, change in
-            // Only the new value crosses into the closure: the split view item
-            // itself is main-actor state and sending it would be a data race.
-            let isCollapsed = change.newValue ?? false
-            MainActor.assumeIsolated { [weak self] in
-                self?.isSidebarCollapsed = isCollapsed
-                self?.updateCardInsets()
-                self?.updateTrafficLights()
-            }
-        }
+        observeSidebarCollapse(of: sidebarItem)
         // The autosaved position wins over the item's thickness bounds, so the
         // measured width has to be asked for explicitly -- but not from here.
         //
@@ -1187,6 +1186,16 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     /// Ours rather than `NSSplitViewController.toggleSidebar`, which only acts
     /// on an item created with sidebar behaviour.
     @objc func toggleKylmoraSidebar(_ sender: Any?) {
+        // In compact mode there is no split view item to collapse: the sidebar
+        // has been taken out of the layout and floats over the page. The
+        // button then does the floating equivalent -- pin it open, or let it
+        // go again -- rather than finding nothing and doing nothing, which is
+        // what it did, on the one control whose whole job is to show and hide
+        // the sidebar.
+        if compact.controller.state.isEnabled {
+            compact.controller.toggleUserShow()
+            return
+        }
         guard let item = splitViewController.splitViewItem(for: sidebar) else { return }
         item.animator().isCollapsed.toggle()
     }
@@ -1444,20 +1453,60 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         super.cancelOperation(sender)
     }
 
-    private func updateCardInsets() {
-        let mode = Settings.shared.sidebarMode
-        let isTrailing = Settings.shared.sidebarPosition == .trailing
-        if isZenMode {
-            content.cardLeadingInset = 0
+    /// Follows the sidebar item's collapsed state.
+    ///
+    /// Re-observed every time the item is created, because compact mode does
+    /// not collapse the sidebar -- it takes the whole item out of the split
+    /// view and builds a new one on the way back. The observation was set up
+    /// once, so after a single trip through compact mode it was watching an
+    /// item nobody owned: collapsing the sidebar then changed neither the
+    /// card's gutter nor the traffic lights, which is how the page ended up
+    /// flush against the window's rounded corner with no way to close the
+    /// window.
+    private func observeSidebarCollapse(of item: NSSplitViewItem) {
+        sidebarCollapseObservation = item.observe(\.isCollapsed, options: [.initial, .new]) { _, change in
+            // Only the new value crosses into the closure: the split view item
+            // itself is main-actor state and sending it would be a data race.
+            let isCollapsed = change.newValue ?? false
+            MainActor.assumeIsolated { [weak self] in
+                self?.isSidebarCollapsed = isCollapsed
+                self?.updateCardInsets()
+                self?.updateTrafficLights()
+            }
+        }
+    }
+
+    /// Gives a floating sidebar a way to put itself away.
+    ///
+    /// In compact mode the sidebar's toggle is the one on the page's top bar --
+    /// and a revealed sidebar covers that bar. Clicking the toggle pinned the
+    /// sidebar open on top of the button that would have unpinned it: the
+    /// pointer could leave, come back, click where the button had been, and
+    /// nothing happened, because the click was landing on the sidebar. With a
+    /// mouse alone there was no way back. So while it floats, the sidebar
+    /// carries the button itself.
+    private func updateFloatingSidebarActions() {
+        guard let compact, compact.controller.state.isEnabled else {
+            sidebar.setHeaderActions([])
             return
         }
-        if mode == .iconsOnly && !compact.controller.state.isEnabled {
-            content.cardLeadingInset = isTrailing ? 0 : 60
-        } else if isSidebarCollapsed {
-            content.cardLeadingInset = Style.Metrics.elementSeparation
-        } else {
-            content.cardLeadingInset = isTrailing ? Style.Metrics.elementSeparation : 0
-        }
+        sidebar.setHeaderActions([
+            TopBarAction(symbolName: "sidebar.leading", label: "Hide Sidebar") { [weak self] in
+                self?.compact.controller.dismissSidebar()
+            }
+        ])
+    }
+
+    private func updateCardInsets() {
+        content.cardLeadingInset = CardGutter.leadingInset(
+            mode: Settings.shared.sidebarMode,
+            isTrailing: Settings.shared.sidebarPosition == .trailing,
+            isZenMode: isZenMode,
+            isSidebarCollapsed: isSidebarCollapsed,
+            // Optional: the split view is built before compact mode is, and
+            // its collapse observation fires `.initial` on the way past.
+            isCompact: compact?.controller.state.isEnabled ?? false
+        )
     }
 
     /// Hides the window controls while the sidebar is hidden, and brings them
@@ -1522,16 +1571,28 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     private func updateTrafficLights() {
         guard let window else { return }
         let isTrailing = Settings.shared.sidebarPosition == .trailing
+        // Where the lights live. The sidebar's header strip hosts them while
+        // the sidebar is there to host them; otherwise they ride the page's
+        // top bar -- compact mode, a trailing sidebar, or a collapsed one,
+        // which has no strip at all and used to leave the window with no
+        // visible close button.
+        let ridesOnBar = lightsRideOnTopBar || isTrailing || isSidebarCollapsed
+        sidebar.headerHostsTrafficLights = !ridesOnBar && !isZenMode
+        // Optional: the split view is built before compact mode is, and its
+        // collapse observation fires `.initial` on the way past.
+        compact?.setLightsOnToolbar(ridesOnBar && !isZenMode)
+        updateFloatingSidebarActions()
         if isZenMode {
             for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
                 window.standardWindowButton(type)?.alphaValue = 0
             }
             return
         }
-        if lightsRideOnTopBar || isTrailing {
-            // Compact mode has re-parented the lights onto the bar itself,
-            // or the sidebar is on the trailing (right) edge so the window's
-            // top-left traffic lights ride above the content top bar.
+        if ridesOnBar {
+            // The lights are on the bar itself: shown, with the bar's own
+            // buttons stepping aside for them. They stay shown rather than
+            // waiting for a hover -- on the bar they are the only close button
+            // the window has.
             for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
                 window.standardWindowButton(type)?.alphaValue = 1
             }
@@ -2049,6 +2110,10 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             toggleKylmoraSidebar(nil)
         case "toggle-compact":
             toggleCompactMode(nil)
+        case "toggle-compact-sidebar-pin":
+            toggleCompactSidebarPin(nil)
+        case "toggle-compact-toolbar":
+            toggleCompactToolbar(nil)
         case "toggle-archive":
             toggleArchive(nil)
         case "show-tab-overview":
@@ -2678,9 +2743,26 @@ final class KylmoraSplitViewController: NSSplitViewController {
 /// it can take it apart and put it back.
 extension BrowserWindowController: CompactSidebarSlot {
     var restingSidebarWidth: CGFloat {
-        let live = sidebar.view.frame.width
-        if live >= Style.Metrics.sidebarMinWidth { lastSidebarWidth = live }
-        return lastSidebarWidth
+        // Measured only while the sidebar is still in the split view.
+        //
+        // In compact mode `sidebar.view` *is* the floating plate's content, so
+        // its width is the plate's width, and reading it here fed the plate's
+        // own width back in as the sidebar's resting width. The plate is
+        // floored at `sidebarMinWidth`, so every pass through this shaved the
+        // sidebar down towards 105 points and left it there -- a floating
+        // sidebar with every row truncated, and a real sidebar that came back
+        // from compact mode narrower than the user left it.
+        let isFloating = compact?.controller.state.isEnabled ?? false
+        let resting = SidebarMeasurement.resting(
+            live: sidebar.view.frame.width,
+            isFloating: isFloating,
+            stored: restingSidebarWidth(for: sidebar.shownSpaceForLook),
+            minimum: Style.Metrics.sidebarMinWidth
+        )
+        // While it floats, nothing here is a measurement of the sidebar, so
+        // the remembered width is left exactly as it was.
+        if !isFloating { lastSidebarWidth = resting }
+        return isFloating ? lastSidebarWidth : resting
     }
 
     func detachSidebar() -> NSViewController {
@@ -2702,6 +2784,7 @@ extension BrowserWindowController: CompactSidebarSlot {
         item.holdingPriority = .defaultLow
         let index = isTrailing ? splitViewController.splitViewItems.count : 0
         splitViewController.insertSplitViewItem(item, at: index)
+        observeSidebarCollapse(of: item)
         // The autosaved position does not come back with a re-inserted item.
         if isTrailing {
             let width = splitViewController.view.bounds.width

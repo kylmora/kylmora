@@ -61,6 +61,33 @@ enum PanelStyle {
     }
 }
 
+/// The surface a panel's controls are drawn on.
+///
+/// An opaque plate, and one that refuses vibrancy. The group editor is shown in
+/// an `NSPopover`, whose backdrop is a translucent material: in dark mode that
+/// material is a mid grey, and the panel's own greys -- a pill track, an
+/// unselected label -- landed within a few per cent of it. Measured on screen,
+/// "Solid" against its track came out at about 1.02:1, which is not dim, it is
+/// invisible. Vibrancy made it worse by blending what little was left into the
+/// backdrop.
+///
+/// The sheet version of the same controls never had the problem because a sheet
+/// has an opaque background. This gives the popover one too, so a control is
+/// read against a known surface rather than against whatever is behind the
+/// window.
+@MainActor
+final class PanelBackdrop: NSView {
+    /// Custom-drawn chrome, not vibrant material. See above.
+    override var allowsVibrancy: Bool { false }
+
+    override var isOpaque: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        Style.Colors.panelSurface.setFill()
+        dirtyRect.fill()
+    }
+}
+
 /// A pill button drawn from scratch: an accent-filled primary or a quiet
 /// secondary, both with a rounded fill and a hover lift. Replaces `NSButton`,
 /// whose bezel is the native look the panels are getting away from.
@@ -102,7 +129,7 @@ final class PanelButton: NSControl {
             let fill: NSColor
             switch kind {
             case .primary: fill = isPressed ? PanelStyle.accent.blended(withFraction: 0.2, of: .black)! : PanelStyle.accent
-            case .secondary: fill = NSColor(white: 1, alpha: isHovered ? 0.14 : 0.09)
+            case .secondary: fill = isHovered ? Style.Colors.controlHoverFill : Style.Colors.controlFill
             case .plain: fill = .clear
             }
             fill.setFill()
@@ -166,7 +193,6 @@ final class PanelTextField: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = 8
-        layer?.backgroundColor = NSColor(white: 1, alpha: 0.07).cgColor
         heightAnchor.constraint(equalToConstant: 32).isActive = true
 
         field.placeholderString = placeholder
@@ -184,9 +210,24 @@ final class PanelTextField: NSView {
             field.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             field.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
+        updatePlate()
     }
 
     required init?(coder: NSCoder) { fatalError("PanelTextField is created in code only") }
+
+    /// A layer's background is a fixed `CGColor` and does not follow the
+    /// appearance on its own, so the plate is re-resolved whenever the
+    /// appearance changes.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updatePlate()
+    }
+
+    private func updatePlate() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = Style.Colors.controlFill.cgColor
+        }
+    }
 }
 
 /// A rounded on/off switch with a sliding knob, drawn here rather than an
@@ -219,12 +260,20 @@ final class PanelToggle: NSControl {
 
     override func draw(_ dirtyRect: NSRect) {
         let track = bounds
-        (isOn ? PanelStyle.accent : NSColor(white: 1, alpha: 0.14)).setFill()
+        (isOn ? PanelStyle.accent : Style.Colors.controlTrackFill).setFill()
         NSBezierPath(roundedRect: track, xRadius: track.height / 2, yRadius: track.height / 2).fill()
         let d = track.height - 4
         let x = isOn ? track.maxX - d - 2 : track.minX + 2
+        let knob = NSBezierPath(ovalIn: NSRect(x: x, y: 2, width: d, height: d))
         NSColor.white.setFill()
-        NSBezierPath(ovalIn: NSRect(x: x, y: 2, width: d, height: d)).fill()
+        knob.fill()
+        // A white knob on an off track is white on pale grey in light mode, so
+        // the knob carries an edge of its own. Off only: the accent behind an
+        // on knob already separates it.
+        guard !isOn else { return }
+        Style.Colors.controlRing.setStroke()
+        knob.lineWidth = 1
+        knob.stroke()
     }
 
     private func flip() {

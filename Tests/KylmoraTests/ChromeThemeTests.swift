@@ -61,6 +61,62 @@ struct ChromeThemeTests {
         }
     }
 
+    @Test("A panel control darkens a light surface instead of whitening it")
+    func panelControlsInkRatherThanVeil() {
+        // The sidebar's surfaces are white veils because they sit on a space's
+        // tint. A sheet does not: it sits on the window's own background, which
+        // in light mode is near white, and a white veil on it draws nothing.
+        // This is what made the New Space sheet's field, toggles, pills and
+        // Cancel button invisible in light mode -- the words were there and
+        // every control under them had vanished.
+        let controls: [NSColor] = [
+            Style.Colors.controlFill, Style.Colors.controlHoverFill,
+            Style.Colors.controlTrackFill, Style.Colors.controlRing
+        ]
+        for control in controls {
+            let light = resolved(control, dark: false)
+            #expect(light.brightnessComponent < 0.1, "a panel control has to darken a pale sheet")
+            #expect(light.alphaComponent > 0.02, "and be dark enough to see")
+            #expect(resolved(control, dark: true).brightnessComponent > 0.9)
+        }
+        // The thumb is the other way up: it is the one part lifted off the
+        // track, so it is light on a light surface and a veil on a dark one.
+        #expect(resolved(Style.Colors.controlThumbFill, dark: false).brightnessComponent > 0.9)
+    }
+
+    @Test("A segmented thumb reads against its own track")
+    func thumbSeparatesFromItsTrack() {
+        // Track and thumb were both white veils, which in light mode left the
+        // Appearance and Fill pills as five bare words with no control around
+        // them and nothing marking the chosen one.
+        for dark in [false, true] {
+            let track = resolved(Style.Colors.controlFill, dark: dark)
+            let thumb = resolved(Style.Colors.controlThumbFill, dark: dark)
+            #expect(track.brightnessComponent != thumb.brightnessComponent
+                || track.alphaComponent != thumb.alphaComponent)
+        }
+    }
+
+    @Test("A panel's controls are drawn on a surface of their own")
+    func panelControlsGetAnOpaqueSurface() {
+        // The group editor lives in an `NSPopover`, whose backdrop is a
+        // translucent material -- a mid grey in dark mode. The panel's own
+        // greys landed on top of it: measured on screen, an unselected pill
+        // label against its track came out at 1.02:1, which is not a dim
+        // label, it is no label. Vibrancy finished the job by blending what
+        // was left into the backdrop. So the panel brings its own opaque
+        // plate, as the New Space sheet -- which never had the problem -- has
+        // always had.
+        let editor = GroupAppearanceEditor(
+            appearance: .standard, tint: .systemTeal, name: "Work"
+        ) { _ in }
+        editor.loadViewIfNeeded()
+        let backdrop = editor.view as? PanelBackdrop
+        #expect(backdrop != nil, "the editor's root view is its own plate")
+        #expect(backdrop?.allowsVibrancy == false, "and it is not vibrant material")
+        #expect(backdrop?.isOpaque == true)
+    }
+
     // MARK: - Loudness
 
     @Test("A space's colour tints the chrome rather than covering it")

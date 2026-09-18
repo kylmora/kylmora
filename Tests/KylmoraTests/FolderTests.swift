@@ -855,3 +855,60 @@ struct FolderPlatePlanTests {
         ])
     }
 }
+
+/// Where a folder's header sits inside the row the table gives it.
+///
+/// The header is shorter than its row: the row carries the gap above the plate,
+/// and, when the plate both starts and ends on it, the gap below it too. An
+/// empty folder -- and a collapsed one -- is such a plate, one row tall.
+@Suite("A folder header sits on its own plate")
+@MainActor
+struct FolderHeaderPlacementTests {
+    private func tabList(in sidebar: SidebarViewController) -> NSTableView? {
+        UITestSupport.descendants(of: sidebar.view)
+            .compactMap { $0 as? NSTableView }
+            .first { ($0.dataSource as AnyObject?) === sidebar }
+    }
+
+    @Test("An empty folder's name is on the card, not hanging under it")
+    func emptyFolderHeaderIsInsideItsPlate() throws {
+        // The header used to be pinned to the bottom of its row, which is the
+        // same thing as sitting under the gap only while the gap under the
+        // plate is somebody else's. An empty folder's header row carries both
+        // gaps, so the name dropped ten points clear of the card it names.
+        let (session, _) = TestSession.make()
+        _ = session.createGroup(named: "Hello new group")
+
+        let sidebar = SidebarViewController(session: session)
+        sidebar.loadViewIfNeeded()
+        let list = try #require(tabList(in: sidebar))
+
+        let column = try #require(list.tableColumns.first)
+        let row = try #require((0..<list.numberOfRows).first { index in
+            let cell = sidebar.tableView(list, viewFor: column, row: index)
+            return cell.map { !UITestSupport.descendants(of: $0).compactMap { $0 as? TabGroupHeaderView }.isEmpty }
+                ?? false
+        })
+
+        let cell = try #require(sidebar.tableView(list, viewFor: column, row: row))
+        let height = sidebar.tableView(list, heightOfRow: row)
+        cell.frame = NSRect(x: 0, y: 0, width: 260, height: height)
+        cell.layoutSubtreeIfNeeded()
+        let header = try #require(
+            UITestSupport.descendants(of: cell).compactMap { $0 as? TabGroupHeaderView }.first
+        )
+
+        let gap = Style.Metrics.folderPlateGap
+        // The plate's own band in this row, as `FolderPlateRowView` draws it:
+        // under the gap above, above the gap below.
+        let plateTop = gap
+        let plateBottom = height - gap
+        #expect(height == Style.Metrics.groupHeaderHeight + gap * 2,
+                "an empty folder's header row carries the gap at both ends")
+        // The cell is not flipped, so the row's top is maxY.
+        let headerTop = cell.frame.height - header.frame.maxY
+        #expect(abs(headerTop - plateTop) < 0.5, "the header starts where the plate does")
+        #expect(abs(header.frame.height - (plateBottom - plateTop)) < 0.5,
+                "and fills it to the bottom")
+    }
+}

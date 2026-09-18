@@ -869,8 +869,17 @@ final class Settings {
             return .expanded
         }
         set {
+            // Only on a real change. The window controller listens for this and
+            // answers by calling `setSidebarMode`, which writes the mode back
+            // here -- so a post on every write is a loop: write, notify, write,
+            // notify. NotificationCenter delivers to a main-queue observer on
+            // the main thread synchronously, so the loop is recursion, and
+            // entering compact mode took the app down with a stack overflow
+            // before it had drawn a single frame of it.
+            let changed = defaults.string(forKey: Key.sidebarMode) != newValue.rawValue
             defaults.set(newValue.rawValue, forKey: Key.sidebarMode)
             defaults.set(newValue == .compact || newValue == .iconsOnly, forKey: Key.compactMode)
+            guard changed else { return }
             NotificationCenter.default.post(name: .sidebarModeDidChange, object: newValue)
         }
     }

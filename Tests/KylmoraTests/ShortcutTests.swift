@@ -214,3 +214,37 @@ struct ShortcutTests {
         #expect(manager.findConflict(key: "t", modifiers: [.command], excluding: "pin-tab") == nil)
     }
 }
+
+/// Compact mode's two window commands, which lived only in the View menu.
+@Suite("Compact mode is rebindable")
+@MainActor
+struct CompactShortcutTests {
+    @Test("Both compact commands are in the shortcuts list")
+    func compactCommandsAreListed() {
+        // They were menu items and nothing else: not in Settings -> Shortcuts,
+        // so not rebindable and not discoverable, and not in the palette
+        // either.
+        let ids = Set(ShortcutManager.shared.definitions.map(\.id))
+        #expect(ids.contains("toggle-compact-sidebar-pin"))
+        #expect(ids.contains("toggle-compact-toolbar"))
+    }
+
+    @Test("And in the command palette, wired to the window")
+    func compactCommandsAreInThePalette() {
+        let ids = Set(CommandCatalog.all.map(\.id))
+        #expect(ids.contains("toggle-compact-sidebar-pin"))
+        #expect(ids.contains("toggle-compact-toolbar"))
+    }
+
+    @Test("The pin keeps the shortcut the View menu already showed")
+    func pinKeepsItsKeys() throws {
+        let pin = try #require(
+            ShortcutManager.shared.definitions.first { $0.id == "toggle-compact-sidebar-pin" }
+        )
+        #expect(pin.defaultKey == "s")
+        #expect(pin.defaultModifiers == [.command, .control, .option])
+        #expect(pin.category == .appearance)
+        // Findable by the mode it belongs to: the pane searches titles.
+        #expect(pin.title.lowercased().contains("compact"))
+    }
+}

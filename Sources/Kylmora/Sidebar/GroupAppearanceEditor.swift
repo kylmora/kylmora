@@ -116,7 +116,7 @@ final class GroupAppearanceEditor: NSViewController {
         }
         divider.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
-        let container = NSView()
+        let container = PanelBackdrop()
         container.addSubview(stack)
         NSLayoutConstraint.activate([
             container.widthAnchor.constraint(equalToConstant: PanelStyle.width),

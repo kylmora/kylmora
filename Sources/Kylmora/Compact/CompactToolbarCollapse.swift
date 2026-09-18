@@ -99,17 +99,8 @@ final class CompactTrafficLights {
         case .toolbar:
             guard let toolbarView else { return }
             captureHomeIfNeeded()
-            for (index, button) in buttons.enumerated() {
-                button.removeFromSuperview()
-                button.translatesAutoresizingMaskIntoConstraints = true
-                toolbarView.addSubview(button)
-                button.frame.origin = CGPoint(
-                    x: Style.Metrics.elementSeparation
-                        + CGFloat(index) * Self.buttonPitch,
-                    y: (Style.Metrics.topBarHeight - button.frame.height) / 2
-                )
-                button.autoresizingMask = [.maxXMargin, .minYMargin, .maxYMargin]
-            }
+            current = .toolbar
+            adopt(into: toolbarView)
         case .sidebar:
             guard let home else { return }
             for (index, button) in buttons.enumerated() {
@@ -119,6 +110,53 @@ final class CompactTrafficLights {
             }
         }
         current = host
+    }
+
+    /// Puts the lights back on the bar, on its centre line.
+    ///
+    /// Called by the bar itself every time it lays out, and it has to take them
+    /// back rather than just move them: AppKit reclaims the standard window
+    /// buttons into `NSTitlebarView` whenever it rebuilds the titlebar, and
+    /// once they are back there nothing we own places them. They then sit
+    /// where the titlebar puts them -- six points off its own bottom edge --
+    /// while the bar they are supposed to be on starts eight points lower, so
+    /// the three lights floated above the toolbar's buttons instead of lining
+    /// up with them.
+    func recentre(in toolbarView: NSView) {
+        guard current == .toolbar else { return }
+        adopt(into: toolbarView)
+    }
+
+    /// Takes the three buttons onto `toolbarView` -- if they are not already
+    /// there -- and sits them on its centre line.
+    private func adopt(into toolbarView: NSView) {
+        for (index, button) in buttons.enumerated() {
+            if button.superview !== toolbarView {
+                button.removeFromSuperview()
+                button.translatesAutoresizingMaskIntoConstraints = true
+                toolbarView.addSubview(button)
+                // Nothing flexible in y: with both vertical margins flexible
+                // AppKit shares out every height change between them, and the
+                // bar does change height on the way in.
+                button.autoresizingMask = [.maxXMargin]
+            }
+            button.frame.origin = Self.origin(index: index, button: button, in: toolbarView)
+        }
+    }
+
+    /// Where the light at `index` sits: along the bar's leading edge, on its
+    /// centre line. Rounded, because half a point of offset on a fourteen-point
+    /// circle is a visibly soft edge.
+    private static func origin(index: Int, button: NSButton, in toolbarView: NSView) -> CGPoint {
+        // The bar's constrained height, not its current bounds: `layout()`
+        // runs before the constraint has settled, and a bar that is briefly
+        // 68 points tall centres the lights 13 points too high -- which is
+        // where they stayed, above the buttons they are meant to sit beside.
+        let height = Style.Metrics.topBarHeight
+        return CGPoint(
+            x: Style.Metrics.elementSeparation + CGFloat(index) * buttonPitch,
+            y: ((height - button.frame.height) / 2).rounded()
+        )
     }
 
     /// Centre-to-centre spacing of the three lights, which macOS fixes at 20

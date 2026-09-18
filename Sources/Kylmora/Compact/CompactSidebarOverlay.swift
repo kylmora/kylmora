@@ -15,6 +15,45 @@ enum CompactMetrics {
     /// The 1-point inset highlight that separates the plate from a dark page.
     static let plateBorderWidth: CGFloat = 1
     static let plateBorderOpacity: CGFloat = 0.15
+    /// How wide a strip along the docked edge wakes the sidebar.
+    ///
+    /// The plate itself leaves one point of itself inside the window, and for
+    /// a while that point was the whole hover target: the sidebar came back
+    /// only if the pointer landed on the window's outermost column of pixels,
+    /// so in practice it came back by accident. Eight points is the same
+    /// gutter the rest of the chrome uses and is a target you can hit without
+    /// aiming.
+    static let hoverEdgeWidth: CGFloat = 8
+}
+
+/// The invisible strip along the window edge that wakes the floating sidebar.
+///
+/// Transparent, and never the target of a click: `hitTest` refuses every point,
+/// so the page underneath keeps all of its mouse handling and only the tracking
+/// area -- which does not need a hit test -- reports the pointer arriving.
+@MainActor
+final class CompactHoverEdge: NSView {
+    var onEnter: (() -> Void)?
+    var onExit: (() -> Void)?
+
+    private var trackingArea: NSTrackingArea?
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea { removeTrackingArea(trackingArea) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) { onEnter?() }
+    override func mouseExited(with event: NSEvent) { onExit?() }
 }
 
 /// The floating sidebar: a plate laid over the page that slides off the window
@@ -47,6 +86,9 @@ final class CompactSidebarOverlay: NSView {
     private var trackingArea: NSTrackingArea?
     private var pushOut: CGFloat = 0
     private var content: NSView?
+    /// The strip along the window edge that wakes the plate. See
+    /// `CompactMetrics.hoverEdgeWidth`.
+    private let hoverEdge = CompactHoverEdge()
 
     init(edge: CompactSidebarEdge) {
         self.edge = edge
@@ -115,6 +157,23 @@ final class CompactSidebarOverlay: NSView {
     /// plate visible when it is meant to be gone.
     func install(in container: NSView, float: CGFloat) {
         container.addSubview(self, positioned: .above, relativeTo: nil)
+
+        // Under the plate, so a revealed sidebar is the thing the pointer is
+        // over; over the page, so the strip is reached before the page is.
+        hoverEdge.translatesAutoresizingMaskIntoConstraints = false
+        hoverEdge.onEnter = { [weak self] in self?.onHoverBegan?(false) }
+        hoverEdge.onExit = { [weak self] in self?.onHoverEnded?(false) }
+        container.addSubview(hoverEdge, positioned: .below, relativeTo: self)
+        let edgePin: NSLayoutConstraint = switch edge {
+        case .leading: hoverEdge.leadingAnchor.constraint(equalTo: container.leadingAnchor)
+        case .trailing: hoverEdge.trailingAnchor.constraint(equalTo: container.trailingAnchor)
+        }
+        NSLayoutConstraint.activate([
+            edgePin,
+            hoverEdge.widthAnchor.constraint(equalToConstant: CompactMetrics.hoverEdgeWidth),
+            hoverEdge.topAnchor.constraint(equalTo: container.topAnchor),
+            hoverEdge.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
 
         let edgeConstraint: NSLayoutConstraint = switch edge {
         case .leading: leadingAnchor.constraint(equalTo: container.leadingAnchor)
@@ -236,8 +295,13 @@ final class CompactSidebarOverlay: NSView {
     /// it collapses the sidebar out from under the tab being dragged.
     var containsPointer: Bool {
         guard let window, window.isKeyWindow else { return false }
-        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        return bounds.contains(point)
+        let location = window.mouseLocationOutsideOfEventStream
+        if bounds.contains(convert(location, from: nil)) { return true }
+        // The waking strip counts as inside. Otherwise the sidebar comes out
+        // to meet a pointer that is still on the edge and immediately goes
+        // away again, which reads as a flinch.
+        guard hoverEdge.superview != nil else { return false }
+        return hoverEdge.bounds.contains(hoverEdge.convert(location, from: nil))
     }
 
     // MARK: - Drag hover

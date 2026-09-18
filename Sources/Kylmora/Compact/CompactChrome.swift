@@ -88,6 +88,13 @@ final class CompactChrome: CompactModeHost {
             }
         }
         controller.setHost(self)
+
+        // The lights ride on the bar in compact mode without Auto Layout to
+        // hold them there, so the bar re-centres them every time it lays out.
+        (toolbarView as? ContentTopBar)?.onLayout = { [weak self] in
+            guard let self, let toolbarView = self.toolbarView else { return }
+            self.trafficLights?.recentre(in: toolbarView)
+        }
     }
 
     // MARK: - The switch
@@ -120,6 +127,16 @@ final class CompactChrome: CompactModeHost {
         var configuration = controller.state.configuration
         configuration.sidebarEdge = edge
         controller.setConfiguration(configuration)
+    }
+
+    /// Puts the window's lights on the page's top bar, or hands them back.
+    ///
+    /// Compact mode is not the only time they belong there: a collapsed
+    /// sidebar has no strip to host them either, and a window with no visible
+    /// lights has no close button. Compact mode owns the machinery, so the
+    /// window controller asks through here.
+    func setLightsOnToolbar(_ onToolbar: Bool) {
+        trafficLights?.move(to: onToolbar ? .toolbar : .sidebar, toolbarView: toolbarView)
     }
 
     // MARK: - CompactModeHost

@@ -213,12 +213,12 @@ final class SegmentedPills: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let radius: CGFloat = 7
-        Style.Colors.folderPlateFill.setFill()
+        Style.Colors.controlFill.setFill()
         NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
 
         if segmentRects.indices.contains(selectedIndex) {
             let thumb = segmentRects[selectedIndex].insetBy(dx: 2, dy: 2)
-            Style.Colors.rowSelectedFill.setFill()
+            Style.Colors.controlThumbFill.setFill()
             NSBezierPath(roundedRect: thumb, xRadius: radius - 2, yRadius: radius - 2).fill()
         }
 
@@ -296,7 +296,7 @@ final class SwatchTile: NSControl {
         let path = NSBezierPath(roundedRect: tile, xRadius: radius, yRadius: radius)
         switch look {
         case .none:
-            Style.Colors.folderPlateFill.setFill()
+            Style.Colors.controlFill.setFill()
             path.fill()
             NSColor.tertiaryLabelColor.setStroke()
             path.lineWidth = 1
@@ -355,7 +355,7 @@ final class ColorChip: NSControl {
         NSBezierPath(ovalIn: disc).fill()
         // A soft ring so a chip the colour of the panel is still a disc, and a
         // hint that it is tappable.
-        NSColor(white: 1, alpha: 0.3).setStroke()
+        Style.Colors.controlRing.setStroke()
         let edge = NSBezierPath(ovalIn: disc.insetBy(dx: 0.5, dy: 0.5))
         edge.lineWidth = 1
         edge.stroke()
@@ -429,11 +429,11 @@ final class DirectionPicker: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         let radius: CGFloat = 7
-        Style.Colors.folderPlateFill.setFill()
+        Style.Colors.controlFill.setFill()
         NSBezierPath(roundedRect: bounds, xRadius: radius, yRadius: radius).fill()
         guard let index = directions.firstIndex(of: selected), cellRects.indices.contains(index) else { return }
         let thumb = cellRects[index].insetBy(dx: 2, dy: 2)
-        Style.Colors.rowSelectedFill.setFill()
+        Style.Colors.controlThumbFill.setFill()
         NSBezierPath(roundedRect: thumb, xRadius: radius - 2, yRadius: radius - 2).fill()
     }
 
