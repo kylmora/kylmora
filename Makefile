@@ -78,8 +78,17 @@ build:
 # The app icon is generated from the K mark; see Tools/make-icon.py.
 icon: $(ICON)
 
+# The icon is committed, so building the app does not need Pillow. A fresh
+# checkout gives every file the same mtime, though, so make decides to rebuild
+# it anyway -- and on a runner without Pillow that failed the whole build over
+# a file that was already correct and already in the tree. Regenerate it when
+# the generator can run; keep what is checked in when it cannot, and say so.
 $(ICON): $(ICON_MARK) Tools/make-icon.py
-	python3 Tools/make-icon.py
+	@python3 Tools/make-icon.py || { \
+		test -f "$(ICON)" \
+		&& echo "make-icon: generator unavailable; keeping the committed $(ICON)" \
+		&& touch "$(ICON)"; \
+	}
 
 bundle: build $(ICON)
 	@rm -rf "$(APP_BUNDLE)"

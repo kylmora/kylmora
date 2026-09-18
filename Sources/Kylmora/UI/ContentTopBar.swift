@@ -43,6 +43,19 @@ final class ContentTopBar: NSView {
     /// it to bring the traffic lights back while the sidebar is hidden.
     var onHoverChanged: ((Bool) -> Void)?
 
+    /// Called after the bar has laid out, for the window's traffic lights.
+    ///
+    /// They are plain `NSButton`s taken off the titlebar and dropped in here by
+    /// compact mode, so Auto Layout never places them: they carry a frame, and
+    /// a frame survives a resize only by luck. The bar puts them back on its
+    /// centre line instead. See `CompactTrafficLights`.
+    var onLayout: (() -> Void)?
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+
     /// Space reserved at the leading edge before the navigation buttons.
     ///
     /// The window has no titlebar, so the sidebar normally hosts the traffic

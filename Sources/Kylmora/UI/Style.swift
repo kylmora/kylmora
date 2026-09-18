@@ -375,6 +375,41 @@ enum Style {
 
         static var pageFill: NSColor { .textBackgroundColor }
 
+        /// The plate a panel or popover of Kylmora's own controls is drawn on.
+        ///
+        /// Opaque. `windowBackgroundColor` rather than a veil: these controls
+        /// are drawn against it, and their greys are only legible if what is
+        /// behind them is a known value rather than whatever the desktop, the
+        /// page or a translucent material happens to put there.
+        static var panelSurface: NSColor { .windowBackgroundColor }
+
+        // MARK: Panel controls
+
+        /// The plate behind a control in a panel or sheet -- a text field, a
+        /// segmented track, a quiet button.
+        ///
+        /// `ink`, not `veil`. The rest of the chrome's surfaces are veils
+        /// because they sit on a space's tint, where white is what lifts; the
+        /// New Space sheet and the group editor sit on the window's own
+        /// background, which in light mode is near white. A white veil there is
+        /// invisible -- the sheet's fields, toggles and pills drew nothing at
+        /// all -- so on a panel it is black that has to do the darkening.
+        static var controlFill: NSColor { ink(light: 0.06, dark: 0.07) }
+        /// The same plate, under the pointer.
+        static var controlHoverFill: NSColor { ink(light: 0.10, dark: 0.14) }
+        /// A control that has to read as a shape in its own right rather than
+        /// as a recess: an off switch, whose track carries a white knob.
+        static var controlTrackFill: NSColor { ink(light: 0.16, dark: 0.16) }
+        /// The thumb lifted onto a segmented track: opaque in light, a veil in
+        /// dark, the same reading as a selected row but on a surface with no
+        /// tint under it.
+        static var controlThumbFill: NSColor {
+            dynamic(light: .white, dark: NSColor(white: 1, alpha: 0.16))
+        }
+        /// The ring that holds a chip or knob off the surface behind it, for
+        /// when the two are near the same value.
+        static var controlRing: NSColor { ink(light: 0.18, dark: 0.30) }
+
         // MARK: Text
 
         static var primaryText: NSColor { .labelColor }

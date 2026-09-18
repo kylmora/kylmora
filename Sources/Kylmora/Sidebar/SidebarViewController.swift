@@ -10,6 +10,21 @@ final class SidebarViewController: NSViewController {
 
     private let session: BrowserSession
     private let diaHeader = SidebarHeaderView()
+
+    /// Buttons on the trailing end of the header strip. Empty is the usual
+    /// state: the page's top bar carries them. A floating sidebar covers that
+    /// bar, so what it covers has to be reachable from the sidebar itself.
+    func setHeaderActions(_ actions: [TopBarAction]) {
+        diaHeader.setActions(actions)
+    }
+
+    /// Whether the header strip is the traffic lights' host at the moment.
+    /// The window controller decides; compact mode and a trailing sidebar both
+    /// put them somewhere else. See `SidebarHeaderView.hostsTrafficLights`.
+    var headerHostsTrafficLights: Bool {
+        get { diaHeader.hostsTrafficLights }
+        set { diaHeader.hostsTrafficLights = newValue }
+    }
     private let pinnedTiles = PinnedTilesView()
     private let diaFooter = SidebarFooterView()
     private let nowPlayingView = SidebarNowPlayingView()
@@ -2248,8 +2263,8 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
         }
     }
 
-    /// The header carries its own 34-point height, so it is centred inside the
-    /// taller row rather than fighting the table's row height.
+    /// The header carries its own height, so it is placed inside the taller row
+    /// rather than fighting the table's row height.
     private func groupHeaderCell(for group: TabGroup, depth: Int) -> NSView {
         let header = TabGroupHeaderView()
         header.show(
@@ -2280,9 +2295,17 @@ extension SidebarViewController: NSTableViewDataSource, NSTableViewDelegate {
             // makes a folder read as one block rather than as a caption with a
             // list beside it.
             header.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            // At the bottom, not centred: the header's row carries the plate's
-            // gap above it, and the header sits under that gap.
-            header.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+            // Under the gap, measured from the top -- not centred, and not
+            // pinned to the bottom. The header's row is taller than the header
+            // by the gap above the plate, and, when the plate ends on this same
+            // row, by the gap under it as well: an empty folder, or a collapsed
+            // one, is a plate one row tall. Pinned to the bottom, the header
+            // then sat in that lower gap, a clear ten points below the plate it
+            // names -- a rounded card with the title hanging out underneath it.
+            header.topAnchor.constraint(
+                equalTo: container.topAnchor,
+                constant: Style.Metrics.folderPlateGap
+            )
         ])
         return container
     }

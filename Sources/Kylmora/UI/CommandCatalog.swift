@@ -400,6 +400,22 @@ enum CommandCatalog {
             keywords: ["compact", "zen", "minimal", "hide"]
         ),
         CommandCandidate(
+            id: "toggle-compact-sidebar-pin",
+            title: "Keep Sidebar Showing",
+            subtitle: "Pin the floating sidebar open in compact mode",
+            symbolName: "pin",
+            shortcut: "\u{2325}\u{2303}\u{2318}S",
+            keywords: ["compact", "sidebar", "pin", "keep", "float", "show"]
+        ),
+        CommandCandidate(
+            id: "toggle-compact-toolbar",
+            title: "Also Hide Toolbar",
+            subtitle: "In compact mode, hide the bar above the page too",
+            symbolName: "rectangle.topthird.inset.filled",
+            shortcut: nil,
+            keywords: ["compact", "toolbar", "hide", "bar", "address"]
+        ),
+        CommandCandidate(
             id: "toggle-zen-mode",
             title: "Toggle Zen Mode",
             subtitle: "Hide all UI for completely distraction-free browsing",

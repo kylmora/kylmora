@@ -235,6 +235,24 @@ final class ShortcutManager {
             defaultModifiers: [.command, .control]
         ),
         ShortcutDefinition(
+            id: "toggle-compact-sidebar-pin",
+            // Named for the mode it belongs to: the pane is searched by title,
+            // and someone looking for this is looking for "compact".
+            title: "Compact Mode: Keep Sidebar Showing",
+            category: .appearance,
+            selector: #selector(BrowserWindowController.toggleCompactSidebarPin(_:)),
+            defaultKey: "s",
+            defaultModifiers: [.command, .control, .option]
+        ),
+        ShortcutDefinition(
+            id: "toggle-compact-toolbar",
+            title: "Compact Mode: Also Hide Toolbar",
+            category: .appearance,
+            selector: #selector(BrowserWindowController.toggleCompactToolbar(_:)),
+            defaultKey: "",
+            defaultModifiers: []
+        ),
+        ShortcutDefinition(
             id: "toggle-zen-mode",
             title: "Zen Mode (Hide All UI)",
             category: .appearance,

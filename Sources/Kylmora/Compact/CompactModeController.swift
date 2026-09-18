@@ -271,6 +271,22 @@ final class CompactModeController {
         }
     }
 
+    /// Puts the floating sidebar away now, whatever is holding it open.
+    ///
+    /// For a control *inside* the sidebar. The pointer is on that control, so
+    /// it is inside the plate: dropping only the pin would leave the hover
+    /// reason holding the sidebar open and the click would look ignored. The
+    /// hover that is already under way is ignored too, for the same reason the
+    /// mode switch ignores one -- the pointer has not moved, so there is
+    /// nothing to read into it.
+    func dismissSidebar() {
+        cancelTimers()
+        var next = state
+        next.sidebarReasons = []
+        ignoresNextHover = true
+        apply(next)
+    }
+
     /// Pins the chrome open, or lets it go again. The user's own override, and
     /// the only reason no timer may clear.
     func toggleUserShow() {

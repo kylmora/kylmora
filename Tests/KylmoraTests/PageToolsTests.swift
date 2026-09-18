@@ -37,7 +37,13 @@ struct PageToolsTests {
 
         webView.loadHTMLString("<html><head><title>Print me</title></head><body><p>Text</p></body></html>", baseURL: nil)
         for _ in 0..<200 where webView.isLoading { try await Task.sleep(for: .milliseconds(25)) }
-        try await Task.sleep(for: .milliseconds(100))
+        // The title is published separately from the load finishing, so a
+        // fixed pause here is a race: on a loaded CI runner it ran out while
+        // the web view still reported no title, and the job was named by the
+        // fallback ("Page") rather than by the page.
+        for _ in 0..<200 where (webView.title ?? "").isEmpty {
+            try await Task.sleep(for: .milliseconds(25))
+        }
 
         let operation = try #require(PagePrinting.operation(for: webView))
         #expect(operation.view?.frame.size == NSSize(width: 640, height: 480))
