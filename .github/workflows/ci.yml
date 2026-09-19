@@ -1,8 +1,10 @@
 name: CI
 
+# Pull requests only. `main` takes nothing but merged pull requests, and a
+# pull request cannot be merged until this job is green and the branch is up
+# to date with `main` -- so the same commit was already built and tested
+# before the merge, and building it again afterwards proves nothing.
 on:
-  push:
-    branches: [ main ]
   pull_request:
 
 jobs:
