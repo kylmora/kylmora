@@ -59,6 +59,40 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     var cheatSheet: ShortcutCheatSheetWindowController?
     private let webPanel: WebPanelViewController
     private var webPanelSplitItem: NSSplitViewItem?
+    /// An extension's side panel, docked on the same side as the web panel.
+    /// Only one of the two is ever open: they are the same piece of screen.
+    private var extensionPanelSplitItem: NSSplitViewItem?
+    /// The panel itself, for the space colour it wears around its card.
+    private var extensionPanelController: AnyObject?
+
+    @available(macOS 15.4, *)
+    private var extensionPanel: ExtensionPanelViewController? {
+        extensionPanelController as? ExtensionPanelViewController
+    }
+
+    // The side panel wears the same space colour as the strip around the page
+    // card. These four keep the availability check in one place rather than at
+    // every callsite in the sidebar's wiring.
+    private func showPanelWash(_ wash: NSColor?, gradient: WashGradient?, animatedOver duration: TimeInterval) {
+        guard #available(macOS 15.4, *) else { return }
+        extensionPanel?.showSpaceWash(wash, animatedOver: duration)
+        extensionPanel?.showSpaceGradient(gradient, animatedOver: duration)
+    }
+
+    private func blendPanelWash(toward other: NSColor?, fraction: CGFloat) {
+        guard #available(macOS 15.4, *) else { return }
+        extensionPanel?.blendSpaceWash(toward: other, fraction: fraction)
+    }
+
+    private func setPanelWash(_ wash: NSColor?) {
+        guard #available(macOS 15.4, *) else { return }
+        extensionPanel?.spaceWash = wash
+    }
+
+    private func setPanelGradient(_ gradient: WashGradient?) {
+        guard #available(macOS 15.4, *) else { return }
+        extensionPanel?.spaceGradient = gradient
+    }
     private var tabOverviewController: TabOverviewGridViewController?
     var isTabOverviewOpen: Bool { tabOverviewController?.isOpen ?? false }
     private var cancellables: Set<AnyCancellable> = []
@@ -179,22 +213,30 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         sidebar.onShownSpaceChange = { [weak self] space, duration in
             self?.content.showSpaceWash(space.wash(for: space.activeTab), animatedOver: duration)
             self?.content.showSpaceGradient(space.washGradient(for: space.activeTab), animatedOver: duration)
+            self?.showPanelWash(space.wash(for: space.activeTab),
+                                gradient: space.washGradient(for: space.activeTab),
+                                animatedOver: duration)
             self?.root.border.show(space.effectiveBorder, animatedOver: duration)
             self?.applyLook(of: space)
             self?.applySidebarWidthOnSpaceChange(to: space)
         }
         sidebar.onShownSpaceBlend = { [weak self] space, fraction in
             self?.content.blendSpaceWash(toward: space?.wash(for: space?.activeTab), fraction: fraction)
+            self?.blendPanelWash(toward: space?.wash(for: space?.activeTab), fraction: fraction)
             self?.root.border.blend(toward: space?.effectiveBorder, fraction: fraction)
         }
         sidebar.onWashChange = { [weak self] wash in
             self?.content.spaceWash = wash
+            self?.setPanelWash(wash)
         }
         sidebar.onGradientChange = { [weak self] gradient in
             self?.content.spaceGradient = gradient
+            self?.setPanelGradient(gradient)
         }
         content.spaceWash = session.activeSpace.wash(for: session.activeSpace.activeTab)
         content.spaceGradient = session.activeSpace.washGradient(for: session.activeSpace.activeTab)
+        setPanelWash(content.spaceWash)
+        setPanelGradient(content.spaceGradient)
         root.border.show(session.activeSpace.effectiveBorder, animatedOver: 0)
         applyLook(of: session.activeSpace)
 
@@ -302,6 +344,27 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         let contentItem = NSSplitViewItem(viewController: content)
         contentItem.minimumThickness = KylmoraSplitViewController.pageMinimumThickness
 
+        let extensionPanelItem: NSSplitViewItem?
+        if #available(macOS 15.4, *) {
+            let controller = ExtensionPanelViewController()
+            let item = NSSplitViewItem(viewController: controller)
+            item.minimumThickness = WebPanelStore.minWidth
+            item.maximumThickness = WebPanelStore.maxWidth
+            item.preferredThicknessFraction = 0.25
+            item.canCollapse = true
+            item.holdingPriority = .defaultLow
+            item.isCollapsed = true
+            extensionPanelSplitItem = item
+            extensionPanelController = controller
+            extensionPanelItem = item
+            ExtensionSidebarService.shared.panel = controller
+            ExtensionSidebarService.shared.setsPanelVisible = { [weak self] visible in
+                self?.setExtensionPanelOpen(visible, animated: true)
+            }
+        } else {
+            extensionPanelItem = nil
+        }
+
         let webPanelItem = NSSplitViewItem(viewController: webPanel)
         webPanelItem.minimumThickness = WebPanelStore.minWidth
         webPanelItem.maximumThickness = WebPanelStore.maxWidth
@@ -313,6 +376,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
 
         let isTrailing = Settings.shared.sidebarPosition == .trailing
         if isTrailing {
+            if let extensionPanelItem { splitViewController.addSplitViewItem(extensionPanelItem) }
             splitViewController.addSplitViewItem(webPanelItem)
             splitViewController.addSplitViewItem(contentItem)
             splitViewController.addSplitViewItem(sidebarItem)
@@ -320,6 +384,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             splitViewController.addSplitViewItem(sidebarItem)
             splitViewController.addSplitViewItem(contentItem)
             splitViewController.addSplitViewItem(webPanelItem)
+            if let extensionPanelItem { splitViewController.addSplitViewItem(extensionPanelItem) }
         }
         splitViewController.splitView.autosaveName = "KylmoraSidebar"
 
@@ -2433,7 +2498,27 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
 
     func setWebPanelOpen(_ open: Bool, animated: Bool = true) {
         WebPanelStore.shared.isOpen = open
+        if open, #available(macOS 15.4, *), ExtensionSidebarService.shared.openExtensionID != nil {
+            ExtensionSidebarService.shared.close()
+        }
         guard let item = webPanelSplitItem ?? splitViewController.splitViewItem(for: webPanel) else { return }
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.2
+                item.animator().isCollapsed = !open
+            }
+        } else {
+            item.isCollapsed = !open
+        }
+    }
+
+    /// Shows or hides the extension side panel. Opening it puts the web panel
+    /// away, because both live in the same strip beside the page.
+    func setExtensionPanelOpen(_ open: Bool, animated: Bool = true) {
+        guard let item = extensionPanelSplitItem else { return }
+        if open, WebPanelStore.shared.isOpen {
+            setWebPanelOpen(false, animated: animated)
+        }
         if animated {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.2

@@ -81,6 +81,18 @@ final class ExtensionManager: NSObject {
             .store(in: &cancellables)
         controller.didOpenWindow(windowAdapter!)
         controller.didFocusWindow(windowAdapter)
+        ExtensionSidebarService.shared.presents = { [weak self] id in
+            guard let self, let context = self.contexts[id] else { return nil }
+            let entry = self.entries.first { $0.id == id }
+            return ExtensionSidebarService.Presentation(
+                context: context,
+                title: entry?.displayName ?? "Extension",
+                icon: entry?.icon
+            )
+        }
+        ExtensionSidebarStore.shared.onChange = { id in
+            ExtensionSidebarService.shared.stateChanged(for: id)
+        }
         for record in records where record.isEnabled {
             Task { await load(record) }
         }
@@ -111,6 +123,10 @@ final class ExtensionManager: NSObject {
         let folder = try await Task.detached(priority: .userInitiated) {
             try ExtensionPackage.install(from: source, id: id, under: root)
         }.value
+        // Before the engine ever sees it: an extension with a side panel needs
+        // an API this engine does not have, and the only place to put one is
+        // inside the package.
+        try? ExtensionSidebarPackage.prepare(folder: folder)
         let summary = ExtensionPackage.manifestSummary(in: folder)
         let record = InstalledExtension(
             id: id,
@@ -182,6 +198,9 @@ final class ExtensionManager: NSObject {
     private func load(_ record: InstalledExtension) async {
         guard contexts[record.id] == nil else { return }
         let folder = index.folder(for: record)
+        // Every load, not only the first: this brings an extension installed
+        // before Kylmora could do side panels up to the shim it ships now.
+        let sidebar = try? ExtensionSidebarPackage.prepare(folder: folder)
         do {
             let ext = try await WKWebExtension(resourceBaseURL: folder)
             let context = WKWebExtensionContext(for: ext)
@@ -203,6 +222,7 @@ final class ExtensionManager: NSObject {
             try controller.load(context)
             extensions[record.id] = ext
             contexts[record.id] = context
+            ExtensionSidebarStore.shared.adopt(sidebar?.definition, for: record.id)
             problems[record.id] = (ext.errors + context.errors).map(\.localizedDescription)
             if Self.isLogging {
                 let probe = URL(string: "https://duckduckgo.com/")!
@@ -227,6 +247,7 @@ final class ExtensionManager: NSObject {
     }
 
     private func unload(_ id: UUID) {
+        ExtensionSidebarService.shared.forget(id)
         if let context = contexts[id] {
             try? controller.unload(context)
         }
@@ -262,8 +283,23 @@ final class ExtensionManager: NSObject {
 
     func perform(_ action: WKWebExtension.Action) {
         guard let context = action.webExtensionContext else { return }
+        // `sidePanel.setPanelBehavior({ openPanelOnActionClick: true })` is how
+        // an extension says its button opens the panel rather than a popup,
+        // and an extension with a panel and no popup means the same thing.
+        if let id = recordID(for: context),
+           ExtensionSidebarService.shared.hasPanel(id),
+           ExtensionSidebarService.shared.opensOnActionClick(id) || !action.presentsPopup {
+            ExtensionSidebarService.shared.toggle(id)
+            return
+        }
         let tab = session?.activeTab.map { adapter(for: $0) }
         context.performAction(for: tab)
+    }
+
+    /// The record a loaded context belongs to.
+    func recordID(for context: WKWebExtensionContext) -> UUID? {
+        guard let id = UUID(uuidString: context.uniqueIdentifier) else { return nil }
+        return records.contains(where: { $0.id == id }) ? id : nil
     }
 
     // MARK: - Tabs, as the engine sees them
@@ -290,6 +326,9 @@ final class ExtensionManager: NSObject {
             if let tab = session?.activeTab, visibleTabs.contains(where: { $0 === tab }) {
                 controller.didActivateTab(adapter(for: tab), previousActiveTab: previous)
             }
+            // A panel's page can be set per tab, so the tab changing may mean
+            // a different page, or none.
+            ExtensionSidebarService.shared.activeTabChanged()
         case .tab(let tab):
             if let adapter = adapters[tab.id] {
                 controller.didChangeTabProperties([.title, .URL, .loading], for: adapter)
@@ -394,6 +433,21 @@ extension ExtensionManager: WKWebExtensionControllerDelegate {
         for context: WKWebExtensionContext,
         replyHandler: @escaping (Any?, Error?) -> Void
     ) {
+        if ExtensionSidebarService.isBrokerHost(applicationIdentifier) {
+            guard let id = recordID(for: context), let body = message as? [String: Any] else {
+                return replyHandler(nil, NativeMessagingService.error(NativeMessagingService.Denial.noSuchHost(ExtensionSidebarShim.brokerHostName)))
+            }
+            let method = body["method"] as? String ?? ""
+            let arguments = (body["args"] as? [String: Any]) ?? [:]
+            switch ExtensionSidebarService.shared.broker.perform(method, arguments: arguments, for: id) {
+            case .done:
+                return replyHandler(["ok": true], nil)
+            case .value(let values):
+                return replyHandler(["ok": true, "value": values.mapValues(\.json)], nil)
+            case .failure(let reason):
+                return replyHandler(["ok": false, "error": reason], nil)
+            }
+        }
         guard let identity = nativeMessagingIdentity(for: context) else {
             return replyHandler(nil, NativeMessagingService.error(NativeMessagingService.Denial.noSuchHost(applicationIdentifier ?? "")))
         }
@@ -423,6 +477,15 @@ extension ExtensionManager: WKWebExtensionControllerDelegate {
     ) {
         guard let identity = nativeMessagingIdentity(for: context) else {
             return completionHandler(NativeMessagingService.error(NativeMessagingService.Denial.noSuchHost(port.applicationIdentifier ?? "")))
+        }
+        // Kylmora's own name, answered in process: this is how an extension's
+        // background code reaches the side panel API, and it starts nothing.
+        if ExtensionSidebarService.isBrokerHost(port.applicationIdentifier) {
+            guard let id = recordID(for: context) else {
+                return completionHandler(NativeMessagingService.error(NativeMessagingService.Denial.noSuchHost(ExtensionSidebarShim.brokerHostName)))
+            }
+            ExtensionSidebarService.shared.attach(NativeMessagingPortAdapter(port), for: id)
+            return completionHandler(nil)
         }
         let permitted = context.hasPermission(.nativeMessaging)
         Task { @MainActor in

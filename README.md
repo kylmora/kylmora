@@ -206,6 +206,12 @@ locking settings across a fleet with a configuration profile or a
   format Chrome and Firefox extensions use: paste a Chrome Web Store or
   addons.mozilla.org link in Settings, or install a `.zip`, `.crx`, `.xpi` or
   an unpacked folder (macOS 15.4 and later). Enable them per Space.
+- **Side panels:** extensions that put their interface beside the page rather
+  than in a popup work, in both spellings -- Chrome's `chrome.sidePanel` and
+  Firefox's `browser.sidebarAction`. WebKit's engine has neither, so Kylmora
+  provides the API and the panel: docked beside the page, following the tab,
+  opened by the extension's own button. See
+  [docs/extension-side-panels.md](docs/extension-side-panels.md).
 - **Native messaging:** an extension can talk to an app installed on the Mac,
   which is what a password manager's extension is for -- the vault lives in
   the app and the extension is a front end. Kylmora reads the host manifests
