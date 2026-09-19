@@ -190,7 +190,7 @@ final class Settings {
             Key.compactRevealsOnHover: true,
             Key.sidebarMode: SidebarMode.expanded.rawValue,
             Key.sidebarPosition: SidebarPosition.leading.rawValue,
-            Key.sidebarHoverDelay: 0.20,
+            Key.sidebarHoverDelay: SidebarHoverDelayPreset.balanced.rawValue,
             Key.sidebarDensity: SidebarDensity.regular.rawValue,
             Key.showsTabStrip: false,
             Key.zenMode: false,
@@ -972,8 +972,12 @@ final class Settings {
 
     var sidebarHoverDelay: Double {
         get {
+            // A preset, so the pop-up that shows it can say what it is. The
+            // default used to be 200 ms, which is not one of the four the
+            // pop-up offers: it read as "Balanced (250 ms)", and the first
+            // switch anyone touched on that pane made it 250 ms for real.
             guard defaults.object(forKey: Key.sidebarHoverDelay) != nil else {
-                return 0.20
+                return SidebarHoverDelayPreset.balanced.rawValue
             }
             return defaults.double(forKey: Key.sidebarHoverDelay)
         }
