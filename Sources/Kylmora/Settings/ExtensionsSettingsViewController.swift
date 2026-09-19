@@ -14,6 +14,18 @@ final class ExtensionsSettingsViewController: NSViewController {
     private let firefoxButton = NSButton(title: "Install", target: nil, action: nil)
     private var storeRow: SettingsFormRow?
     private var firefoxRow: SettingsFormRow?
+    /// The native messaging part of the pane.
+    private let nativeMessagingBox = NSButton(checkboxWithTitle: "Let extensions talk to apps on this Mac",
+                                              target: nil, action: nil)
+    private let borrowedHostsBox = NSButton(checkboxWithTitle: "Include apps that set themselves up for another browser",
+                                            target: nil, action: nil)
+    private let hostStack = NSStackView()
+    /// The switch on each row of the two lists this pane builds itself.
+    ///
+    /// Kept so their observers can be let go before a list is built again: a
+    /// form tears down the switches it made, and these are not the form's.
+    private var extensionSwitches: [SettingsSwitchAdaptor] = []
+    private var hostSwitches: [SettingsSwitchAdaptor] = []
 
     init(settings: Settings = .shared) {
         self.settings = settings
@@ -29,6 +41,12 @@ final class ExtensionsSettingsViewController: NSViewController {
         super.viewWillAppear()
         storeRow?.isHidden = !settings.allowsChromeExtensions
         firefoxRow?.isHidden = !settings.allowsFirefoxExtensions
+        nativeMessagingBox.state = settings.nativeMessagingEnabled ? .on : .off
+        borrowedHostsBox.state = settings.nativeMessagingUsesOtherBrowsers ? .on : .off
+        borrowedHostsBox.isEnabled = settings.nativeMessagingEnabled
+        // An app can be installed while this window is open, so the list is
+        // read again every time the pane is shown rather than once at launch.
+        reloadHosts()
     }
 
     override func loadView() {
@@ -82,6 +100,28 @@ final class ExtensionsSettingsViewController: NSViewController {
         form.addRow("Package", install)
         form.addNote(statusLabel)
 
+        form.addSeparator()
+        form.addSection("Apps on this Mac")
+        nativeMessagingBox.target = self
+        nativeMessagingBox.action = #selector(nativeMessagingFlipped)
+        form.addRow("Native messaging", nativeMessagingBox)
+        form.addNote("A password manager's extension is a front end; the vault is in the app. Native messaging is "
+            + "how the two talk, and an extension cannot start a program itself, so Kylmora does it -- but only for "
+            + "an app that installed a manifest naming that extension, and only if the extension asked for the "
+            + "permission.")
+
+        borrowedHostsBox.target = self
+        borrowedHostsBox.action = #selector(borrowedHostsFlipped)
+        form.addContinuation(borrowedHostsBox)
+        form.addNote("Almost no app ships a manifest for Kylmora; they ship Chrome's and Firefox's. Reading those "
+            + "folders is what makes 1Password, Bitwarden and iCloud Passwords work the day they are installed. "
+            + "The app's own manifest still decides which extensions may reach it.")
+
+        hostStack.orientation = .vertical
+        hostStack.alignment = .leading
+        hostStack.spacing = 8
+        form.addRow("Apps found", SettingsForm.fill(hostStack))
+
         if #unavailable(macOS 15.4) {
             install.isEnabled = false
             storeField.isEnabled = false
@@ -93,6 +133,8 @@ final class ExtensionsSettingsViewController: NSViewController {
     }
 
     private func reload() {
+        for adaptor in extensionSwitches { adaptor.stop() }
+        extensionSwitches = []
         for view in listStack.arrangedSubviews {
             listStack.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -143,12 +185,15 @@ final class ExtensionsSettingsViewController: NSViewController {
         text.spacing = 2
         text.translatesAutoresizingMaskIntoConstraints = false
 
-        let toggle = NSSwitch()
-        toggle.state = entry.record.isEnabled ? .on : .off
-        toggle.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
-        toggle.target = self
-        toggle.action = #selector(toggled(_:))
-        toggle.setAccessibilityLabel("\(entry.displayName) enabled")
+        // Ours, not AppKit's: an installed extension used to put a stock blue
+        // switch on a page where every other control is this app's own.
+        let checkbox = NSButton(checkboxWithTitle: "\(entry.displayName) enabled", target: self,
+                                action: #selector(toggled(_:)))
+        checkbox.state = entry.record.isEnabled ? .on : .off
+        checkbox.identifier = NSUserInterfaceItemIdentifier(entry.id.uuidString)
+        let adaptor = SettingsSwitchAdaptor(checkbox: checkbox)
+        extensionSwitches.append(adaptor)
+        let toggle = adaptor.control
 
         let remove = NSButton(title: "Remove", target: self, action: #selector(removeTapped(_:)))
         remove.bezelStyle = .rounded
@@ -173,7 +218,121 @@ final class ExtensionsSettingsViewController: NSViewController {
         return row
     }
 
-    @objc private func toggled(_ sender: NSSwitch) {
+    // MARK: - Native messaging
+
+    @objc private func nativeMessagingFlipped() {
+        settings.nativeMessagingEnabled = nativeMessagingBox.state == .on
+        borrowedHostsBox.isEnabled = settings.nativeMessagingEnabled
+        if #available(macOS 15.4, *), !settings.nativeMessagingEnabled {
+            // Switching it off stops what is already running, not only what
+            // would start next.
+            NativeMessagingService.shared.disconnectAll()
+        }
+        reloadHosts()
+    }
+
+    @objc private func borrowedHostsFlipped() {
+        settings.nativeMessagingUsesOtherBrowsers = borrowedHostsBox.state == .on
+        reloadHosts()
+    }
+
+    private func reloadHosts() {
+        guard #available(macOS 15.4, *) else { return }
+        Task { @MainActor in
+            let scan = await NativeMessagingService.shared.scan(refreshing: true)
+            showHosts(scan)
+        }
+    }
+
+    @available(macOS 15.4, *)
+    private func showHosts(_ scan: NativeMessagingHostRegistry.Scan) {
+        for adaptor in hostSwitches { adaptor.stop() }
+        hostSwitches = []
+        for view in hostStack.arrangedSubviews {
+            hostStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        guard !scan.hosts.isEmpty || !scan.rejections.isEmpty else {
+            let empty = NSTextField(labelWithString: "No app on this Mac has asked to be reachable.")
+            empty.textColor = .secondaryLabelColor
+            hostStack.addArrangedSubview(empty)
+            return
+        }
+        var rows: [NSView] = scan.hosts.map { makeHostRow($0) }
+        rows += scan.rejections.map { makeRejectionRow($0) }
+        let card = SettingsCardView(rows: rows)
+        hostStack.addArrangedSubview(card)
+        card.widthAnchor.constraint(equalTo: hostStack.widthAnchor).isActive = true
+    }
+
+    @available(macOS 15.4, *)
+    private func makeHostRow(_ host: NativeMessagingHost) -> NSView {
+        let title = NSTextField(labelWithString: host.name)
+        title.font = .systemFont(ofSize: 13)
+        var lines: [String] = []
+        if !host.summary.isEmpty { lines.append(host.summary) }
+        lines.append("From \(host.directory.label) \u{00b7} \(host.executable.path(percentEncoded: false))")
+        let detail = NSTextField(wrappingLabelWithString: lines.joined(separator: "\n"))
+        detail.font = .systemFont(ofSize: 11)
+        detail.textColor = .secondaryLabelColor
+        detail.maximumNumberOfLines = 3
+
+        // The pane's own switch, not AppKit's: every other control in this
+        // window is one of ours, and a stock blue tick beside them would show.
+        let checkbox = NSButton(checkboxWithTitle: "\(host.name) allowed", target: self,
+                                action: #selector(hostToggled(_:)))
+        checkbox.state = NativeMessagingService.shared.isBlocked(host.name) ? .off : .on
+        checkbox.identifier = NSUserInterfaceItemIdentifier(host.name)
+        let adaptor = SettingsSwitchAdaptor(checkbox: checkbox)
+        hostSwitches.append(adaptor)
+        return makeCardRow(title: title, detail: detail, trailing: adaptor.control)
+    }
+
+    @available(macOS 15.4, *)
+    private func makeRejectionRow(_ rejection: NativeMessagingHostRegistry.Rejection) -> NSView {
+        let title = NSTextField(labelWithString: rejection.manifestURL.deletingPathExtension().lastPathComponent)
+        title.font = .systemFont(ofSize: 13)
+        // Said plainly rather than hidden: a manifest Kylmora will not run is
+        // the reason an extension is about to look broken.
+        let detail = NSTextField(wrappingLabelWithString: "Not used. \(rejection.reason)")
+        detail.font = .systemFont(ofSize: 11)
+        detail.textColor = .systemRed
+        detail.maximumNumberOfLines = 3
+        return makeCardRow(title: title, detail: detail, trailing: nil)
+    }
+
+    private func makeCardRow(title: NSTextField, detail: NSTextField, trailing: NSView?) -> NSView {
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        let text = NSStackView(views: [title, detail])
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 2
+        text.translatesAutoresizingMaskIntoConstraints = false
+        var views: [NSView] = [text, NSView()]
+        if let trailing { views.append(trailing) }
+        let stack = NSStackView(views: views)
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 12),
+            stack.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -12),
+            stack.topAnchor.constraint(equalTo: row.topAnchor, constant: 8),
+            stack.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -8),
+            detail.widthAnchor.constraint(lessThanOrEqualToConstant: 360),
+        ])
+        return row
+    }
+
+    @objc private func hostToggled(_ sender: NSButton) {
+        guard #available(macOS 15.4, *), let name = sender.identifier?.rawValue else { return }
+        NativeMessagingService.shared.setBlocked(sender.state == .off, hostName: name)
+    }
+
+    @objc private func toggled(_ sender: NSButton) {
         guard #available(macOS 15.4, *), let id = sender.identifier.flatMap({ UUID(uuidString: $0.rawValue) }) else { return }
         ExtensionManager.shared.setEnabled(sender.state == .on, for: id)
     }

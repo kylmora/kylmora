@@ -210,6 +210,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func applicationWillTerminate(_ notification: Notification) {
         CrashReporter.markCleanExit()
         session?.saveNow()
+        // A native messaging host is a program Kylmora started; quitting the
+        // browser has to stop it too, or a password manager's helper outlives
+        // the browser that asked for it.
+        if #available(macOS 15.4, *) {
+            NativeMessagingService.shared.disconnectAll()
+        }
         if Settings.shared.clearDiskCacheOnQuit || RAMCacheManager.shared.isRAMOnly {
             RAMCacheManager.shared.clearDiskCacheDirectory()
         }
