@@ -318,6 +318,11 @@ final class BrowserSession {
     func removeSpace(_ space: Space) {
         guard spaces.count > 1, let index = spaces.firstIndex(where: { $0.id == space.id }) else { return }
         for tab in space.tabs { forget(tab) }
+        // Its archive goes with it. The records are filed by space id, so ones
+        // left behind by a deleted space are unreachable -- no list will ever
+        // show them and nothing can restore them -- while still counting
+        // against that space's cap if its id ever came back.
+        archivedTabs.removeAll { $0.spaceID == space.id }
         spaces.remove(at: index)
         routing.removeRoutes(toSpacesNotIn: Set(spaces.map(\.id)))
         if activeSpaceID == space.id {
@@ -1023,10 +1028,22 @@ final class BrowserSession {
         }
     }
 
-    /// Oldest first. Bounded, because an archive that grows without limit is a
-    /// session file that grows without limit; the cap is generous enough that
-    /// reaching it means the setting is doing its job.
+    /// Oldest first, every space's together. Each record names the space it
+    /// left, and that is what the archive is filed by: a space's archive is the
+    /// records that carry its id, and nothing in one space's archive is ever
+    /// shown in, restored into, or cleared by another's. Reach it through
+    /// `archivedTabs(in:)` rather than reading this array -- it is one store
+    /// because it is one file, not because it is one list.
     private(set) var archivedTabs: [ArchivedTab] = []
+
+    /// Bounded, because an archive that grows without limit is a session file
+    /// that grows without limit; the cap is generous enough that reaching it
+    /// means the setting is doing its job.
+    ///
+    /// Counted per space rather than across all of them. A shared ceiling
+    /// would mean one busy space's sweep silently evicting the oldest records
+    /// out of a quiet space's archive -- the space's own drawer emptying
+    /// because of something that happened in a space the user was not even in.
     private static let archiveLimit = 500
 
     /// One space's archive, most recently archived first -- the order someone
@@ -1042,6 +1059,10 @@ final class BrowserSession {
     /// scroll position and its back-forward list rather than just an address.
     func archive(_ tabs: [Tab]) {
         var archived = 0
+        // Collected as we go: `detach` takes the tab out of its space, so by
+        // the end of the loop there is no way left to ask which space a tab
+        // came from.
+        var touched: Set<Space.ID> = []
         for tab in tabs {
             guard let space = spaces.first(where: { $0.index(of: tab) != nil }) else { continue }
             // A private space keeps nothing that outlives it -- not even this.
@@ -1055,12 +1076,11 @@ final class BrowserSession {
                 liveFolders.tabWasRemoved(tab.id, fromFolder: groupID)
             }
             detach(tab, from: space)
+            touched.insert(space.id)
             archived += 1
         }
         guard archived > 0 else { return }
-        if archivedTabs.count > Self.archiveLimit {
-            archivedTabs.removeFirst(archivedTabs.count - Self.archiveLimit)
-        }
+        trimArchives(of: touched)
         Metrics.log("archive count=\(tabs.count) total=\(archivedTabs.count)")
         changes.send(.structure)
         scheduleSave()
@@ -1112,9 +1132,37 @@ final class BrowserSession {
         scheduleSave()
     }
 
-    /// Empties the archive, every space's. One change rather than one per row:
-    /// the sidebar's Clear has no space filter to narrow it and no reason to
-    /// rebuild its list once per archived tab.
+    /// Holds each named space's archive to `archiveLimit`, oldest out first.
+    ///
+    /// Only the spaces that just archived something are considered: a space
+    /// nobody touched cannot have grown, and walking every space's records on
+    /// every sweep to prove that is work for nothing.
+    private func trimArchives(of spaceIDs: Set<Space.ID>) {
+        for spaceID in spaceIDs {
+            let theirs = archivedTabs.filter { $0.spaceID == spaceID }
+            guard theirs.count > Self.archiveLimit else { continue }
+            let dropped = Set(theirs.prefix(theirs.count - Self.archiveLimit).map(\.id))
+            archivedTabs.removeAll { dropped.contains($0.id) }
+        }
+    }
+
+    /// Empties one space's archive and leaves every other space's alone.
+    ///
+    /// The archive is filed by space and shown by space, so the Clear button
+    /// under a space's list clears the list that is in front of the user. One
+    /// change rather than one per row: the sidebar has no reason to rebuild its
+    /// list once per archived tab.
+    func clearArchive(in space: Space) {
+        let kept = archivedTabs.filter { $0.spaceID != space.id }
+        guard kept.count != archivedTabs.count else { return }
+        archivedTabs = kept
+        changes.send(.structure)
+        scheduleSave()
+    }
+
+    /// Empties every space's archive at once. Nothing in the UI reaches this --
+    /// Clear is per space -- but a wipe of the whole store is what resetting
+    /// the browser means, and having it in one place keeps that honest.
     func clearArchive() {
         guard !archivedTabs.isEmpty else { return }
         archivedTabs.removeAll()

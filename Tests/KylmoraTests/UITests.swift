@@ -716,6 +716,62 @@ struct SidebarFooterTests {
         #expect(frames.dots.maxX < frames.trailing.minX)
         #expect(abs(frames.dots.midX - Style.Metrics.sidebarWidth / 2) < 1)
     }
+
+    @Test("An empty archive shows no count at all")
+    func emptyCountIsNoBadge() {
+        let button = IconButton(symbolName: "archivebox", label: "Archive")
+        let badge = UITestSupport.descendants(of: button).compactMap { $0 as? CountBadgeView }.first
+        #expect(badge?.isHidden == true, "Zero hides the pill rather than drawing a 0")
+        #expect(button.toolTip == "Archive")
+
+        button.badgeCount = 3
+        #expect(badge?.isHidden == false)
+        #expect(button.toolTip == "Archive (3)")
+        #expect(button.accessibilityValue() as? String == "3")
+
+        button.badgeCount = 0
+        #expect(badge?.isHidden == true)
+        #expect(button.toolTip == "Archive")
+    }
+
+    @Test("The count sits inside the button, over its glyph's corner")
+    func countSitsInTheButtonsCorner() {
+        let button = IconButton(symbolName: "archivebox", label: "Archive")
+        button.badgeCount = 7
+        let host = UITestSupport.host(
+            button,
+            width: Style.Metrics.iconButtonSide,
+            height: Style.Metrics.iconButtonSide
+        )
+        guard let badge = UITestSupport.descendants(of: button).compactMap({ $0 as? CountBadgeView }).first
+        else { return #expect(Bool(false), "No badge") }
+        let frame = badge.convert(badge.bounds, to: host)
+        // Inside the button: the footer's buttons sit hard against the
+        // sidebar's edges, so an overhanging pill is a clipped pill.
+        #expect(button.bounds.contains(button.convert(badge.bounds, from: badge)))
+        #expect(abs(frame.maxX - button.bounds.maxX) < 1, "Held to the trailing edge")
+        #expect(frame.height == Style.Metrics.countBadgeHeight)
+        // A single digit is a circle, not a squeezed oval.
+        #expect(frame.width == Style.Metrics.countBadgeHeight)
+    }
+
+    @Test("A long count widens the pill, and a very long one stops counting")
+    func countGrowsThenGivesUp() {
+        let badge = CountBadgeView()
+        badge.count = 7
+        let single = badge.intrinsicContentSize
+        badge.count = 42
+        let double = badge.intrinsicContentSize
+        #expect(double.width > single.width)
+        #expect(double.height == single.height)
+
+        badge.count = 140
+        let capped = badge.intrinsicContentSize
+        // "99+" is three characters however big the number gets, so the pill
+        // stops growing rather than running off the button.
+        badge.count = 9_000
+        #expect(badge.intrinsicContentSize == capped)
+    }
 }
 
 @Suite("Content container")

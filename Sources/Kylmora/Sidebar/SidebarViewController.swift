@@ -423,6 +423,7 @@ final class SidebarViewController: NSViewController {
                     self.refreshNowPlaying()
                 case .tabs:
                     self.reloadTabs()
+                    self.refreshArchiveBadge()
                     self.refreshNowPlaying()
                 case .activeTab:
                     self.syncActiveTab()
@@ -1319,21 +1320,43 @@ final class SidebarViewController: NSViewController {
 
     @objc private func toggleArchiveFromMenu() { toggleArchive() }
 
-    /// Newest first, which is the order someone hunting for "the thing that
-    /// just vanished" reads in. The space's name is resolved here, because the
-    /// list itself has no reason to know about spaces.
+    /// The archive of the space the sidebar is showing, newest first -- the
+    /// order someone hunting for "the thing that just vanished" reads in.
+    ///
+    /// One space at a time, because that is what an archive in a sidebar means.
+    /// A tab left a space's list; the place to look for it is the foot of that
+    /// same list, and a Work tab showing up under Personal is the archive
+    /// answering a question nobody asked. Switching space switches the archive
+    /// with it, which is why a space change reloads this.
+    ///
+    /// The rows carry no space name for the same reason: every one of them is
+    /// from the space whose sidebar they are being shown in.
     private func reloadArchive() {
         archiveList.show(
-            session.archivedTabs
-                .sorted { $0.archivedAt > $1.archivedAt }
-                .map { record in
-                    ArchiveListView.Entry(
-                        record: record,
-                        spaceName: session.spaces.first { $0.id == record.spaceID }?.name
-                    )
-                },
+            session.archivedTabs(in: shownSpace)
+                .map { ArchiveListView.Entry(record: $0, spaceName: nil) },
             isArchivingEnabled: settings.tabArchiveDelay != nil
         )
+        refreshArchiveBadge()
+    }
+
+    /// The count on the footer's Archive button.
+    ///
+    /// The button carries it whether or not the archive is open: an archive is
+    /// a drawer things disappear into, and the point of a number on the outside
+    /// of a drawer is that you can see there is something in it without opening
+    /// it.
+    ///
+    /// Separate from `reloadArchive` because it is also wanted on a plain tab
+    /// change: putting one back through the toast's Undo arrives as `.tabs`,
+    /// and the badge would otherwise sit there still counting a tab that is
+    /// back in the sidebar.
+    ///
+    /// It counts this space's archive only, so it agrees with the list the
+    /// button opens. A badge counting every space would send someone into an
+    /// archive that turns out to be empty.
+    private func refreshArchiveBadge() {
+        archiveButton?.badgeCount = session.archivedTabs(in: shownSpace).count
     }
 
     /// Puts one back and goes to it: restoring a tab is an act of wanting to
@@ -1357,14 +1380,17 @@ final class SidebarViewController: NSViewController {
     }
 
     private func confirmClearArchive() {
-        let count = session.archivedTabs.count
+        let space = shownSpace
+        let count = session.archivedTabs(in: space).count
         guard count > 0 else { return }
+        // Named, because Clear under a list that shows one space's archive must
+        // not read as though it empties the browser's.
         confirm(
-            message: "Remove \(count) archived tab\(count == 1 ? "" : "s")?",
-            detail: "This clears the whole archive. They will not come back.",
+            message: "Remove \(count) archived tab\(count == 1 ? "" : "s") from \(space.name)?",
+            detail: "This clears this Space's archive. Other Spaces keep theirs. They will not come back.",
             action: "Remove"
         ) { [weak self] in
-            self?.session.clearArchive()
+            self?.session.clearArchive(in: space)
         }
     }
 
@@ -1510,7 +1536,7 @@ final class SidebarViewController: NSViewController {
         // Named with its count. An archive is easy to forget you have, and
         // "Archive (12)" is the only thing in this menu that answers a question
         // the user has not thought to ask yet.
-        let archived = session.archivedTabs.count
+        let archived = session.archivedTabs(in: shownSpace).count
         let archive = NSMenuItem(
             title: archived == 0 ? "Archive\u{2026}" : "Archive (\(archived))\u{2026}",
             action: #selector(toggleArchiveFromMenu),

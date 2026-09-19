@@ -26,6 +26,11 @@ final class IconButton: NSButton {
     /// has a layer of its own, which stacks above the highlight's, so the two
     /// end up in the order the eye expects.
     private let glyph = NSImageView()
+    /// The count in the button's top-trailing corner, hidden while it is zero.
+    private let badge = CountBadgeView()
+    /// What the button is, without its count. Kept so the tooltip and the
+    /// accessibility label can be rebuilt as "Archive (3)" and back again.
+    private var label: String
     private var onClick: (() -> Void)?
     private var trackingArea: NSTrackingArea?
     private var highlight: RowHighlight?
@@ -56,6 +61,7 @@ final class IconButton: NSButton {
         side: CGFloat = Style.Metrics.iconButtonSide,
         onClick: (() -> Void)? = nil
     ) {
+        self.label = label
         self.onClick = onClick
         super.init(frame: .zero)
 
@@ -90,12 +96,25 @@ final class IconButton: NSButton {
         glyph.translatesAutoresizingMaskIntoConstraints = false
         addSubview(glyph)
 
+        // Added after the glyph so it draws over it: the pill is meant to
+        // overlap the symbol's corner, which is what makes it read as being
+        // attached to the button rather than floating beside it.
+        badge.isHidden = true
+        addSubview(badge)
+
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: side),
             heightAnchor.constraint(equalToConstant: side),
             glyph.centerXAnchor.constraint(equalTo: centerXAnchor),
-            glyph.centerYAnchor.constraint(equalTo: centerYAnchor)
+            glyph.centerYAnchor.constraint(equalTo: centerYAnchor),
+            // Held inside the button rather than hung off its corner. The
+            // footer's buttons sit hard against the sidebar's edges, so a pill
+            // that overhung would be the first thing lost when the sidebar is
+            // dragged narrow -- and the hover plate it sits on is drawn to the
+            // button's bounds, so a badge outside them would float free of it.
+            badge.topAnchor.constraint(equalTo: topAnchor),
+            badge.trailingAnchor.constraint(equalTo: trailingAnchor)
         ])
     }
 
@@ -108,8 +127,28 @@ final class IconButton: NSButton {
     /// showing one thing and announcing another.
     func setSymbol(_ symbolName: String, label: String) {
         glyph.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: label)
+        self.label = label
         toolTip = label
         setAccessibilityLabel(label)
+    }
+
+    /// How many things are in the list this button opens. Zero hides the pill
+    /// entirely: a badge reading "0" is a worse answer than no badge, because
+    /// it draws the eye to say nothing happened.
+    ///
+    /// The count goes into the tooltip and the accessibility value as well as
+    /// onto the face, so it is not something only a sighted user gets. The
+    /// value rather than the label, because the label is how the footer finds
+    /// its buttons again -- a button that renamed itself to "Archive (3)"
+    /// would stop being findable the moment something was archived.
+    var badgeCount: Int {
+        get { badge.count }
+        set {
+            guard newValue != badge.count else { return }
+            badge.count = newValue
+            toolTip = newValue > 0 ? "\(label) (\(newValue))" : label
+            setAccessibilityValue(newValue > 0 ? "\(newValue)" : nil)
+        }
     }
 
     func setClickHandler(_ handler: (() -> Void)?) {
@@ -193,5 +232,93 @@ final class IconButton: NSButton {
 
     @objc private func fire() {
         onClick?()
+    }
+}
+
+
+/// The small count in the corner of an icon button -- how many tabs are in the
+/// archive, from the button that opens it.
+///
+/// A pill rather than a bare number: at nine points a loose digit dropped on
+/// the corner of a symbol reads as part of the symbol, and `archivebox` has
+/// enough going on in that corner already.
+///
+/// Drawn rather than built from a label and a background view, for the same
+/// reason `PageDotsView` is: two bezier paths and a string cost less than a
+/// text field, its cell and the layer under it, and this one is laid out once
+/// and then only ever redrawn with a different number in it.
+@MainActor
+final class CountBadgeView: NSView {
+    /// Above this the badge stops counting and starts saying "a lot". A
+    /// three-digit pill is wider than the button it sits on, and nobody
+    /// hunting a lost tab needs to know whether it is the 104th or the 140th.
+    private static let maximum = 99
+
+    private var text = ""
+
+    var count: Int = 0 {
+        didSet {
+            guard count != oldValue else { return }
+            text = count > Self.maximum ? "\(Self.maximum)+" : "\(count)"
+            isHidden = count <= 0
+            setAccessibilityValue(text)
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        // The button around it is the control; this is a label on its face, and
+        // the button already announces the count in its own label.
+        setAccessibilityElement(false)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("CountBadgeView is created in code only")
+    }
+
+    private var attributes: [NSAttributedString.Key: Any] {
+        [
+            .font: Style.Fonts.countBadge,
+            .foregroundColor: Style.Colors.countBadgeText
+        ]
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let height = Style.Metrics.countBadgeHeight
+        guard !text.isEmpty else { return NSSize(width: height, height: height) }
+        let width = (text as NSString).size(withAttributes: attributes).width
+            + Style.Metrics.countBadgePadding * 2
+        // Never narrower than it is tall, so "3" is a circle and "12" is a
+        // capsule -- the shape grows with the number instead of the number
+        // being squeezed into a fixed box.
+        return NSSize(width: max(width.rounded(.up), height), height: height)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard !text.isEmpty else { return }
+        let pill = NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2)
+        Style.Colors.countBadgeFill.setFill()
+        pill.fill()
+
+        let string = text as NSString
+        let size = string.size(withAttributes: attributes)
+        // Centred on the pill rather than on the baseline the font would put
+        // it: digits have no descenders, so a baseline-aligned number sits
+        // visibly low in a circle this small.
+        string.draw(
+            at: NSPoint(
+                x: (bounds.width - size.width) / 2,
+                y: (bounds.height - size.height) / 2
+            ),
+            withAttributes: attributes
+        )
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 }
