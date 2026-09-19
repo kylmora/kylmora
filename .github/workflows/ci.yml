@@ -18,15 +18,27 @@ on:
 # no work; it is the one check that turns red if any of the three did, which
 # keeps the rule about what may merge in one place and this file free to grow
 # more jobs without a rule change every time.
+
+# Third-party actions are pinned to a commit SHA, not a tag. A tag is mutable:
+# whoever owns the action can move v4 to different code, and an action here runs
+# against the checkout with the job's token. The trailing comment records which
+# release each SHA was, because a bare SHA tells a reader nothing. The same SHAs
+# are used in release.yml, where the stakes are the signing identity.
+#
+# To move one on: read the action's release notes, resolve the new tag with
+#   gh api repos/<owner>/<repo>/git/ref/tags/<tag> -q .object.sha
+# and, if that returns a tag object rather than a commit, dereference it with
+#   gh api repos/<owner>/<repo>/git/tags/<sha> -q .object.sha
+
 jobs:
   tests:
     name: Tests
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Select latest stable Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: latest-stable
 
@@ -42,10 +54,10 @@ jobs:
     name: App bundle
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Select latest stable Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: latest-stable
 
@@ -71,10 +83,10 @@ jobs:
     name: Universal bundle
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Select latest stable Xcode
-        uses: maxim-lobanov/setup-xcode@v1
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1
         with:
           xcode-version: latest-stable
 
