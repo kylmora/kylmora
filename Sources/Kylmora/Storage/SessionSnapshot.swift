@@ -57,6 +57,9 @@ struct SessionSnapshot: Codable, Equatable {
         var activeTabIndex: Int?
         /// Which profile this space browsed under, in sessions written while
         /// profiles were separate from spaces. Read for migration, never
+        /// The space's own identifier. Absent in sessions written before a
+        /// space's id was saved, which are given new ones on the way in.
+        var id: UUID?
         /// written; see `profiles`.
         var profileID: UUID?
         /// Where this space's website data lives. Absent in sessions written
@@ -93,6 +96,7 @@ struct SessionSnapshot: Codable, Equatable {
         var defaultZoom: String?
 
         init(
+            id: UUID? = nil,
             name: String,
             symbolName: String? = nil,
             tint: String? = nil,
@@ -117,6 +121,7 @@ struct SessionSnapshot: Codable, Equatable {
             sleepMinutes: Int? = nil,
             defaultZoom: String? = nil
         ) {
+            self.id = id
             self.name = name
             self.symbolName = symbolName
             self.tint = tint

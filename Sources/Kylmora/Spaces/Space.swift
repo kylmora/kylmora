@@ -65,7 +65,15 @@ final class Space: Identifiable {
         return String(trimmed.prefix(maximumNameLength)).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    let id = UUID()
+    /// The space's identifier, stable across launches.
+    ///
+    /// Restored from the session file rather than made fresh each time:
+    /// Settings stores the default space by this id, and an id that changed at
+    /// every launch meant "Default space" quietly fell back to the first space
+    /// on the next one -- taking "Open external links in: Default space" with
+    /// it. A session written before ids were saved gives its spaces new ones,
+    /// once.
+    let id: UUID
 
     var name: String
     /// The identity every tab in this space browses under. Fixed for the life
@@ -210,6 +218,7 @@ final class Space: Identifiable {
     }
 
     init(
+        id: UUID = UUID(),
         name: String,
         identity: Identity,
         theme: SpaceTheme = .default,
@@ -226,6 +235,7 @@ final class Space: Identifiable {
         sleepMinutes: Int? = nil,
         defaultZoom: String? = nil
     ) {
+        self.id = id
         self.name = name
         self.identity = identity
         self.theme = theme

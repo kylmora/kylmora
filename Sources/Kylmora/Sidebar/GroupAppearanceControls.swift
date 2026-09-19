@@ -553,13 +553,18 @@ final class SolidPalette: NSView {
     var onPick: ((NSColor) -> Void)?
     var onCustom: (() -> Void)?
 
-    /// Two-dozen colours across the spectrum, plus a few neutrals -- enough to
-    /// pick from without the panel, spread so no two read as the same.
+    /// Eleven colours and the wheel: two rows of six, one colour per hue
+    /// family, walking the wheel from red round to pink and ending on a
+    /// neutral.
+    ///
+    /// It used to offer two dozen, four rows deep, and most of them were each
+    /// other: three reds within a few degrees of hue, two yellows, two greens,
+    /// three blues. A row you have to read twice to tell apart is not more
+    /// choice, it is more work -- and it made an already tall sheet taller.
+    /// Anything not here is a click away on the wheel.
     static let colours: [String] = [
-        "#ff3b30", "#ff375f", "#ff2d55", "#ff6482", "#ff9500", "#ff6b00",
-        "#ffb340", "#ffcc00", "#ffd60a", "#34c759", "#30d158", "#00c7be",
-        "#00b894", "#5ac8fa", "#32ade6", "#007aff", "#0a84ff", "#5856d6",
-        "#af52de", "#bf5af2", "#a2845e", "#8e8e93", "#2c2c2e"
+        "#ff3b30", "#ff9500", "#ffcc00", "#34c759", "#00c7be", "#5ac8fa",
+        "#0a84ff", "#5856d6", "#bf5af2", "#ff375f", "#8e8e93"
     ]
 
     private var swatches: [(hex: String, view: SolidSwatch)] = []

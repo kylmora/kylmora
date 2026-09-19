@@ -19,12 +19,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         Metrics.reportLaunchIfRequested(stage: "app-code-begins")
     }
 
+    /// Closes the system colour panel if macOS restored it.
+    ///
+    /// Kylmora picks colours in its own card now, but a copy of Kylmora that
+    /// once opened `NSColorPanel` has it in its saved window state, and AppKit
+    /// puts it back on screen at every launch afterwards -- a floating system
+    /// window nothing in the app opened and nothing in the app closes.
+    ///
+    /// Restoration runs after this delegate is told the app launched, so the
+    /// sweep is repeated: now, on the next pass of the run loop, and a second
+    /// later. It only ever closes a panel that already exists, so an app that
+    /// never had one does nothing at all.
+    private func dismissRestoredColorPanel() {
+        closeColorPanelIfRestored()
+        DispatchQueue.main.async { [weak self] in self?.closeColorPanelIfRestored() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            self?.closeColorPanelIfRestored()
+        }
+    }
+
+    private func closeColorPanelIfRestored() {
+        guard NSColorPanel.sharedColorPanelExists else { return }
+        let panel = NSColorPanel.shared
+        panel.isRestorable = false
+        panel.close()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         Metrics.reportLaunchIfRequested(stage: "did-finish-launching")
         AppPaths.ensureSupportDirectory()
         // Before any window exists, so the first one is never drawn in the
         // wrong appearance and then corrected.
         Settings.shared.applyAppearance()
+        dismissRestoredColorPanel()
 
         // History and bookmarks are a convenience, not a prerequisite. If the
         // database cannot be opened, the browser still browses.

@@ -39,7 +39,7 @@ final class StartPageView: NSView {
         column.spacing = 28
         column.translatesAutoresizingMaskIntoConstraints = false
 
-        let document = NSView()
+        let document = TopDownView()
         document.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(column)
         scroll.documentView = document
@@ -65,6 +65,19 @@ final class StartPageView: NSView {
     required init?(coder: NSCoder) {
         fatalError("StartPageView is created in code only")
     }
+
+    /// The page's content, for tests: where the column ended up inside the
+    /// scroll view's document.
+    var contentFrame: NSRect { column.frame }
+
+    /// Whether the content hangs from the top of the page.
+    ///
+    /// An `NSScrollView` lays its document out from the bottom-left, so a start
+    /// page with less content than the window is tall sat at the *bottom* of
+    /// the window with a screen of nothing above it -- and a brand new space,
+    /// whose page is a heading and one line, read as a blank tab. A flipped
+    /// document fills from the top, like every other list in the app.
+    var fillsFromTheTop: Bool { scroll.documentView?.isFlipped ?? false }
 
     override func layout() {
         super.layout()
@@ -295,4 +308,12 @@ final class StartPageRow: NSControl {
     }
 
     func activate() { open(link.url) }
+}
+
+/// A document view that fills from the top: `NSScrollView` places its document
+/// at the bottom-left otherwise, which puts a short page at the bottom of the
+/// window.
+@MainActor
+private final class TopDownView: NSView {
+    override var isFlipped: Bool { true }
 }

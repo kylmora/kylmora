@@ -317,3 +317,52 @@ struct SpaceThemePickerTests {
         #expect(chosen.isEmpty)
     }
 }
+
+// A space's id used to be made fresh at every launch, so "Default space" --
+// stored in Settings as that id -- quietly fell back to the first space on the
+// next launch, and "Open external links in: Default space" went with it.
+
+@Suite("A space keeps its identifier")
+@MainActor
+struct SpaceIdentifierTests {
+    @Test("The id a space is given is the id it keeps")
+    func theIdIsTheOneGiven() {
+        let id = UUID()
+        #expect(Space(id: id, name: "Work", identity: .standard).id == id)
+    }
+
+    @Test("Two spaces made without one are still told apart")
+    func idsAreStillUnique() {
+        #expect(Space(name: "A", identity: .standard).id != Space(name: "B", identity: .standard).id)
+    }
+
+    @Test("A saved session brings every space's id back")
+    func theIdSurvivesASave() {
+        let spaces = [
+            Space(name: "Personal", identity: .standard),
+            Space(name: "Work", identity: .makeIsolated())
+        ]
+        let snapshot = SessionSnapshot(
+            spaces: spaces.map { SessionSnapshot.Space(id: $0.id, name: $0.name, identity: $0.identity) },
+            activeSpaceIndex: 0
+        )
+        let data = try! JSONEncoder().encode(snapshot)
+        let read = try! JSONDecoder().decode(SessionSnapshot.self, from: data)
+        let restored = BrowserSession.spaces(from: read) ?? []
+        #expect(restored.map(\.id) == spaces.map(\.id))
+    }
+
+    @Test("A session written before ids were saved gets new ones rather than colliding")
+    func olderSessionsStillRestore() {
+        let snapshot = SessionSnapshot(
+            spaces: [
+                SessionSnapshot.Space(name: "Personal", identity: .standard),
+                SessionSnapshot.Space(name: "Work", identity: .makeIsolated())
+            ],
+            activeSpaceIndex: 0
+        )
+        let restored = BrowserSession.spaces(from: snapshot) ?? []
+        #expect(restored.count == 2)
+        #expect(restored[0].id != restored[1].id)
+    }
+}

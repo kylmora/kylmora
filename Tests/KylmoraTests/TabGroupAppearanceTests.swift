@@ -147,3 +147,62 @@ struct FolderPlateGeometryTests {
         #expect(placed[0].plateHeight == expected)
     }
 }
+
+// The colour palette both panels show. It was four rows of near-duplicates --
+// three reds, two yellows, three blues -- on a sheet that was already too tall.
+
+@Suite("The solid colour palette")
+@MainActor
+struct SolidPaletteTests {
+    @Test("It is two rows of six, the wheel included")
+    func twoFullRows() {
+        #expect(SolidPalette.colours.count + 1 == 12)
+    }
+
+    @Test("No colour is offered twice")
+    func everySwatchIsItsOwn() {
+        #expect(Set(SolidPalette.colours).count == SolidPalette.colours.count)
+    }
+
+    @Test("Every swatch is a colour the panel can draw")
+    func everySwatchParses() {
+        for hex in SolidPalette.colours {
+            #expect(NSColor(hexString: hex) != nil, "\(hex)")
+        }
+    }
+
+    @Test("No two swatches read as the same colour")
+    func theyAreTellableApart() {
+        // Measured the way an eye sees it, not the way a hex reads: two
+        // colours a few degrees of hue apart can still be plainly different
+        // (a pale sky beside a deep blue), and two with the same hue can be
+        // the pair a user has to look at twice. CIE Lab distance answers the
+        // question that matters -- 20 is comfortably past "which one was it?".
+        func lab(_ hex: String) -> (CGFloat, CGFloat, CGFloat) {
+            let colour = NSColor(hexString: hex)!.usingColorSpace(.sRGB)!
+            func linear(_ c: CGFloat) -> CGFloat {
+                c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+            }
+            let r = linear(colour.redComponent)
+            let g = linear(colour.greenComponent)
+            let b = linear(colour.blueComponent)
+            let x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047
+            let y = r * 0.2126 + g * 0.7152 + b * 0.0722
+            let z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883
+            func f(_ t: CGFloat) -> CGFloat {
+                t > 0.008856 ? pow(t, 1.0 / 3) : 7.787 * t + 16.0 / 116
+            }
+            return (116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z)))
+        }
+
+        let values = SolidPalette.colours.map(lab)
+        for (i, a) in values.enumerated() {
+            for b in values[(i + 1)...] {
+                let distance = sqrt(
+                    pow(a.0 - b.0, 2) + pow(a.1 - b.1, 2) + pow(a.2 - b.2, 2)
+                )
+                #expect(distance > 20)
+            }
+        }
+    }
+}

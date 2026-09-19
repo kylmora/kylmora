@@ -1884,6 +1884,7 @@ final class BrowserSession {
         SessionSnapshot(
             spaces: spaces.map { space in
                 SessionSnapshot.Space(
+                    id: space.id,
                     name: space.name,
                     // A private space keeps its name and its colour, and
                     // nothing it browsed: "not written to disk" includes the
@@ -1959,6 +1960,7 @@ final class BrowserSession {
             let identity = stored.identity ?? migratedIdentity(for: stored)
             let legacyTheme = legacyProfiles.first { $0.id == stored.profileID }?.theme
             let space = Space(
+                id: stored.id ?? UUID(),
                 name: stored.name,
                 identity: identity,
                 theme: SpaceTheme(storedValue: stored.theme ?? legacyTheme),

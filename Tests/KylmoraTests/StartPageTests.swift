@@ -91,3 +91,49 @@ struct StartPageTests {
         #expect(tab.displayTitle == "New Tab")
     }
 }
+
+// The start page sat at the *bottom* of the window. An `NSScrollView` lays its
+// document out from the bottom-left, so a page with less content than the
+// window is tall hung off the bottom edge -- and a new space, whose page is a
+// heading and one line, read as a blank tab with nothing in it at all.
+
+@Suite("The start page fills from the top")
+@MainActor
+struct StartPageLayoutTests {
+    private func laidOut(_ model: StartPageModel, height: CGFloat = 800) -> StartPageView {
+        let view = StartPageView()
+        view.frame = NSRect(x: 0, y: 0, width: 1000, height: height)
+        view.configure(with: model)
+        view.layoutSubtreeIfNeeded()
+        return view
+    }
+
+    @Test("Its document is flipped, so the first thing on it is at the top")
+    func theDocumentIsFlipped() {
+        #expect(laidOut(StartPageModel()).fillsFromTheTop)
+    }
+
+    @Test("An almost empty page still starts at the top of the window")
+    func aShortPageStaysUp() {
+        // The failure this covers: content 300 points tall in an 800-point
+        // window, sitting 500 points down.
+        let view = laidOut(StartPageModel(spaceName: "Work"))
+        #expect(view.contentFrame.minY < 100, "content began \(view.contentFrame.minY) points down")
+    }
+
+    @Test("A full page starts at the top too")
+    func aLongPageStartsAtTheTop() {
+        var model = StartPageModel(spaceName: "Work")
+        model.topSites = (0..<8).map {
+            StartPageModel.Link(url: URL(string: "https://example\($0).com/")!, title: "Example \($0)")
+        }
+        let view = laidOut(model)
+        #expect(view.contentFrame.minY < 100)
+    }
+
+    @Test("Even with nothing to show, the page says something")
+    func anEmptyPageIsNotBlank() {
+        let view = laidOut(StartPageModel(spaceName: "Work"))
+        #expect(view.contentFrame.height > 0)
+    }
+}

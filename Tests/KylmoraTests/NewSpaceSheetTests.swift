@@ -277,3 +277,148 @@ struct NewSpaceFillTests {
         #expect(colour.hexString == NSColor.systemTeal.hexString)
     }
 }
+
+// How tall the sheet is allowed to be. On a Mac set to larger text the same
+// sections come out taller, and the sheet ran off the bottom of the screen
+// with Cancel and Create below the edge.
+
+@Suite("How tall a sheet may be")
+struct SheetFitTests {
+    @Test("Content that fits is left alone")
+    func shortContentIsUntouched() {
+        #expect(SheetFit.height(content: 500, screen: 1000) == 500)
+    }
+
+    @Test("Content taller than the cap is cut to it")
+    func tallContentIsCapped() {
+        #expect(SheetFit.height(content: 900, screen: 1000, fraction: 0.6, minimum: 0) == 600)
+    }
+
+    @Test("A short screen still gets a readable sheet")
+    func theCapHasAFloor() {
+        // The floor keeps a short screen's sheet readable rather than letting
+        // a smaller fraction shrink it to a sliver.
+        #expect(SheetFit.height(content: 900, screen: 600, fraction: 0.3, minimum: 360) == 360)
+    }
+
+    @Test("The floor never exceeds the screen")
+    func theFloorFitsTheScreen() {
+        #expect(SheetFit.height(content: 900, screen: 300, fraction: 0.6, minimum: 360) == 300)
+    }
+
+    @Test("With no screen to measure, the content decides")
+    func noScreenMeansNoCap() {
+        #expect(SheetFit.height(content: 900, screen: 0) == 900)
+    }
+
+    @Test("A sheet never outgrows the window it hangs from")
+    func theWindowCapsItToo() {
+        // Plenty of screen, small window: the sheet belongs to the window.
+        #expect(
+            SheetFit.height(content: 900, screen: 2000, window: 600, minimum: 0)
+                == 600 - SheetFit.windowMargin
+        )
+    }
+
+    @Test("Whichever is smaller wins, screen or window")
+    func theTighterCapWins() {
+        #expect(SheetFit.height(content: 2000, screen: 1000, window: 4000, fraction: 0.85, minimum: 0) == 850)
+        #expect(SheetFit.height(content: 2000, screen: 4000, window: 1000, fraction: 0.85, minimum: 0) == 976)
+    }
+
+    @Test("A tiny window still gets a readable sheet")
+    func theWindowCapHasAFloorToo() {
+        #expect(SheetFit.height(content: 900, screen: 2000, window: 300, minimum: 360) == 300)
+        #expect(SheetFit.height(content: 900, screen: 2000, window: 500, minimum: 360) == 476)
+    }
+
+    @Test("Content past the sheet's height is content that scrolls")
+    func overflowIsReported() {
+        #expect(SheetFit.overflows(content: 900, height: 600))
+        #expect(!SheetFit.overflows(content: 600, height: 600))
+    }
+}
+
+// The sheet draws its own scroll indicator. The system's is an overlay: fat,
+// grey, on top of the controls, and gone the moment the wheel stops.
+
+@Suite("The scroll indicator")
+struct ScrollIndicatorTests {
+    @Test("Nothing to scroll, nothing to show")
+    func contentThatFitsHasNoThumb() {
+        let thumb = ScrollIndicatorMetrics.thumb(content: 400, visible: 400, offset: 0, track: 400)
+        #expect(thumb.isHidden)
+    }
+
+    @Test("The thumb is as long a share of the track as the sheet is of the content")
+    func lengthFollowsTheShareShown() {
+        let thumb = ScrollIndicatorMetrics.thumb(content: 800, visible: 400, offset: 0, track: 400)
+        #expect(!thumb.isHidden)
+        #expect(thumb.length == 200)
+        #expect(thumb.offset == 0)
+    }
+
+    @Test("At the bottom it sits at the bottom")
+    func theEndIsTheEnd() {
+        let thumb = ScrollIndicatorMetrics.thumb(content: 800, visible: 400, offset: 400, track: 400)
+        #expect(thumb.offset + thumb.length == 400)
+    }
+
+    @Test("Half way down the content is half way down the track")
+    func themiddleIsTheMiddle() {
+        let thumb = ScrollIndicatorMetrics.thumb(content: 800, visible: 400, offset: 200, track: 400)
+        #expect(thumb.offset == 100)
+    }
+
+    @Test("A very long sheet still gets a thumb you can see")
+    func theThumbHasAFloor() {
+        let thumb = ScrollIndicatorMetrics.thumb(content: 20_000, visible: 400, offset: 0, track: 400)
+        #expect(thumb.length == ScrollIndicatorMetrics.minimumThumb)
+    }
+
+    @Test("An overscrolled or unlaid-out view answers without going off the track")
+    func rubberBandingStaysOnTheTrack() {
+        let bounced = ScrollIndicatorMetrics.thumb(content: 800, visible: 400, offset: -60, track: 400)
+        #expect(bounced.offset == 0)
+        let past = ScrollIndicatorMetrics.thumb(content: 800, visible: 400, offset: 999, track: 400)
+        #expect(past.offset + past.length == 400)
+        #expect(ScrollIndicatorMetrics.thumb(content: 800, visible: 0, offset: 0, track: 0).isHidden)
+    }
+
+    @Test("It is three points wide and keeps its own lane")
+    @MainActor
+    func itIsAHairline() {
+        #expect(SlimScrollIndicator.width == 3)
+        #expect(SlimScrollIndicator.lane > SlimScrollIndicator.width)
+    }
+}
+
+@Suite("The sheet's sections scroll")
+@MainActor
+struct NewSpaceSheetScrollTests {
+    @Test("The sections sit in a scroll view, the buttons outside it")
+    func sectionsScrollAndButtonsDoNot() {
+        let sheet = NewSpaceSheet(suggestedColor: .systemTeal) { _ in }
+        sheet.loadView()
+        let scrolls = sheet.view.subviews.compactMap { $0 as? NSScrollView }
+        #expect(scrolls.count == 1)
+        let document = scrolls.first?.documentView
+        #expect(document != nil)
+
+        func contains(_ view: NSView, title: String) -> Bool {
+            if let button = view as? NSControl, button.stringValue == title { return true }
+            return view.subviews.contains { contains($0, title: title) }
+        }
+        // Create lives in the sheet but not in what scrolls.
+        #expect(!(document.map { contains($0, title: "Create") } ?? true))
+    }
+
+    @Test("A sheet never asks for more than its share of the screen")
+    func theSheetIsCapped() {
+        guard let screen = NSScreen.main?.visibleFrame.height, screen > 0 else { return }
+        let sheet = NewSpaceSheet(suggestedColor: .systemTeal) { _ in }
+        sheet.loadView()
+        sheet.chooseAppearanceForTesting(.customized)
+        #expect(sheet.preferredContentSize.height <= SheetFit.height(content: .greatestFiniteMagnitude, screen: screen) + 0.5)
+    }
+}

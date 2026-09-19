@@ -260,8 +260,9 @@ final class GeneralSettingsViewController: NSViewController {
     }
 
     @objc private func sidebarWidthScopeChanged() {
-        settings.sidebarWidthIsPerSpace =
-            sidebarWidthScopePopUp.indexOfSelectedItem == SidebarWidthScope.perSpace.rawValue
+        let index = sidebarWidthScopePopUp.indexOfSelectedItem
+        guard SidebarWidthScope.allCases.indices.contains(index) else { return }
+        settings.sidebarWidthIsPerSpace = index == SidebarWidthScope.perSpace.rawValue
     }
 
     @objc private func externalChanged() {
@@ -278,6 +279,11 @@ final class GeneralSettingsViewController: NSViewController {
     }
 
     @objc private func opensWithChanged() {
+        // Nothing chosen is not a choice. Every other action on this pane
+        // guards its index; these two read a Bool off it, and an empty
+        // selection used to read as "no" -- quietly turning session restore
+        // off, or the sidebar width back to shared.
+        guard opensWithPopUp.indexOfSelectedItem >= 0 else { return }
         settings.restoresSession = opensWithPopUp.indexOfSelectedItem == 0
     }
 
