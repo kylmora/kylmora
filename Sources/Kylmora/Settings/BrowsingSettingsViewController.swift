@@ -2,7 +2,7 @@ import AppKit
 
 /// The Browsing pane: the small switches that shape everyday use.
 @MainActor
-final class BrowsingSettingsViewController: NSViewController {
+final class BrowsingSettingsViewController: NSViewController, NSTextFieldDelegate {
     private let densityPopUp = NSPopUpButton()
     private let tabStripCheckbox = NSButton(checkboxWithTitle: "Show a tab bar above the page", target: nil, action: nil)
     /// The toolbar-button list.
@@ -17,6 +17,28 @@ final class BrowsingSettingsViewController: NSViewController {
     private let toolbarList = ReorderableStackView()
     private let settings: Settings
     private let session: BrowserSession?
+    /// What each switch on the pane writes, keyed by the switch.
+    ///
+    /// One action used to write every setting on the pane from every control
+    /// on it, which made a click on any switch a click on all of them: toggle
+    /// mouse gestures from the command bar with this pane open, flip an
+    /// unrelated switch, and the pane put mouse gestures back the way its own
+    /// stale checkbox remembered them. It also wrote a hover delay of 250 ms
+    /// over the 200 ms default nobody had asked to change, because the
+    /// pop-up can only say one of four presets. A switch now writes its own
+    /// setting and nothing else.
+    private var switchWriters: [ObjectIdentifier: (Bool) -> Void] = [:]
+    /// Asks before Web Panels are reset. Replaced by tests, which must not
+    /// open a modal sheet.
+    var confirmsWebPanelReset: () -> Bool = {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Reset Web Panels?"
+        alert.informativeText = "The panels you have added are removed and the ones Kylmora ships with come back. This cannot be undone."
+        alert.addButton(withTitle: "Reset")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
     private let https = NSButton(checkboxWithTitle: "Automatic HTTPS upgrade", target: nil, action: nil)
     private let fullAddress = NSButton(checkboxWithTitle: "Show full website address", target: nil, action: nil)
     private let unicodeDomains = NSButton(checkboxWithTitle: "Show Unicode Domains", target: nil, action: nil)
@@ -62,14 +84,36 @@ final class BrowsingSettingsViewController: NSViewController {
         reload()
     }
 
+    /// Settings this pane shows can be changed from outside it -- mouse
+    /// gestures and Vim bindings have commands of their own, the sidebar has
+    /// its own controls -- so the pane reads them again every time it is
+    /// shown rather than trusting what its controls were told when it was
+    /// built.
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        reload()
+    }
+
     private func buildLayout(in form: SettingsForm) {
-        for box in [https, fullAddress, unicodeDomains, bookmarksInNewTabs, favourites, wraps,
-                    compactButtons, autoPictureInPicture, pictureInPicture, minimumFont, tabFocus, escape,
-                    mouseGestures, rockerGestures, gestureTrails, linkHints, vimBindings,
-                    webPanelEnabled, webPanelAlwaysOnTop] {
-            box.target = self
-            box.action = #selector(changed)
-        }
+        wire(https) { [weak self] in self?.settings.upgradesToHTTPS = $0 }
+        wire(fullAddress) { [weak self] in self?.settings.showsFullAddress = $0 }
+        wire(unicodeDomains) { [weak self] in self?.settings.showsUnicodeDomains = $0 }
+        wire(bookmarksInNewTabs) { [weak self] in self?.settings.opensBookmarksInNewTabs = $0 }
+        wire(favourites) { [weak self] in self?.settings.favouriteShortcutsEnabled = $0 }
+        wire(wraps) { [weak self] in self?.settings.spaceSwitchWraps = $0 }
+        wire(compactButtons) { [weak self] in self?.settings.compactModeShowsWindowButtons = $0 }
+        wire(autoPictureInPicture) { [weak self] in self?.settings.autoPictureInPicture = $0 }
+        wire(pictureInPicture) { [weak self] in self?.settings.confirmsClosingPictureInPicture = $0 }
+        wire(minimumFont) { [weak self] in self?.settings.minimumFontSizeEnabled = $0 }
+        wire(tabFocus) { [weak self] in self?.settings.tabFocusesLinks = $0 }
+        wire(escape) { [weak self] in self?.settings.preventsEscapeExitingFullScreen = $0 }
+        wire(mouseGestures) { [weak self] in self?.settings.mouseGesturesEnabled = $0 }
+        wire(rockerGestures) { [weak self] in self?.settings.rockerGesturesEnabled = $0 }
+        wire(gestureTrails) { [weak self] in self?.settings.gestureTrailsEnabled = $0 }
+        wire(linkHints) { [weak self] in self?.settings.linkHintsEnabled = $0 }
+        wire(vimBindings) { [weak self] in self?.settings.vimBindingsEnabled = $0 }
+        wire(webPanelEnabled) { [weak self] in self?.settings.webPanelEnabled = $0 }
+        wire(webPanelAlwaysOnTop) { [weak self] in self?.settings.webPanelAlwaysOnTop = $0 }
         // Each group under a heading of its own, one switch to a row. The
         // switches used to be handed over three at a time in a stack, which
         // drew them down the left of the card with the text trailing off
@@ -83,7 +127,7 @@ final class BrowsingSettingsViewController: NSViewController {
 
         externalLinks.addItems(withTitles: ExternalLinkPresentation.allCases.map(\.title))
         externalLinks.target = self
-        externalLinks.action = #selector(changed)
+        externalLinks.action = #selector(externalLinksChanged)
 
         form.addSection("Tabs and navigation")
         form.addRow("", bookmarksInNewTabs)
@@ -94,13 +138,13 @@ final class BrowsingSettingsViewController: NSViewController {
 
         sidebarModePopUp.addItems(withTitles: SidebarMode.allCases.map(\.title))
         sidebarModePopUp.target = self
-        sidebarModePopUp.action = #selector(changed)
+        sidebarModePopUp.action = #selector(sidebarModeChanged)
         sidebarPositionPopUp.addItems(withTitles: SidebarPosition.allCases.map(\.title))
         sidebarPositionPopUp.target = self
-        sidebarPositionPopUp.action = #selector(changed)
+        sidebarPositionPopUp.action = #selector(sidebarPositionChanged)
         sidebarHoverDelayPopUp.addItems(withTitles: SidebarHoverDelayPreset.allCases.map(\.title))
         sidebarHoverDelayPopUp.target = self
-        sidebarHoverDelayPopUp.action = #selector(changed)
+        sidebarHoverDelayPopUp.action = #selector(sidebarHoverDelayChanged)
 
         form.addSection("Sidebar and window")
         densityPopUp.addItems(withTitles: SidebarDensity.allCases.map(\.title))
@@ -140,6 +184,18 @@ final class BrowsingSettingsViewController: NSViewController {
         fontSize.alignment = .right
         fontSize.target = self
         fontSize.action = #selector(fontSizeTyped)
+        // A plain field takes any text at all, and until Return is pressed it
+        // keeps showing it: type a word into it, click something else, and the
+        // pane sits there saying the minimum font size is "mouse" while the
+        // browser is using nine. A whole-number formatter turns anything that
+        // is not a number away, and the delegate below commits the number when
+        // the field is left, so what is on screen is always what is stored.
+        let wholeNumbers = NumberFormatter()
+        wholeNumbers.numberStyle = .none
+        wholeNumbers.allowsFloats = false
+        wholeNumbers.usesGroupingSeparator = false
+        fontSize.formatter = wholeNumbers
+        fontSize.delegate = self
         fontStepper.minValue = 1
         fontStepper.maxValue = 72
         fontStepper.increment = 1
@@ -203,20 +259,16 @@ final class BrowsingSettingsViewController: NSViewController {
         minimumFont.state = settings.minimumFontSizeEnabled ? .on : .off
         fontSize.integerValue = settings.minimumFontSize
         fontStepper.integerValue = settings.minimumFontSize
-        fontSize.isEnabled = settings.minimumFontSizeEnabled
-        fontStepper.isEnabled = settings.minimumFontSizeEnabled
         tabFocus.state = settings.tabFocusesLinks ? .on : .off
         escape.state = settings.preventsEscapeExitingFullScreen ? .on : .off
         mouseGestures.state = settings.mouseGesturesEnabled ? .on : .off
         rockerGestures.state = settings.rockerGesturesEnabled ? .on : .off
         gestureTrails.state = settings.gestureTrailsEnabled ? .on : .off
-        rockerGestures.isEnabled = settings.mouseGesturesEnabled
-        gestureTrails.isEnabled = settings.mouseGesturesEnabled
         linkHints.state = settings.linkHintsEnabled ? .on : .off
         vimBindings.state = settings.vimBindingsEnabled ? .on : .off
         webPanelEnabled.state = settings.webPanelEnabled ? .on : .off
         webPanelAlwaysOnTop.state = settings.webPanelAlwaysOnTop ? .on : .off
-        webPanelAlwaysOnTop.isEnabled = settings.webPanelEnabled
+        syncDependentControls()
     }
 
     /// The column a symbol is centred in. Fixed, because the symbols are not
@@ -339,56 +391,66 @@ final class BrowsingSettingsViewController: NSViewController {
     }
 
     @objc private func densityChanged() {
-        settings.sidebarDensity = SidebarDensity.allCases[densityPopUp.indexOfSelectedItem]
+        let index = densityPopUp.indexOfSelectedItem
+        // A pop-up with nothing chosen answers -1, and this used to subscript
+        // the cases with it.
+        guard SidebarDensity.allCases.indices.contains(index) else { return }
+        settings.sidebarDensity = SidebarDensity.allCases[index]
     }
 
-    @objc private func changed() {
-        settings.upgradesToHTTPS = https.state == .on
-        settings.showsFullAddress = fullAddress.state == .on
-        settings.showsUnicodeDomains = unicodeDomains.state == .on
-        settings.opensBookmarksInNewTabs = bookmarksInNewTabs.state == .on
-        settings.favouriteShortcutsEnabled = favourites.state == .on
-        settings.spaceSwitchWraps = wraps.state == .on
+    @objc private func externalLinksChanged() {
         let presentations = ExternalLinkPresentation.allCases
         guard presentations.indices.contains(externalLinks.indexOfSelectedItem) else { return }
         settings.externalLinkPresentation = presentations[externalLinks.indexOfSelectedItem]
+    }
 
+    @objc private func sidebarModeChanged() {
         let modes = SidebarMode.allCases
-        if modes.indices.contains(sidebarModePopUp.indexOfSelectedItem) {
-            settings.sidebarMode = modes[sidebarModePopUp.indexOfSelectedItem]
-        }
-        let positions = SidebarPosition.allCases
-        if positions.indices.contains(sidebarPositionPopUp.indexOfSelectedItem) {
-            settings.sidebarPosition = positions[sidebarPositionPopUp.indexOfSelectedItem]
-        }
-        let delays = SidebarHoverDelayPreset.allCases
-        if delays.indices.contains(sidebarHoverDelayPopUp.indexOfSelectedItem) {
-            settings.sidebarHoverDelay = delays[sidebarHoverDelayPopUp.indexOfSelectedItem].rawValue
-        }
+        guard modes.indices.contains(sidebarModePopUp.indexOfSelectedItem) else { return }
+        settings.sidebarMode = modes[sidebarModePopUp.indexOfSelectedItem]
+    }
 
-        settings.compactModeShowsWindowButtons = compactButtons.state == .on
-        settings.autoPictureInPicture = autoPictureInPicture.state == .on
-        settings.confirmsClosingPictureInPicture = pictureInPicture.state == .on
-        settings.minimumFontSizeEnabled = minimumFont.state == .on
-        settings.tabFocusesLinks = tabFocus.state == .on
-        settings.preventsEscapeExitingFullScreen = escape.state == .on
-        settings.mouseGesturesEnabled = mouseGestures.state == .on
-        settings.rockerGesturesEnabled = rockerGestures.state == .on
-        settings.gestureTrailsEnabled = gestureTrails.state == .on
-        settings.linkHintsEnabled = linkHints.state == .on
-        settings.vimBindingsEnabled = vimBindings.state == .on
-        settings.webPanelEnabled = webPanelEnabled.state == .on
-        settings.webPanelAlwaysOnTop = webPanelAlwaysOnTop.state == .on
-        webPanelAlwaysOnTop.isEnabled = settings.webPanelEnabled
-        rockerGestures.isEnabled = settings.mouseGesturesEnabled
-        gestureTrails.isEnabled = settings.mouseGesturesEnabled
-        fontSize.isEnabled = settings.minimumFontSizeEnabled
-        fontStepper.isEnabled = settings.minimumFontSizeEnabled
+    @objc private func sidebarPositionChanged() {
+        let positions = SidebarPosition.allCases
+        guard positions.indices.contains(sidebarPositionPopUp.indexOfSelectedItem) else { return }
+        settings.sidebarPosition = positions[sidebarPositionPopUp.indexOfSelectedItem]
+    }
+
+    @objc private func sidebarHoverDelayChanged() {
+        let delays = SidebarHoverDelayPreset.allCases
+        guard delays.indices.contains(sidebarHoverDelayPopUp.indexOfSelectedItem) else { return }
+        settings.sidebarHoverDelay = delays[sidebarHoverDelayPopUp.indexOfSelectedItem].rawValue
+    }
+
+    /// Hands a switch the setting it writes, and nothing else.
+    private func wire(_ box: NSButton, _ write: @escaping (Bool) -> Void) {
+        box.target = self
+        box.action = #selector(switchFlipped(_:))
+        switchWriters[ObjectIdentifier(box)] = write
+    }
+
+    @objc private func switchFlipped(_ sender: NSButton) {
+        guard let write = switchWriters[ObjectIdentifier(sender)] else { return }
+        write(sender.state == .on)
+        syncDependentControls()
         session?.applyWebPreferences()
         session?.changes.send(.activeTab)
     }
 
+    /// The controls that only mean anything while another switch is on.
+    private func syncDependentControls() {
+        rockerGestures.isEnabled = settings.mouseGesturesEnabled
+        gestureTrails.isEnabled = settings.mouseGesturesEnabled
+        webPanelAlwaysOnTop.isEnabled = settings.webPanelEnabled
+        resetWebPanelsButton.isEnabled = settings.webPanelEnabled
+        fontSize.isEnabled = settings.minimumFontSizeEnabled
+        fontStepper.isEnabled = settings.minimumFontSizeEnabled
+    }
+
+    /// One click used to throw away every panel the user had added, with no
+    /// warning and nothing to undo it with.
     @objc private func resetWebPanelsClicked() {
+        guard confirmsWebPanelReset() else { return }
         WebPanelStore.shared.resetToDefaults()
     }
 
@@ -402,7 +464,23 @@ final class BrowsingSettingsViewController: NSViewController {
     @objc private func fontStepped() {
         settings.minimumFontSize = fontStepper.integerValue
         fontSize.integerValue = settings.minimumFontSize
+        fontStepper.integerValue = settings.minimumFontSize
         session?.applyWebPreferences()
+    }
+
+    /// Leaving the field is as much a commit as pressing Return: whatever is
+    /// in it is stored, clamped, and shown back clamped.
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard notification.object as AnyObject? === fontSize else { return }
+        fontSizeTyped()
+    }
+
+    /// Something that is not a whole number. The setting is put back, so the
+    /// field never keeps saying what the browser is not doing.
+    func control(_ control: NSControl, didFailToFormatString string: String, errorDescription error: String?) -> Bool {
+        guard control === fontSize else { return true }
+        fontSize.integerValue = settings.minimumFontSize
+        return true
     }
 
     @objc private func openContextMenuSettings() {
