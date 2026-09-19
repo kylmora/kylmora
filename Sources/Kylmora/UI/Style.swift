@@ -178,6 +178,13 @@ enum Style {
         /// A 17-point glyph with 6 points of padding on each side.
         static let iconButtonSide: CGFloat = 29
         static let iconButtonSpacing: CGFloat = 4
+        /// The count pill on an icon button. Tall enough for a nine-point
+        /// digit with a point of air above and below, and never narrower than
+        /// it is tall, so a single digit comes out as a circle rather than as
+        /// a squeezed oval.
+        static let countBadgeHeight: CGFloat = 13
+        /// Either side of the digits, inside the pill.
+        static let countBadgePadding: CGFloat = 3
         /// Gap between the last navigation button and the breadcrumb.
         static let breadcrumbLeadingGap: CGFloat = 24
         /// How wide the address field is allowed to get.
@@ -261,6 +268,11 @@ enum Style {
         /// a badge that is both smaller and greyer reads as damage rather than
         /// as a second line of information, and it is already grey.
         static var badge: NSFont { .systemFont(ofSize: 10, weight: .medium) }
+
+        /// The count on a footer button. A point smaller than the row badge
+        /// and a weight heavier: it is drawn reversed out of a small pill,
+        /// where a regular weight closes up and stops being a number.
+        static var countBadge: NSFont { .systemFont(ofSize: 9, weight: .semibold) }
     }
 
     // MARK: - Colours
@@ -420,6 +432,17 @@ enum Style {
         /// for the others: a dot the user cannot see is not an indicator.
         static var pageDotActive: NSColor { .labelColor }
         static var pageDotInactive: NSColor { ink(light: 0.22, dark: 0.26) }
+
+        /// The count pill on the footer's Archive button, and its digits.
+        ///
+        /// Ink rather than the system accent: the footer is a monochrome strip
+        /// sitting on whatever tint the space carries, and an accent-coloured
+        /// dot down there reads as an alert -- something is wrong, go and look
+        /// -- when all the badge is saying is how many tabs are in a drawer.
+        /// Dark-on-light in the light coat and light-on-dark in the dark one,
+        /// so the digits stay legible in both.
+        static var countBadgeFill: NSColor { ink(light: 0.55, dark: 0.70) }
+        static var countBadgeText: NSColor { dynamic(light: .white, dark: .black) }
     }
 
     // MARK: - Motion

@@ -323,10 +323,39 @@ struct ArchiveTests {
         #expect(session.activeSpace.tabs.contains { $0 === tab })
     }
 
-    @Test("Clearing empties the archive of every space at once")
+    @Test("Each Space has its own archive, and sees only its own")
+    func archivesAreFiledBySpace() {
+        let session = TestSession.make().0
+        let first = session.activeSpace
+        session.archive([session.newTab(url: url)])
+
+        let other = session.addSpace(named: "Other")
+        session.selectSpace(other)
+        let otherURL = URL(string: "https://other.example/page")!
+        session.archive([session.newTab(url: otherURL)])
+
+        #expect(session.archivedTabs(in: first).count == 1)
+        #expect(session.archivedTabs(in: first)[0].snapshot.url == url)
+        #expect(session.archivedTabs(in: other).count == 1)
+        #expect(session.archivedTabs(in: other)[0].snapshot.url == otherURL)
+    }
+
+    @Test("Clearing one Space's archive leaves every other Space's alone")
+    func clearingIsPerSpace() {
+        let session = TestSession.make().0
+        let first = session.activeSpace
+        session.archive([session.newTab(url: url)])
+        let other = session.addSpace(named: "Other")
+        session.selectSpace(other)
+        session.archive([session.newTab(url: URL(string: "https://other.example/page")!)])
+
+        session.clearArchive(in: other)
+        #expect(session.archivedTabs(in: other).isEmpty)
+        #expect(session.archivedTabs(in: first).count == 1, "The other Space's drawer was not touched")
+    }
+
+    @Test("Clearing everything empties every Space's archive at once")
     func clearingTheWholeArchive() {
-        // The sidebar's list has no space filter to narrow it, so the one Clear
-        // button cannot either.
         let session = TestSession.make().0
         session.archive([session.newTab(url: url)])
         let other = session.addSpace(named: "Other")
@@ -336,6 +365,42 @@ struct ArchiveTests {
 
         session.clearArchive()
         #expect(session.archivedTabs.isEmpty)
+    }
+
+    @Test("A deleted Space takes its archive with it")
+    func removingASpaceDropsItsArchive() {
+        // Otherwise the records sit there forever: no list can show them, since
+        // every list is one space's, and nothing can restore them.
+        let session = TestSession.make().0
+        let first = session.activeSpace
+        session.archive([session.newTab(url: url)])
+        let other = session.addSpace(named: "Other")
+        session.selectSpace(other)
+        session.archive([session.newTab(url: URL(string: "https://other.example/page")!)])
+
+        session.removeSpace(other)
+        #expect(session.archivedTabs.count == 1)
+        #expect(session.archivedTabs(in: first).count == 1)
+    }
+
+    @Test("The archive of each Space comes back to that Space after a relaunch")
+    func perSpaceArchivesRoundTrip() {
+        let (session, store) = TestSession.make()
+        session.archive([session.newTab(url: url)])
+        let other = session.addSpace(named: "Other")
+        session.selectSpace(other)
+        let otherURL = URL(string: "https://other.example/page")!
+        session.archive([session.newTab(url: otherURL)])
+        try? store.save(session.snapshot())
+
+        let settings = Settings(defaults: UserDefaults(suiteName: "kylmora.tests.\(UUID().uuidString)")!)
+        let reopened = BrowserSession(database: nil, sessionStore: store, settings: settings)
+        #expect(reopened.spaces.count == 2)
+        // Matched by name rather than by id: the ids are rebuilt on the way in.
+        let reopenedOther = reopened.spaces.first { $0.name == "Other" }
+        #expect(reopenedOther.map { reopened.archivedTabs(in: $0).map(\.snapshot.url) } == [otherURL])
+        let reopenedFirst = reopened.spaces.first { $0.name != "Other" }
+        #expect(reopenedFirst.map { reopened.archivedTabs(in: $0).map(\.snapshot.url) } == [url])
     }
 
     @Test("The archive survives a relaunch")
