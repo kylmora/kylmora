@@ -206,6 +206,14 @@ locking settings across a fleet with a configuration profile or a
   format Chrome and Firefox extensions use: paste a Chrome Web Store or
   addons.mozilla.org link in Settings, or install a `.zip`, `.crx`, `.xpi` or
   an unpacked folder (macOS 15.4 and later). Enable them per Space.
+- **Native messaging:** an extension can talk to an app installed on the Mac,
+  which is what a password manager's extension is for -- the vault lives in
+  the app and the extension is a front end. Kylmora reads the host manifests
+  apps install for Chrome and Firefox as well as its own, because almost no
+  app ships one for Kylmora, and the app's own manifest still decides which
+  extensions may reach it. Settings ▸ Extensions lists what is installed,
+  says why a manifest was refused, and can switch any of it off. See
+  [docs/native-messaging.md](docs/native-messaging.md).
 - Sync through iCloud, Google Drive, Dropbox, OneDrive, Nextcloud or WebDAV,
   or any folder: open tabs, bookmarks, website settings and rules, and
   optionally the last 2,000 visits of history. With a passphrase the archive
@@ -218,10 +226,11 @@ locking settings across a fleet with a configuration profile or a
 
 ### For organisations
 
-- Seventeen policies delivered by MDM configuration profile or a
+- Nineteen policies delivered by MDM configuration profile or a
   `policies.json`: homepage, new tab, search engine, URL block and allow
   lists, extensions, developer tools, private browsing, the password manager,
-  content blocking, updates, a DNS resolver, a RAM-only cache. Kylmora ▸
+  content blocking, native messaging, updates, a DNS resolver, a RAM-only
+  cache. Kylmora ▸
   Enterprise Policies… shows what is in force. See
   [docs/enterprise-policies.md](docs/enterprise-policies.md).
 

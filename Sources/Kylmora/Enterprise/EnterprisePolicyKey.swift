@@ -21,6 +21,10 @@ public enum EnterprisePolicyKey: String, CaseIterable, Sendable {
     case extensionInstallBlocklist = "ExtensionInstallBlocklist"
     /// List of extension identifiers permitted for installation.
     case extensionInstallAllowlist = "ExtensionInstallAllowlist"
+    /// When true, prevents extensions from launching native messaging hosts.
+    case nativeMessagingDisabled = "NativeMessagingDisabled"
+    /// Host names extensions may launch; when set, every other host is refused.
+    case nativeMessagingHostAllowlist = "NativeMessagingHostAllowlist"
     /// When true, disables Web Inspector, Developer Tools, and JavaScript Console.
     case developerToolsDisabled = "DeveloperToolsDisabled"
     /// When true, disables creation and usage of Private Spaces and Private Tabs for auditing compliance.
@@ -50,6 +54,8 @@ public enum EnterprisePolicyKey: String, CaseIterable, Sendable {
         case .blockAllExtensions: return "Block All Extensions"
         case .extensionInstallBlocklist: return "Extension Install Blocklist"
         case .extensionInstallAllowlist: return "Extension Install Allowlist"
+        case .nativeMessagingDisabled: return "Native Messaging Disabled"
+        case .nativeMessagingHostAllowlist: return "Native Messaging Host Allowlist"
         case .developerToolsDisabled: return "Developer Tools Disabled"
         case .privateBrowsingDisabled: return "Private Browsing Disabled"
         case .passwordManagerDisabled: return "Password Manager Disabled"
@@ -73,6 +79,8 @@ public enum EnterprisePolicyKey: String, CaseIterable, Sendable {
         case .blockAllExtensions: return "Completely blocks installation and execution of browser extensions."
         case .extensionInstallBlocklist: return "Blocks specific extension identifiers from being installed."
         case .extensionInstallAllowlist: return "Allows only specified extension identifiers."
+        case .nativeMessagingDisabled: return "Stops extensions from starting programs installed on the Mac."
+        case .nativeMessagingHostAllowlist: return "Permits only these native messaging hosts, by manifest name."
         case .developerToolsDisabled: return "Disables Web Inspector, Inspect Element, and Developer Console."
         case .privateBrowsingDisabled: return "Disables Private Spaces and unlogged browsing for compliance."
         case .passwordManagerDisabled: return "Disables saving or autofilling credentials in the browser."

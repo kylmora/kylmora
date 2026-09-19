@@ -61,6 +61,13 @@
                 <string>hdokiejnpimakedhajhdlcegeplioahd</string>
             </array>
 
+            <key>NativeMessagingDisabled</key>
+            <false/>
+            <key>NativeMessagingHostAllowlist</key>
+            <array>
+            	<string>com.1password.1password</string>
+            	<string>com.apple.passwordmanager</string>
+            </array>
             <key>DeveloperToolsDisabled</key>
             <true/>
             <key>PrivateBrowsingDisabled</key>

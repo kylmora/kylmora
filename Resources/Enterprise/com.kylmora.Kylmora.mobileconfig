@@ -65,6 +65,13 @@
 			</array>
 
 			<!-- Security & Auditing Restrictions -->
+			<key>NativeMessagingDisabled</key>
+			<false/>
+			<key>NativeMessagingHostAllowlist</key>
+			<array>
+				<string>com.1password.1password</string>
+				<string>com.apple.passwordmanager</string>
+			</array>
 			<key>DeveloperToolsDisabled</key>
 			<false/>
 			<key>PrivateBrowsingDisabled</key>

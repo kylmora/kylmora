@@ -85,6 +85,9 @@ final class Settings {
         static let formatsJSON = "formatsJSON"
         static let allowsChromeExtensions = "allowsChromeExtensions"
         static let allowsFirefoxExtensions = "allowsFirefoxExtensions"
+        static let nativeMessagingEnabled = "nativeMessagingEnabled"
+        static let nativeMessagingUsesOtherBrowsers = "nativeMessagingUsesOtherBrowsersHosts"
+        static let nativeMessagingBlockedHosts = "nativeMessagingBlockedHosts"
         static let passwordProvider = "passwordProvider"
         static let passwordOfferAutofill = "passwordOfferAutofill"
         static let passwordOfferSave = "passwordOfferSave"
@@ -240,6 +243,9 @@ final class Settings {
             Key.formatsJSON: true,
             Key.allowsChromeExtensions: true,
             Key.allowsFirefoxExtensions: true,
+            Key.nativeMessagingEnabled: true,
+            Key.nativeMessagingUsesOtherBrowsers: true,
+            Key.nativeMessagingBlockedHosts: [String](),
             Key.passwordProvider: PasswordProvider.keychain.rawValue,
             Key.passwordOfferAutofill: true,
             Key.passwordOfferSave: true,
@@ -588,6 +594,33 @@ final class Settings {
     var allowsChromeExtensions: Bool {
         get { defaults.bool(forKey: Key.allowsChromeExtensions) }
         set { defaults.set(newValue, forKey: Key.allowsChromeExtensions) }
+    }
+
+    /// Whether extensions may talk to programs installed on the Mac.
+    ///
+    /// On, because the extensions people miss most -- password managers --
+    /// are useless without it. Off stops every host, running ones included.
+    var nativeMessagingEnabled: Bool {
+        get { defaults.bool(forKey: Key.nativeMessagingEnabled) }
+        set { defaults.set(newValue, forKey: Key.nativeMessagingEnabled) }
+    }
+
+    /// Whether the hosts other browsers have installed count.
+    ///
+    /// Vendors write a manifest for Chrome and one for Firefox; almost none
+    /// write one for Kylmora. Reading their folders is what makes 1Password
+    /// and Bitwarden work on the day they are installed. The manifest still
+    /// decides which extensions may reach the host, so this widens what
+    /// Kylmora can see and never who may use it.
+    var nativeMessagingUsesOtherBrowsers: Bool {
+        get { defaults.bool(forKey: Key.nativeMessagingUsesOtherBrowsers) }
+        set { defaults.set(newValue, forKey: Key.nativeMessagingUsesOtherBrowsers) }
+    }
+
+    /// Hosts the user has switched off by name.
+    var nativeMessagingBlockedHosts: [String] {
+        get { defaults.stringArray(forKey: Key.nativeMessagingBlockedHosts) ?? [] }
+        set { defaults.set(newValue, forKey: Key.nativeMessagingBlockedHosts) }
     }
 
     /// Which password manager fills and saves logins: the system Keychain, or

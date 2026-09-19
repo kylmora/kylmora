@@ -86,6 +86,8 @@ comma-separated string.
 | `BlockAllExtensions` | bool | No extensions can be installed or run; the Extensions pane is locked. | `true` |
 | `ExtensionInstallBlocklist` | [string] | Extension IDs that may not be installed. | `["abcdefghijklmnop"]` |
 | `ExtensionInstallAllowlist` | [string] | Only these extension IDs may be installed. | `["cjpalhdlnbpafiamejdnhcphjbkeiagm"]` |
+| `NativeMessagingDisabled` | bool | Extensions cannot start programs on the Mac, so password managers and other apps with a browser extension stop being reachable. | `true` |
+| `NativeMessagingHostAllowlist` | [string] | Only these native messaging hosts may be started, by the name in their manifest. Everything else is refused even when installed. | `["com.1password.1password", "com.apple.passwordmanager"]` |
 | `DeveloperToolsDisabled` | bool | Removes Web Inspector, the JavaScript console and Inspect Element; the Develop menu switch is locked off. | `true` |
 | `PrivateBrowsingDisabled` | bool | No private spaces or private tabs, so all browsing is logged. | `true` |
 | `PasswordManagerDisabled` | bool | No saving or autofilling of credentials (for fleets that mandate a separate password manager). | `true` |

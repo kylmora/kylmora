@@ -14,6 +14,9 @@
   "ExtensionInstallAllowlist": ["cjpalhdlnbpafiamejdnhcphjbkeiagm"],
   "ExtensionInstallBlocklist": ["hdokiejnpimakedhajhdlcegeplioahd"],
 
+  "NativeMessagingDisabled": false,
+  "NativeMessagingHostAllowlist": ["com.1password.1password", "com.apple.passwordmanager"],
+
   "DeveloperToolsDisabled": true,
   "PrivateBrowsingDisabled": true,
   "PasswordManagerDisabled": false,

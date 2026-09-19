@@ -225,6 +225,16 @@ public final class EnterprisePolicyManager {
         bool(for: .blockAllExtensions) == true
     }
 
+    public var isNativeMessagingDisabled: Bool {
+        bool(for: .nativeMessagingDisabled) == true
+    }
+
+    /// `nil` when the organisation has not restricted the list, which is not
+    /// the same as an empty list: an empty list would allow nothing.
+    public var nativeMessagingHostAllowlist: [String]? {
+        stringArray(for: .nativeMessagingHostAllowlist)
+    }
+
     public var extensionInstallBlocklist: [String] {
         stringArray(for: .extensionInstallBlocklist) ?? []
     }

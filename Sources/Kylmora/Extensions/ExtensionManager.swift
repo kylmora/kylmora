@@ -384,6 +384,79 @@ extension ExtensionManager: WKWebExtensionControllerDelegate {
         onChange?()
     }
 
+    /// `runtime.sendNativeMessage`: one message to a program on the Mac, one
+    /// reply back. The engine asks; every decision about whether that may
+    /// happen belongs to `NativeMessagingService`.
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        sendMessage message: Any,
+        toApplicationWithIdentifier applicationIdentifier: String?,
+        for context: WKWebExtensionContext,
+        replyHandler: @escaping (Any?, Error?) -> Void
+    ) {
+        guard let identity = nativeMessagingIdentity(for: context) else {
+            return replyHandler(nil, NativeMessagingService.error(NativeMessagingService.Denial.noSuchHost(applicationIdentifier ?? "")))
+        }
+        let permitted = context.hasPermission(.nativeMessaging)
+        Task { @MainActor in
+            do {
+                let reply = try await NativeMessagingService.shared.send(
+                    message,
+                    toHostNamed: applicationIdentifier,
+                    from: identity,
+                    hasPermission: permitted
+                )
+                replyHandler(reply, nil)
+            } catch {
+                replyHandler(nil, NativeMessagingService.error(error))
+            }
+        }
+    }
+
+    /// `runtime.connectNative`: the program stays running and both sides talk
+    /// until one hangs up.
+    func webExtensionController(
+        _ controller: WKWebExtensionController,
+        connectUsing port: WKWebExtension.MessagePort,
+        for context: WKWebExtensionContext,
+        completionHandler: @escaping (Error?) -> Void
+    ) {
+        guard let identity = nativeMessagingIdentity(for: context) else {
+            return completionHandler(NativeMessagingService.error(NativeMessagingService.Denial.noSuchHost(port.applicationIdentifier ?? "")))
+        }
+        let permitted = context.hasPermission(.nativeMessaging)
+        Task { @MainActor in
+            do {
+                try await NativeMessagingService.shared.connect(
+                    NativeMessagingPortAdapter(port),
+                    from: identity,
+                    hasPermission: permitted
+                )
+                completionHandler(nil)
+            } catch {
+                completionHandler(NativeMessagingService.error(error))
+            }
+        }
+    }
+
+    /// What a host's manifest would call this extension.
+    ///
+    /// The engine knows an extension by the identifier Kylmora gave it; a host
+    /// knows it by its Chrome Web Store ID or the identifier its own manifest
+    /// declares. Matching the two is this method's whole job, and it is done
+    /// from the record on disk so an extension cannot claim to be another.
+    func nativeMessagingIdentity(for context: WKWebExtensionContext) -> NativeMessagingExtensionIdentity? {
+        let identifier = context.uniqueIdentifier
+        guard let id = UUID(uuidString: identifier),
+              let record = records.first(where: { $0.id == id })
+        else { return nil }
+        return NativeMessagingIdentity.identity(
+            for: record,
+            folder: index.folder(for: record),
+            engineIdentifier: identifier
+        )
+    }
+
     func webExtensionController(
         _ controller: WKWebExtensionController,
         presentActionPopup action: WKWebExtension.Action,
