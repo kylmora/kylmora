@@ -32,18 +32,22 @@ final class GroupAppearanceEditor: NSViewController {
     private let fromChip = ColorChip(label: "Start colour")
     private let toChip = ColorChip(label: "End colour")
     private let solidPalette = SolidPalette()
+    private let colourPicker = ColourPickerView()
     private var presetTiles: [SwatchTile] = []
 
     private var presetsRow = NSView()
     private var solidRow = NSView()
     private var colourRow = NSView()
+    private var pickerRow = NSView()
     private var directionRow = NSView()
     private var colourChips: ColourChips!
     private var contentStack: NSStackView!
 
-    /// Which chip the colour panel is driving, so its changes land on the right
-    /// stop. Nil when the panel is not ours.
+    /// Which chip the picker is driving, so its changes land on the right stop.
     private var editingEndColour = false
+    /// Whether the picker is open. It lives in the panel, not in a window of
+    /// its own -- see `ColourPickerView`.
+    private var showsPicker = false
 
     init(appearance: TabGroupAppearance, tint: NSColor, name: String,
          onChange: @escaping (TabGroupAppearance) -> Void) {
@@ -75,8 +79,11 @@ final class GroupAppearanceEditor: NSViewController {
         solidPalette.onPick = { [weak self] colour in self?.chooseSolid(colour) }
         solidPalette.onCustom = { [weak self] in self?.openColourPanel(forEnd: false) }
 
+        colourPicker.onChange = { [weak self] colour in self?.pickerChanged(colour) }
+
         colourChips = ColourChips(from: fromChip, to: toChip)
         solidRow = PanelStyle.section("Colours", solidPalette)
+        pickerRow = PanelStyle.section("Custom colour", colourPicker)
         presetsRow = PanelStyle.section("Presets", makePresetGrid())
         colourRow = PanelStyle.section("Gradient colours", colourChips)
         directionRow = PanelStyle.section("Direction", directionPicker)
@@ -96,6 +103,7 @@ final class GroupAppearanceEditor: NSViewController {
             solidRow,
             presetsRow,
             colourRow,
+            pickerRow,
             directionRow,
             PanelStyle.section("Edge", elevationPills),
             divider,
@@ -182,6 +190,8 @@ final class GroupAppearanceEditor: NSViewController {
         next.fill = .solid
         next.startColorValue = colour
         appearance = next
+        // An open picker follows the palette rather than contradicting it.
+        if showsPicker && !editingEndColour { colourPicker.show(colour) }
     }
 
     private func choosePreset(_ preset: GradientPreset) {
@@ -191,6 +201,11 @@ final class GroupAppearanceEditor: NSViewController {
         next.endColorHex = preset.endHex
         next.direction = preset.direction
         appearance = next
+        if showsPicker {
+            colourPicker.show(
+                editingEndColour ? appearance.endColor(fallback: tint) : appearance.startColor(fallback: tint)
+            )
+        }
     }
 
     private func choose(direction: TabGroupAppearance.Direction) {
@@ -211,28 +226,33 @@ final class GroupAppearanceEditor: NSViewController {
         appearance = .standard
     }
 
-    // MARK: - Colour panel
+    // MARK: - The colour picker
 
+    /// Opens the picker on a stop, inside the panel. A second click on the
+    /// same control closes it.
     private func openColourPanel(forEnd: Bool) {
-        editingEndColour = forEnd
-        let panel = NSColorPanel.shared
-        panel.setTarget(self)
-        panel.setAction(#selector(panelColourChanged(_:)))
-        panel.showsAlpha = false
-        panel.color = forEnd ? appearance.endColor(fallback: tint) : appearance.startColor(fallback: tint)
-        panel.orderFront(nil)
+        if showsPicker && editingEndColour == forEnd {
+            showsPicker = false
+        } else {
+            editingEndColour = forEnd
+            showsPicker = true
+            colourPicker.show(
+                forEnd ? appearance.endColor(fallback: tint) : appearance.startColor(fallback: tint)
+            )
+        }
+        refresh()
     }
 
-    @objc private func panelColourChanged(_ panel: NSColorPanel) {
+    private func pickerChanged(_ colour: NSColor) {
         var next = appearance
         // Picking a colour on a default group turns it solid, so a first pick
         // does something rather than being swallowed.
         if next.fill == .standard { next.fill = .solid }
         if editingEndColour {
-            next.endColorValue = panel.color
+            next.endColorValue = colour
             next.fill = .gradient
         } else {
-            next.startColorValue = panel.color
+            next.startColorValue = colour
         }
         appearance = next
     }
@@ -271,6 +291,10 @@ final class GroupAppearanceEditor: NSViewController {
         colourRow.isHidden = !gradient
         directionRow.isHidden = !gradient
         colourChips.showsEnd(gradient)
+        // The picker belongs to whichever stop it was opened on, so it closes
+        // with the rows that offer that stop.
+        if editingEndColour && !gradient { showsPicker = false }
+        pickerRow.isHidden = !showsPicker
         if solid { solidPalette.select(appearance.startColor(fallback: tint)) }
 
         // Hidden sections change the content's height; the popover resizes to

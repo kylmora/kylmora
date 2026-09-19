@@ -13,6 +13,13 @@ final class SpaceThemePicker: NSView {
     var onCustomColor: ((NSColor) -> Void)?
 
     private let wheel = WheelSwatch()
+    private let picker = ColourPickerView()
+    private lazy var pickerPopover: NSPopover = {
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = ColourPickerPopover(picker: picker)
+        return popover
+    }()
 
     private(set) var selected: SpaceTheme = .default {
         didSet {
@@ -38,6 +45,7 @@ final class SpaceThemePicker: NSView {
             swatches.append((theme, swatch))
             views.append(swatch)
         }
+        picker.onChange = { [weak self] colour in self?.pickerChanged(colour) }
         wheel.onClick = { [weak self] in self?.openColorPanel() }
         views.append(wheel)
 
@@ -80,23 +88,26 @@ final class SpaceThemePicker: NSView {
         wheel.isSelected = selected == .custom
     }
 
-    /// The system colour panel, which reports through `changeColor(_:)`
-    /// while it is up. Opened from here rather than an `NSColorWell` so the
-    /// swatch row stays a row of circles with one more circle at the end.
+    /// Kylmora's own picker, in a popover off the wheel swatch.
+    ///
+    /// It used to be `NSColorPanel`: a floating window in the system's visual
+    /// language that opened over the settings pane, outlived it, and came back
+    /// at the next launch because macOS restores it. The picker is ours and
+    /// goes away with the click that opened it -- see `ColourPickerView`.
     private func openColorPanel() {
-        let panel = NSColorPanel.shared
-        panel.setTarget(self)
-        panel.setAction(#selector(panelColorChanged(_:)))
-        panel.showsAlpha = false
-        panel.color = wheel.customColor ?? selected.color
-        panel.orderFront(nil)
+        if pickerPopover.isShown {
+            pickerPopover.close()
+            return
+        }
+        picker.show(wheel.customColor ?? selected.color)
+        pickerPopover.show(relativeTo: wheel.bounds, of: wheel, preferredEdge: .maxY)
     }
 
-    @objc private func panelColorChanged(_ sender: NSColorPanel) {
-        wheel.customColor = sender.color
+    private func pickerChanged(_ colour: NSColor) {
+        wheel.customColor = colour
         show(.custom)
         wheel.isSelected = true
-        onCustomColor?(sender.color)
+        onCustomColor?(colour)
     }
 
     private func choose(_ theme: SpaceTheme) {
@@ -232,5 +243,34 @@ final class SpaceThemePicker: NSView {
             onClick?()
             return true
         }
+    }
+}
+
+/// The picker on a plate, for a popover: the same backdrop the group editor
+/// uses, so it reads as Kylmora's chrome rather than a system panel.
+@MainActor
+private final class ColourPickerPopover: NSViewController {
+    private let picker: ColourPickerView
+
+    init(picker: ColourPickerView) {
+        self.picker = picker
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("ColourPickerPopover is created in code only") }
+
+    override func loadView() {
+        let container = PanelBackdrop()
+        container.addSubview(picker)
+        let inset = PanelStyle.inset
+        NSLayoutConstraint.activate([
+            container.widthAnchor.constraint(equalToConstant: 260),
+            picker.topAnchor.constraint(equalTo: container.topAnchor, constant: inset),
+            picker.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -inset),
+            picker.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
+            picker.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset)
+        ])
+        view = container
+        preferredContentSize = NSSize(width: 260, height: picker.fittingSize.height + 2 * inset)
     }
 }

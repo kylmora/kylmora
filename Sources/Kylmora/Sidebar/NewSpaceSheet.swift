@@ -82,6 +82,7 @@ final class NewSpaceSheet: NSViewController {
     private let fromChip = ColorChip(label: "Start colour")
     private let toChip = ColorChip(label: "End colour")
     private let solidPalette = SolidPalette()
+    private let colourPicker = ColourPickerView()
     private var presetTiles: [SwatchTile] = []
 
     private var presetsRow = NSView()
@@ -91,7 +92,30 @@ final class NewSpaceSheet: NSViewController {
     private var colourChips: ColourChips!
     private var transparencyRow = NSView()
     private var styleRow = NSView()
+    private var pickerRow = NSView()
     private var contentStack: NSStackView!
+    private var heading: NSTextField!
+    private var footer: NSStackView!
+    private var scroll: NSScrollView!
+    /// The sheet's own scroll indicator: a 3-point hairline down the right
+    /// edge, there the whole time the sections overflow.
+    ///
+    /// The system's scroller is an overlay -- fat, grey, and only on screen
+    /// while the wheel is turning -- so at rest a sheet with more to read
+    /// looked exactly like one without, and in motion it sat on top of the
+    /// controls. This one says the same thing without touching anything.
+    private let indicator = SlimScrollIndicator()
+
+    /// Between the heading and the first section.
+    private static let headingGap: CGFloat = 18
+
+    /// A stack that fills from the top: an `NSScrollView`'s document view sits
+    /// at the bottom-left otherwise, so the sections would hang off the bottom
+    /// of the clip and the first one would be cut off the moment they are
+    /// taller than the sheet.
+    private final class TopDownStackView: NSStackView {
+        override var isFlipped: Bool { true }
+    }
 
     /// The default the auto/solid colour starts on: the colour the space would
     /// have been given anyway.
@@ -103,6 +127,14 @@ final class NewSpaceSheet: NSViewController {
     private var endColour: NSColor
     private var direction: GradientDirection = .down
     private var editingEndColour = false
+    /// Whether the picker is open, and on which stop.
+    ///
+    /// Open from the start: the colour a new space is given is one the palette
+    /// suggested, not one of the twelve, so the wheel comes up ringed -- and a
+    /// ringed wheel with nothing under it looks like a control that did
+    /// nothing. The picker is part of the sheet, so it is there when the sheet
+    /// is. Clicking the wheel (or a gradient chip) closes and reopens it.
+    private var showsPicker = true
 
     private let initialPrivate: Bool
 
@@ -141,7 +173,7 @@ final class NewSpaceSheet: NSViewController {
         privateToggle.setOn(initialPrivate)
 
         preview.translatesAutoresizingMaskIntoConstraints = false
-        preview.heightAnchor.constraint(equalToConstant: 92).isActive = true
+        preview.heightAnchor.constraint(equalToConstant: 80).isActive = true
 
         stylePills.onSelect = { [weak self] index in self?.chooseStyle(index) }
         appearancePills.onSelect = { [weak self] index in
@@ -166,8 +198,12 @@ final class NewSpaceSheet: NSViewController {
         solidPalette.onPick = { [weak self] colour in self?.chooseSolid(colour) }
         solidPalette.onCustom = { [weak self] in self?.openColourPanel(forEnd: false) }
 
+        colourPicker.onChange = { [weak self] colour in self?.pickerChanged(colour) }
+        colourPicker.show(startColour)
+
         colourChips = ColourChips(from: fromChip, to: toChip)
         solidRow = PanelStyle.section("Colours", solidPalette)
+        pickerRow = PanelStyle.section("Custom colour", colourPicker)
         presetsRow = PanelStyle.section("Presets", makePresetGrid())
         colourRow = PanelStyle.section("Gradient colours", colourChips)
         let transparency = NSStackView(views: [transparencySlider, transparencyValue])
@@ -190,8 +226,10 @@ final class NewSpaceSheet: NSViewController {
         nameField.field.formatter = LimitedLengthFormatter(limit: Space.maximumNameLength)
 
         let divider = PanelStyle.divider()
+        // Everything between the heading and the buttons scrolls; the heading
+        // and the buttons themselves do not, so Cancel and Create are always
+        // where you left them however tall the sections turn out to be.
         let sections: [NSView] = [
-            heading,
             PanelStyle.section("Name", nameField),
             makePrivateRow(),
             PanelStyle.section("Preview", preview),
@@ -200,37 +238,113 @@ final class NewSpaceSheet: NSViewController {
             solidRow,
             presetsRow,
             colourRow,
+            pickerRow,
             directionRow,
             transparencyRow,
-            makeBookmarksRow(),
-            divider,
-            buttons
+            makeBookmarksRow()
         ]
-        let stack = NSStackView(views: sections)
+        let stack = TopDownStackView(views: sections)
         contentStack = stack
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = PanelStyle.sectionGap
-        stack.setCustomSpacing(18, after: heading)
-        stack.setCustomSpacing(12, after: divider)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        for section in sections where section === buttons || section is NSStackView {
+        for section in sections where section is NSStackView {
             section.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
-        divider.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        let scroll = NSScrollView()
+        self.scroll = scroll
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.drawsBackground = false
+        // Ours instead of the system's; see `indicator`.
+        scroll.hasVerticalScroller = false
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.horizontalScrollElasticity = .none
+        scroll.documentView = stack
+        // A scroll view has no size of its own to defend: it is the one thing
+        // in the sheet that gives way when the cap bites.
+        scroll.setContentHuggingPriority(.defaultLow, for: .vertical)
+        scroll.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+
+        let footer = NSStackView(views: [divider, buttons])
+        footer.orientation = .vertical
+        footer.alignment = .leading
+        footer.spacing = 12
+        footer.translatesAutoresizingMaskIntoConstraints = false
+        self.footer = footer
+        self.heading = heading
+        heading.translatesAutoresizingMaskIntoConstraints = false
+        divider.widthAnchor.constraint(equalTo: footer.widthAnchor).isActive = true
+        buttons.widthAnchor.constraint(equalTo: footer.widthAnchor).isActive = true
 
         let container = NSView()
-        container.addSubview(stack)
+        container.addSubview(heading)
+        container.addSubview(scroll)
+        container.addSubview(indicator)
+        container.addSubview(footer)
+        let inset = PanelStyle.inset
         NSLayoutConstraint.activate([
             container.widthAnchor.constraint(equalToConstant: Self.width),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: PanelStyle.inset),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -PanelStyle.inset),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: PanelStyle.inset),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -PanelStyle.inset)
+
+            heading.topAnchor.constraint(equalTo: container.topAnchor, constant: inset),
+            heading.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
+            heading.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -inset),
+
+            scroll.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: Self.headingGap),
+            scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
+            scroll.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 80),
+
+            footer.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: PanelStyle.sectionGap),
+            footer.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: inset),
+            footer.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -inset),
+            footer.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -inset),
+
+            indicator.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
+            indicator.topAnchor.constraint(equalTo: scroll.topAnchor),
+            indicator.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
+            indicator.widthAnchor.constraint(equalToConstant: SlimScrollIndicator.width),
+
+            // The sections are as wide as the clip less the indicator's lane,
+            // so nothing is ever drawn under it.
+            stack.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            stack.widthAnchor.constraint(
+                equalTo: scroll.contentView.widthAnchor,
+                constant: -SlimScrollIndicator.lane
+            ),
+            stack.topAnchor.constraint(equalTo: scroll.contentView.topAnchor)
         ])
         view = container
+        watchScrolling()
         refresh()
+    }
+
+    /// Follows the scroll, so the indicator is where the content is.
+    private func watchScrolling() {
+        guard let scroll else { return }
+        scroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(scrollViewDidScroll),
+            name: NSView.boundsDidChangeNotification,
+            object: scroll.contentView
+        )
+    }
+
+    @objc private func scrollViewDidScroll() { updateIndicator() }
+
+    private func updateIndicator() {
+        guard let scroll, let document = scroll.documentView else { return }
+        let metrics = ScrollIndicatorMetrics.thumb(
+            content: document.bounds.height,
+            visible: scroll.contentView.bounds.height,
+            offset: scroll.contentView.bounds.origin.y,
+            track: scroll.bounds.height
+        )
+        indicator.show(metrics)
     }
 
     override func viewDidAppear() {
@@ -323,6 +437,8 @@ final class NewSpaceSheet: NSViewController {
     private func chooseSolid(_ colour: NSColor) {
         styleIndex = 0
         startColour = colour
+        // An open picker follows the palette rather than contradicting it.
+        if showsPicker && !editingEndColour { colourPicker.show(colour) }
         refresh()
     }
 
@@ -331,25 +447,37 @@ final class NewSpaceSheet: NSViewController {
         startColour = NSColor(hexString: preset.startHex) ?? suggested
         endColour = NSColor(hexString: preset.endHex) ?? suggested
         direction = preset.direction
+        if showsPicker { colourPicker.show(editingEndColour ? endColour : startColour) }
         refresh()
     }
 
+    /// Opens the picker on a stop, in this card. A second click on the same
+    /// control closes it again.
     private func openColourPanel(forEnd: Bool) {
-        editingEndColour = forEnd
-        let panel = NSColorPanel.shared
-        panel.setTarget(self)
-        panel.setAction(#selector(panelColourChanged(_:)))
-        panel.showsAlpha = false
-        panel.color = forEnd ? endColour : startColour
-        panel.orderFront(nil)
+        if showsPicker && editingEndColour == forEnd {
+            showsPicker = false
+        } else {
+            editingEndColour = forEnd
+            showsPicker = true
+            colourPicker.show(forEnd ? endColour : startColour)
+        }
+        refresh()
+        // On a capped sheet the picker can open below the fold, which looks
+        // like nothing happened. Bring it into view once the row is laid out.
+        if showsPicker {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.showsPicker else { return }
+                self.pickerRow.scrollToVisible(self.pickerRow.bounds)
+            }
+        }
     }
 
-    @objc private func panelColourChanged(_ panel: NSColorPanel) {
+    private func pickerChanged(_ colour: NSColor) {
         if editingEndColour {
-            endColour = panel.color
+            endColour = colour
             styleIndex = 1
         } else {
-            startColour = panel.color
+            startColour = colour
         }
         refresh()
     }
@@ -454,6 +582,10 @@ final class NewSpaceSheet: NSViewController {
         colourRow.isHidden = !gradient
         directionRow.isHidden = !gradient
         colourChips.showsEnd(gradient)
+        // The picker belongs to whichever stop it was opened on, so it closes
+        // with the rows that offer that stop.
+        if !customised || (editingEndColour && !gradient) { showsPicker = false }
+        pickerRow.isHidden = !showsPicker
         if solid { solidPalette.select(startColour) }
         for (tile, preset) in zip(presetTiles, GradientPreset.all) {
             tile.isSelected = gradient
@@ -467,22 +599,131 @@ final class NewSpaceSheet: NSViewController {
     /// Hidden sections change the content's height; the sheet's own window has
     /// to follow. `preferredContentSize` grows a sheet but will not shrink it,
     /// so the window is resized directly, its top edge kept in place.
+    ///
+    /// Capped at a share of the screen: on a Mac set to larger text the same
+    /// sections come out tall enough to run off the bottom, taking Cancel and
+    /// Create with them. Past the cap the sections scroll instead -- see
+    /// `SheetFit`.
     private func resizeToFit() {
-        guard isViewLoaded, let contentStack else { return }
+        guard isViewLoaded, let contentStack, let heading, let footer else { return }
         view.layoutSubtreeIfNeeded()
         // The container's own `fittingSize` reports whatever height the sheet
         // window forces on it; the stack's fitting size is the true content
-        // height, with hidden sections collapsed. Size the sheet to that.
-        let height = contentStack.fittingSize.height + 2 * PanelStyle.inset
+        // height, with hidden sections collapsed. Size the sheet to that,
+        // plus the chrome that does not scroll.
+        let content = 2 * PanelStyle.inset
+            + heading.fittingSize.height + Self.headingGap
+            + contentStack.fittingSize.height
+            + PanelStyle.sectionGap + footer.fittingSize.height
+        let screen = view.window?.screen
+            ?? view.window?.sheetParent?.screen
+            ?? NSScreen.main
+        let height = SheetFit.height(
+            content: content,
+            screen: screen?.visibleFrame.height ?? 0,
+            window: view.window?.sheetParent?.frame.height ?? 0
+        )
         let target = NSSize(width: Self.width, height: height)
         preferredContentSize = target
         view.window?.setContentSize(target)
+        updateIndicator()
     }
+
 }
 
 extension NewSpaceSheet: NSTextFieldDelegate {
     /// Every keystroke, so the preview says the name as it is being typed.
     func controlTextDidChange(_ notification: Notification) {
         refreshPreviewName()
+    }
+}
+
+/// Where the scroll indicator's thumb goes, and how long it is.
+///
+/// Pure, so the arithmetic can be checked without a scroll view: a thumb as
+/// long a share of the track as the visible part is of the content, slid down
+/// the track in proportion to how far the content has been scrolled.
+enum ScrollIndicatorMetrics {
+    /// Never shorter than this, or a long sheet gets a thumb too small to see.
+    static let minimumThumb: CGFloat = 24
+
+    struct Thumb: Equatable {
+        /// Nothing to indicate: everything is on screen.
+        var isHidden: Bool
+        /// From the top of the track.
+        var offset: CGFloat
+        var length: CGFloat
+    }
+
+    static func thumb(
+        content: CGFloat,
+        visible: CGFloat,
+        offset: CGFloat,
+        track: CGFloat,
+        minimum: CGFloat = minimumThumb
+    ) -> Thumb {
+        guard content > visible + 0.5, visible > 0, track > 0 else {
+            return Thumb(isHidden: true, offset: 0, length: 0)
+        }
+        let length = min(track, max(minimum, track * visible / content))
+        let travelled = min(max(offset / (content - visible), 0), 1)
+        return Thumb(
+            isHidden: false,
+            offset: (track - length) * travelled,
+            length: length
+        )
+    }
+}
+
+/// A hairline scroll indicator: three points wide, rounded, always there while
+/// there is more to read, and never in the way of what it is indicating.
+@MainActor
+final class SlimScrollIndicator: NSView {
+    /// The bar itself.
+    static let width: CGFloat = 3
+    /// The lane kept clear for it, bar included, so no control is drawn under
+    /// it and it never overlaps the sections the way the system's does.
+    static let lane: CGFloat = 10
+
+    private var thumb = ScrollIndicatorMetrics.Thumb(isHidden: true, offset: 0, length: 0)
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        isHidden = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("SlimScrollIndicator is created in code only") }
+
+    /// Decoration: the wheel and every click belong to what is underneath.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func show(_ thumb: ScrollIndicatorMetrics.Thumb) {
+        guard thumb != self.thumb else { return }
+        self.thumb = thumb
+        isHidden = thumb.isHidden
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard !thumb.isHidden else { return }
+        // Measured from the top: the content's first line is the track's top.
+        let rect = NSRect(
+            x: 0,
+            y: bounds.height - thumb.offset - thumb.length,
+            width: bounds.width,
+            height: thumb.length
+        )
+        Style.Colors.controlTrackFill.setFill()
+        NSBezierPath(
+            roundedRect: rect, xRadius: bounds.width / 2, yRadius: bounds.width / 2
+        ).fill()
+    }
+
+    /// The fill is a fixed `NSColor` resolved at draw; a change of appearance
+    /// has to redraw it.
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 }
