@@ -1,15 +1,26 @@
 name: CI
 
 # Pull requests only. `main` takes nothing but merged pull requests, and a
-# pull request cannot be merged until this job is green and the branch is up
-# to date with `main` -- so the same commit was already built and tested
-# before the merge, and building it again afterwards proves nothing.
+# pull request cannot be merged until this is green and the branch is up to
+# date with `main` -- so the same commit was already built and tested before
+# the merge, and building it again afterwards proves nothing.
 on:
   pull_request:
 
+# Three jobs rather than one long one. The work was never a chain: the tests,
+# the release bundle and the universal bundle each start from a clean checkout
+# and none of them needs another's output. Run one after the other they cost
+# the sum of three compiles -- on the run this was measured from, 2m01 + 2m31
+# + 3m32 of compiling around 2m29 of actually running tests. Run side by side
+# they cost the longest one.
+#
+# `Build & test` at the bottom is the name the branch rules ask for. It does
+# no work; it is the one check that turns red if any of the three did, which
+# keeps the rule about what may merge in one place and this file free to grow
+# more jobs without a rule change every time.
 jobs:
-  test:
-    name: Build & test
+  tests:
+    name: Tests
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
@@ -26,6 +37,17 @@ jobs:
 
       - name: Build and run tests
         run: make test
+
+  bundle:
+    name: App bundle
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
 
       # Packaging is the half of the build the tests never touch: the release
       # job was the only thing that ran it, so a break there surfaced at a tag,
@@ -44,6 +66,17 @@ jobs:
           test -x "$app/Contents/Resources/kylmora-cli"
           codesign --verify --deep --strict "$app"
           echo "bundle ok: $(du -sh "$app" | cut -f1)"
+
+  universal:
+    name: Universal bundle
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
 
       # An Intel Mac cannot run an arm64-only binary at all -- not even under
       # Rosetta, which only translates the other way. The release job is the
@@ -67,3 +100,34 @@ jobs:
           slices=$(otool -l "$bin" | grep -A3 LC_BUILD_VERSION | grep -c "minos 14.0")
           test "$slices" -eq 2 || { echo "deployment target moved off 14.0"; exit 1; }
           echo "universal ok: $(du -sh build/Kylmora.app | cut -f1)"
+
+  gate:
+    # The name the branch rules require. Everything it reports happened
+    # elsewhere.
+    name: Build & test
+    runs-on: ubuntu-latest
+    needs: [tests, bundle, universal]
+    # Runs even when something upstream failed, because a check that is skipped
+    # rather than failed is a check a merge can be waved through on.
+    if: always()
+    steps:
+      - name: Report what the three jobs did
+        env:
+          TESTS: ${{ needs.tests.result }}
+          BUNDLE: ${{ needs.bundle.result }}
+          UNIVERSAL: ${{ needs.universal.result }}
+        run: |
+          set -e
+          echo "tests:     $TESTS"
+          echo "bundle:    $BUNDLE"
+          echo "universal: $UNIVERSAL"
+          # Anything that is not a success -- failed, cancelled, skipped --
+          # fails this. A cancelled job leaves the commit untested just as
+          # surely as a failing one does.
+          for result in "$TESTS" "$BUNDLE" "$UNIVERSAL"; do
+            if [ "$result" != "success" ]; then
+              echo "::error::A build or test job did not succeed."
+              exit 1
+            fi
+          done
+          echo "all three green"
