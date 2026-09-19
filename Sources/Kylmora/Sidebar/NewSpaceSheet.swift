@@ -21,6 +21,10 @@ enum SpaceWashChoice: Equatable {
 /// already edits afterwards.
 struct NewSpaceOptions: Equatable {
     var name: String
+    /// The emoji, symbol or picture the space is born wearing. Decided here
+    /// rather than only afterwards in Settings because naming a space and
+    /// marking it are the same thought.
+    var icon: SpaceIcon = .automatic
     var isPrivate: Bool
     var wash: SpaceWashChoice
     /// Light, dark, or whatever the General pane says.
@@ -61,6 +65,10 @@ final class NewSpaceSheet: NSViewController {
     var onCreate: ((NewSpaceOptions) -> Void)?
 
     private let nameField = PanelTextField(placeholder: "Space name")
+    private let iconWell = IconWell()
+    /// What the well is showing. Held rather than read back off the well,
+    /// because the well is a view and this is the sheet's answer.
+    private var icon: SpaceIcon = .automatic
     private let privateToggle = PanelToggle(isOn: false)
     /// Fill, as the Spaces pane has it: Solid or Gradient, and only under
     /// Customized.
@@ -230,7 +238,7 @@ final class NewSpaceSheet: NSViewController {
         // and the buttons themselves do not, so Cancel and Create are always
         // where you left them however tall the sections turn out to be.
         let sections: [NSView] = [
-            PanelStyle.section("Name", nameField),
+            PanelStyle.section("Name", nameRow()),
             makePrivateRow(),
             PanelStyle.section("Preview", preview),
             PanelStyle.section("Appearance", appearancePills),
@@ -355,6 +363,34 @@ final class NewSpaceSheet: NSViewController {
 
     /// A title and subtitle on the left, the toggle on the right -- one row,
     /// full width.
+    /// The name and the mark on one line: the well sits where the space's dot
+    /// will sit, immediately before its name, so the row is a preview of the
+    /// thing being made.
+    private func nameRow() -> NSView {
+        iconWell.onChange = { [weak self] choice in
+            guard let self else { return }
+            self.icon = SpaceIcon(choice)
+            self.showIcon()
+        }
+        showIcon()
+        let row = NSStackView(views: [iconWell, nameField])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
+
+    /// The well in the colour the sheet has settled on, so a symbol chosen
+    /// here is drawn in the colour it will actually be drawn in.
+    private func showIcon() {
+        iconWell.show(
+            image: icon.image(color: startColour, title: nameField.stringValue, side: IconWell.side),
+            current: icon.asMenuChoice,
+            color: startColour
+        )
+    }
+
     private func makePrivateRow() -> NSView {
         let title = NSTextField(labelWithString: "Private space")
         title.font = .systemFont(ofSize: 13, weight: .medium)
@@ -516,6 +552,7 @@ final class NewSpaceSheet: NSViewController {
         let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         return NewSpaceOptions(
             name: name.isEmpty ? "New Space" : name,
+            icon: icon,
             isPrivate: privateToggle.isOn,
             wash: currentChoice(),
             appearance: appearanceChoice,
@@ -566,6 +603,9 @@ final class NewSpaceSheet: NSViewController {
         directionPicker.select(direction)
         fromChip.color = startColour
         toChip.color = endColour
+        // The well takes the space's colour, so a symbol chosen before the
+        // colour was settled is redrawn in the colour that was settled after.
+        showIcon()
 
         // Auto takes the colour the palette hands out, so it shows no colour
         // controls. Solid picks from the colour palette; Gradient gets the

@@ -11,16 +11,51 @@ import AppKit
 /// group, so the caller owns when a change is saved.
 @MainActor
 final class GroupAppearanceEditor: NSViewController {
+    /// Everything the sheet settles before the folder exists.
+    ///
+    /// The same shape `NewSpaceOptions` has, and for the same reason: a folder
+    /// made from a menu used to arrive with a name and nothing else, then
+    /// needed two more trips through two more menus to get the mark and the
+    /// colour it was always going to get.
+    struct NewGroup: Equatable {
+        var name: String
+        var icon: FolderIcon
+        var appearance: TabGroupAppearance
+    }
+
+    /// Which of the two jobs this panel is doing.
+    ///
+    /// One controller rather than two, because a new folder is settling
+    /// exactly the things an existing one's editor already edits -- plus a
+    /// name. A second sheet would be this one with a text field added and
+    /// every colour control copied.
+    private enum Mode: Equatable {
+        /// Changing a folder that exists. Every move applies as it is made.
+        case editing
+        /// Making one. Nothing applies until Create.
+        case creating
+    }
+
+    private let mode: Mode
     private let onChange: (TabGroupAppearance) -> Void
+    private let onCreate: ((NewGroup) -> Void)?
+    /// Editing only: the name was committed, or the mark changed. Both apply
+    /// as they are made, like every colour control on the panel.
+    private let onRename: ((String) -> Void)?
+    private let onIcon: ((FolderIcon) -> Void)?
+    private let nameField = PanelTextField(placeholder: "Folder name")
+    private let iconWell = IconWell()
+    private var icon: FolderIcon = .automatic
     /// The colour a half-set appearance falls back to -- the group's own tint --
     /// so the preview and the chips start on something real.
     private let tint: NSColor
-    private let groupName: String
+    private var groupName: String
 
     private var appearance: TabGroupAppearance {
         didSet {
             guard appearance != oldValue else { return }
-            onChange(appearance)
+            // Nothing to apply to while the folder is still being described.
+            if mode == .editing { onChange(appearance) }
             refresh()
         }
     }
@@ -49,12 +84,40 @@ final class GroupAppearanceEditor: NSViewController {
     /// its own -- see `ColourPickerView`.
     private var showsPicker = false
 
+    /// - Parameters:
+    ///   - icon: what the folder wears now. The panel edits it in place, the
+    ///     same panel and the same well that put it there when the folder was
+    ///     made -- a folder is described in one place whether it exists yet or
+    ///     not.
+    ///   - onRename: nil for a caller that does not want the name edited here.
     init(appearance: TabGroupAppearance, tint: NSColor, name: String,
-         onChange: @escaping (TabGroupAppearance) -> Void) {
+         icon: FolderIcon = .automatic,
+         onChange: @escaping (TabGroupAppearance) -> Void,
+         onRename: ((String) -> Void)? = nil,
+         onIcon: ((FolderIcon) -> Void)? = nil) {
+        self.mode = .editing
         self.appearance = appearance
         self.tint = tint
         self.groupName = name
+        self.icon = icon
         self.onChange = onChange
+        self.onCreate = nil
+        self.onRename = onRename
+        self.onIcon = onIcon
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    /// The same panel as a New Folder sheet: a name and a mark on top of the
+    /// colours, and nothing applied until Create.
+    init(creatingWithTint tint: NSColor, onCreate: @escaping (NewGroup) -> Void) {
+        self.mode = .creating
+        self.appearance = .standard
+        self.tint = tint
+        self.groupName = ""
+        self.onChange = { _ in }
+        self.onCreate = onCreate
+        self.onRename = nil
+        self.onIcon = nil
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -88,16 +151,40 @@ final class GroupAppearanceEditor: NSViewController {
         colourRow = PanelStyle.section("Gradient colours", colourChips)
         directionRow = PanelStyle.section("Direction", directionPicker)
 
-        let heading = NSTextField(labelWithString: groupName.isEmpty ? "Group" : groupName)
+        // The name is in a field now, in both modes, so the heading says what
+        // the panel is rather than repeating what is editable two rows down.
+        let title = mode == .creating ? "New Folder" : "Folder"
+        let heading = NSTextField(labelWithString: title)
         heading.font = .systemFont(ofSize: 15, weight: .semibold)
         heading.textColor = Style.Colors.primaryText
         heading.lineBreakMode = .byTruncatingTail
 
-        let reset = PanelButton(title: "Reset to default", kind: .plain) { [weak self] in self?.reset() }
         let divider = PanelStyle.divider()
 
-        let sections: [NSView] = [
-            heading,
+        // Editing ends whenever the user stops; making ends on a button, so
+        // the foot of the panel is a different thing in each mode.
+        let footer: NSView
+        switch mode {
+        case .editing:
+            footer = PanelButton(title: "Reset to default", kind: .plain) { [weak self] in self?.reset() }
+        case .creating:
+            let create = PanelButton(title: "Create", kind: .primary) { [weak self] in self?.create() }
+            let cancel = PanelButton(title: "Cancel", kind: .secondary) { [weak self] in self?.endSheetOrDismiss() }
+            let buttons = NSStackView(views: [cancel, create])
+            buttons.orientation = .horizontal
+            buttons.spacing = 10
+            buttons.distribution = .fillEqually
+            footer = buttons
+        }
+
+        var sections: [NSView] = [heading]
+        // In both modes. The panel that makes a folder and the panel that
+        // changes one are the same panel; the only difference is when what it
+        // settles takes effect.
+        if mode == .creating || onRename != nil || onIcon != nil {
+            sections.append(PanelStyle.section("Name", nameRow()))
+        }
+        sections += [
             preview,
             PanelStyle.section("Fill", fillPills),
             solidRow,
@@ -107,7 +194,7 @@ final class GroupAppearanceEditor: NSViewController {
             directionRow,
             PanelStyle.section("Edge", elevationPills),
             divider,
-            reset
+            footer
         ]
         let stack = NSStackView(views: sections)
         contentStack = stack
@@ -135,6 +222,102 @@ final class GroupAppearanceEditor: NSViewController {
         ])
         view = container
         refresh()
+    }
+
+    /// The name and the mark on one line, the way the New Space sheet has it:
+    /// the well sits where the folder's own icon will sit, before its name.
+    private func nameRow() -> NSView {
+        nameField.field.formatter = LimitedLengthFormatter(limit: Space.maximumNameLength)
+        nameField.field.stringValue = groupName
+        nameField.field.target = self
+        nameField.field.action = #selector(nameCommitted)
+        // On Return and on leaving the field, not on every keystroke: a folder
+        // renamed letter by letter would redraw the sidebar under the panel
+        // once per character.
+        nameField.field.cell?.sendsActionOnEndEditing = true
+        iconWell.onChange = { [weak self] choice in
+            guard let self else { return }
+            icon = FolderIcon(choice)
+            showIcon()
+            onIcon?(icon)
+        }
+        showIcon()
+        let row = NSStackView(views: [iconWell, nameField])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
+
+    /// A name that is only whitespace is no name, so the field goes back to
+    /// what the folder is still called rather than sitting there looking as
+    /// though it were accepted -- the same reading the Spaces pane uses.
+    @objc private func nameCommitted() {
+        let typed = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !typed.isEmpty else {
+            nameField.field.stringValue = groupName
+            return
+        }
+        groupName = typed
+        onRename?(typed)
+    }
+
+    private func showIcon() {
+        iconWell.show(image: icon.image(tint: tint), current: icon.asMenuChoice, color: tint)
+    }
+
+    private func create() {
+        let typed = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        onCreate?(
+            NewGroup(
+                name: typed.isEmpty ? "New Folder" : typed,
+                icon: icon,
+                appearance: appearance
+            )
+        )
+        endSheetOrDismiss()
+    }
+
+    /// What the sheet has settled, without pressing a button that dismisses a
+    /// sheet nobody presented. For tests, as `NewSpaceSheet.chosenOptions` is.
+    func chosenGroupForTesting() -> NewGroup {
+        let typed = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return NewGroup(
+            name: typed.isEmpty ? "New Folder" : typed,
+            icon: icon,
+            appearance: appearance
+        )
+    }
+
+    /// The name field, so a sheet can put the caret in it.
+    func focusName() {
+        view.window?.makeFirstResponder(nameField.field)
+    }
+
+    // MARK: - Reaching the controls from a test
+    //
+    // The panel's own controls are private, and driving AppKit's text editing
+    // and menus for real inside a test is a test of AppKit. These four say
+    // "the user typed this", "the user committed it", "the user picked that
+    // from the menu" -- which is the part worth pinning down.
+
+    var nameForTesting: String { nameField.stringValue }
+
+    func setNameForTesting(_ typed: String) {
+        nameField.field.stringValue = typed
+    }
+
+    func commitNameForTesting() {
+        nameCommitted()
+    }
+
+    func chooseIconForTesting(_ choice: IconMenu.Choice) {
+        iconWell.onChange?(choice)
+    }
+
+    func setIconForTesting(_ icon: FolderIcon) {
+        chooseIconForTesting(icon.asChoiceForTestingSupport)
     }
 
     /// The eight preset gradients, two rows of four, filling the section width.

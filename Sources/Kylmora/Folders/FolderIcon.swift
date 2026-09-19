@@ -15,6 +15,56 @@ enum FolderIcon: Equatable, Sendable {
     /// time rather than at assignment, so a symbol that disappears in a future
     /// macOS degrades instead of being silently rewritten in the session file.
     case symbol(String)
+    /// A picture the user chose, by its file name in `SpaceIconStore` -- the
+    /// same store a space's picture lives in, because it is the same feature
+    /// and the same file on disk. A file that has gone falls back to the
+    /// squircle, at draw time, for the same reason an unresolvable symbol
+    /// does.
+    case custom(String)
+}
+
+extension FolderIcon {
+    /// Whether the user chose this, which is what a "Remove Icon" item needs
+    /// to know to be enabled.
+    var isCustomized: Bool { self != .automatic }
+
+    /// The file this icon owns, if it owns one.
+    var customFileName: String? {
+        if case .custom(let name) = self { return name }
+        return nil
+    }
+
+    /// What the icon menu should show as chosen.
+    var asMenuChoice: IconMenu.Current {
+        switch self {
+        case .automatic: return IconMenu.Current()
+        case .emoji(let text): return IconMenu.Current(emoji: text)
+        case .symbol(let name): return IconMenu.Current(symbol: name)
+        case .custom: return IconMenu.Current(isCustom: true)
+        }
+    }
+
+    /// This icon as the choice that would produce it. The inverse of
+    /// `init(_:)`, and unlike `asMenuChoice` it carries a picture's file name
+    /// -- which is what makes the pair round-trippable.
+    var asChoiceForTestingSupport: IconMenu.Choice {
+        switch self {
+        case .automatic: return .none
+        case .emoji(let text): return .emoji(text)
+        case .symbol(let name): return .symbol(name)
+        case .custom(let fileName): return .custom(fileName)
+        }
+    }
+
+    /// What the menu settled on, as a folder's icon.
+    init(_ choice: IconMenu.Choice) {
+        switch choice {
+        case .none: self = .automatic
+        case .emoji(let text): self = .emoji(text)
+        case .symbol(let name): self = .symbol(name)
+        case .custom(let fileName): self = .custom(fileName)
+        }
+    }
 }
 
 extension FolderIcon {
@@ -37,6 +87,11 @@ extension FolderIcon {
         case .symbol(let name):
             if let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil) {
                 return Self.templateImage(symbol, tint: tint)
+            }
+            return Self.squircle(tint: tint)
+        case .custom(let fileName):
+            if let picture = SpaceIconStore.shared.image(named: fileName) {
+                return SpaceIcon.fitted(picture, side: Self.side, title: fileName)
             }
             return Self.squircle(tint: tint)
         case .emoji, .automatic:

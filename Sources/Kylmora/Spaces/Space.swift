@@ -140,8 +140,26 @@ final class Space: Identifiable {
         isCustomized ? border : .none
     }
 
+    /// What the user put on this space: an emoji, a symbol, a picture of their
+    /// own, or the coloured dot every space started with.
+    var icon: SpaceIcon = .automatic
+
+    /// The space's mark, at whatever size the caller draws it.
+    ///
+    /// Still called `dotImage` because the dot is still what most spaces show
+    /// and what every one of them falls back to. Every place that shows a
+    /// space -- the sidebar header, the space menu, the card in Settings, the
+    /// window list, Little Arc -- goes through here, which is why an icon set
+    /// once turns up in all of them without any of them knowing icons exist.
     func dotImage(side: CGFloat = 10) -> NSImage {
-        SpaceTheme.dotImage(color: color, title: theme.title, side: side)
+        icon.image(color: color, title: nameForIcon, side: side)
+    }
+
+    /// What VoiceOver reads for the mark. The space's own name when it has
+    /// one, because "Work" says more than the colour's name does; the colour
+    /// only has to stand in for an unnamed space.
+    private var nameForIcon: String {
+        name.isEmpty ? theme.title : name
     }
 
     /// Shown beside the name, so it is never a surprise that nothing here is

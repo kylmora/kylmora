@@ -94,6 +94,9 @@ struct SessionSnapshot: Codable, Equatable {
         var userAgent: String?
         var sleepMinutes: Int?
         var defaultZoom: String?
+        /// The emoji, symbol or picture on this space. Absent in sessions
+        /// written before spaces had icons, which restore on the dot.
+        var icon: SpaceIcon?
 
         init(
             id: UUID? = nil,
@@ -119,7 +122,8 @@ struct SessionSnapshot: Codable, Equatable {
             searchEngineID: String? = nil,
             userAgent: String? = nil,
             sleepMinutes: Int? = nil,
-            defaultZoom: String? = nil
+            defaultZoom: String? = nil,
+            icon: SpaceIcon? = nil
         ) {
             self.id = id
             self.name = name
@@ -145,6 +149,7 @@ struct SessionSnapshot: Codable, Equatable {
             self.userAgent = userAgent
             self.sleepMinutes = sleepMinutes
             self.defaultZoom = defaultZoom
+            self.icon = icon
         }
     }
 
@@ -170,6 +175,9 @@ struct SessionSnapshot: Codable, Equatable {
         var parentID: UUID?
         /// An SF Symbol chosen instead of an emoji.
         var symbolName: String?
+        /// A picture chosen instead of either, named in `SpaceIconStore`.
+        /// Absent for sessions written before folders could carry one.
+        var iconFileName: String?
         /// Whether a provider maintains this folder's contents. The provider
         /// itself lives in `live-folders.json`, keyed by this group's id.
         var isLive: Bool?

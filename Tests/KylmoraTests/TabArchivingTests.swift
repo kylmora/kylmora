@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 @testable import Kylmora
@@ -340,6 +341,57 @@ struct ArchiveTests {
         #expect(session.archivedTabs(in: other)[0].snapshot.url == otherURL)
     }
 
+    @Test("Putting everything back empties the archive into the sidebar")
+    func restoringEverything() {
+        let session = TestSession.make().0
+        let space = session.activeSpace
+        let before = space.tabs.count
+        let first = session.newTab(url: url)
+        let second = session.newTab(url: URL(string: "https://example.com/second")!)
+        session.archive([first, second])
+        #expect(space.tabs.count == before)
+
+        let restored = session.restoreAllArchived(in: space)
+        #expect(restored.count == 2)
+        #expect(session.archivedTabs(in: space).isEmpty)
+        #expect(space.tabs.count == before + 2)
+        // Back in the order they left, not reversed by the list's reading
+        // order, and the most recently archived is the one selected.
+        #expect(restored.map(\.url) == [url, URL(string: "https://example.com/second")!])
+        #expect(space.activeTabID == restored.last?.id)
+    }
+
+    @Test("Putting one Space's archive back leaves every other Space's alone")
+    func restoringEverythingIsPerSpace() {
+        let session = TestSession.make().0
+        let first = session.activeSpace
+        session.archive([session.newTab(url: url)])
+        let other = session.addSpace(named: "Other")
+        session.selectSpace(other)
+        session.archive([session.newTab(url: URL(string: "https://other.example/page")!)])
+
+        session.restoreAllArchived(in: other)
+        #expect(session.archivedTabs(in: other).isEmpty)
+        #expect(session.archivedTabs(in: first).count == 1, "The other Space's drawer was not touched")
+    }
+
+    @Test("A restored tab starts its idle clock again, however it came back")
+    func restoringEverythingResetsTheClock() {
+        // The same guarantee `restoringResetsTheClock` makes for one tab: put
+        // thirty back with a month-old clock and the next sweep takes them
+        // straight off the user again.
+        let session = TestSession.make().0
+        let space = session.activeSpace
+        let keep = session.activeTab!
+        let going = session.newTab(url: url)
+        session.selectTab(keep)
+        going.backdateLastActive(by: 30 * 86_400)
+        session.archive([going])
+
+        let restored = session.restoreAllArchived(in: space)
+        #expect(restored.first?.idleDuration() ?? .infinity < 5)
+    }
+
     @Test("Clearing one Space's archive leaves every other Space's alone")
     func clearingIsPerSpace() {
         let session = TestSession.make().0
@@ -401,6 +453,146 @@ struct ArchiveTests {
         #expect(reopenedOther.map { reopened.archivedTabs(in: $0).map(\.snapshot.url) } == [otherURL])
         let reopenedFirst = reopened.spaces.first { $0.name != "Other" }
         #expect(reopenedFirst.map { reopened.archivedTabs(in: $0).map(\.snapshot.url) } == [url])
+    }
+
+    @Test("Archiving in one Space leaves every other Space's archive untouched")
+    func archivingIsFiledWhereItHappened() {
+        let session = TestSession.make().0
+        let first = session.activeSpace
+        session.archive([session.newTab(url: url)])
+
+        let other = session.addSpace(named: "Other")
+        session.selectSpace(other)
+        session.archive([session.newTab(url: URL(string: "https://other.example/a")!)])
+        session.archive([session.newTab(url: URL(string: "https://other.example/b")!)])
+
+        #expect(session.archivedTabs(in: first).count == 1)
+        #expect(session.archivedTabs(in: other).count == 2)
+        // ...and no record is in both.
+        let firstIDs = Set(session.archivedTabs(in: first).map(\.id))
+        let otherIDs = Set(session.archivedTabs(in: other).map(\.id))
+        #expect(firstIDs.isDisjoint(with: otherIDs))
+    }
+
+    @Test("A Space's archive is read newest first, however it was written")
+    func archiveReadsNewestFirst() {
+        let session = TestSession.make().0
+        let space = session.activeSpace
+        let keep = session.activeTab!
+        let first = session.newTab(url: url)
+        let second = session.newTab(url: URL(string: "https://example.com/second")!)
+        session.selectTab(keep)
+
+        session.archive([first])
+        session.archive([second])
+        #expect(session.archivedTabs(in: space).map(\.snapshot.url) == [
+            URL(string: "https://example.com/second")!, url
+        ])
+    }
+
+    @Test("Putting everything back when there is nothing back does nothing at all")
+    func restoringAnEmptyArchive() {
+        let session = TestSession.make().0
+        var announced = 0
+        let token = session.changes.sink { if case .structure = $0 { announced += 1 } }
+        defer { token.cancel() }
+
+        #expect(session.restoreAllArchived(in: session.activeSpace).isEmpty)
+        #expect(announced == 0, "an empty archive announced a change anyway")
+    }
+
+    @Test("Putting a Space's archive back goes to that Space")
+    func restoringElsewhereSwitchesToIt() {
+        // The rows land in the Space they left, so the browser has to go there
+        // -- putting thirty tabs back somewhere the user cannot see is the
+        // same as losing them again.
+        let session = TestSession.make().0
+        let first = session.activeSpace
+        session.archive([session.newTab(url: url)])
+
+        let other = session.addSpace(named: "Other")
+        session.selectSpace(other)
+        #expect(session.activeSpace === other)
+
+        session.restoreAllArchived(in: first)
+        #expect(session.activeSpace === first)
+        #expect(first.tabs.contains { $0.url == url })
+    }
+
+    @Test("A tab whose folder was deleted comes back loose rather than invisible")
+    func restoringIntoADeletedFolder() {
+        let session = TestSession.make().0
+        let space = session.activeSpace
+        let keep = session.activeTab!
+        let tab = session.newTab(url: url)
+        let group = session.createGroup(named: "Going", containing: [tab])
+        session.selectTab(keep)
+        #expect(tab.groupID == group.id)
+
+        session.archive([tab])
+        _ = session.removeGroup(group)
+
+        let restored = session.restoreAllArchived(in: space)
+        #expect(restored.count == 1)
+        #expect(restored.first?.groupID == nil, "it points at a folder that is gone, so it cannot be seen")
+    }
+
+    @Test("A private Space archives nothing, so there is nothing to clear or put back")
+    func privateSpacesStayOut() {
+        let session = TestSession.make().0
+        let space = session.addSpace(named: "Private", isPrivate: true)
+        session.selectSpace(space)
+        let tab = session.newTab(url: url)
+
+        session.archive([tab])
+        #expect(session.archivedTabs(in: space).isEmpty)
+        #expect(session.restoreAllArchived(in: space).isEmpty)
+        session.clearArchive(in: space)
+        #expect(session.archivedTabs(in: space).isEmpty)
+        // And the tab it refused to archive is still where it was.
+        #expect(space.tabs.contains { $0 === tab })
+    }
+
+    @Test("A Space's archive is capped without eating another Space's")
+    func theCapIsPerSpace() {
+        // The cap used to be counted across every Space, so one busy Space's
+        // sweep evicted the oldest records out of a quiet Space's archive --
+        // that Space's drawer emptying because of something that happened
+        // somewhere the user was not even looking.
+        let session = TestSession.make().0
+        let quiet = session.activeSpace
+        session.archive([session.newTab(url: url)])
+
+        let busy = session.addSpace(named: "Busy")
+        session.selectSpace(busy)
+        let limit = 500
+        let tabs = (0..<(limit + 5)).map { session.newTab(url: URL(string: "https://busy.example/\($0)")!, select: false) }
+        session.archive(tabs)
+
+        #expect(session.archivedTabs(in: busy).count == limit)
+        #expect(session.archivedTabs(in: quiet).count == 1, "the quiet Space lost a record to the busy one")
+        // Oldest out first: what is left is the tail.
+        let kept = Set(session.archivedTabs(in: busy).compactMap { $0.snapshot.url.lastPathComponent })
+        #expect(!kept.contains("0"))
+        #expect(kept.contains("\(limit + 4)"))
+    }
+
+    @Test("A tab whose Space is gone comes back to the one in front")
+    func restoringWhenTheSpaceWentAway() {
+        // Removing a Space drops its archive, so this is the sync-merge and
+        // restored-backup case: a record naming a Space that is not here.
+        let session = TestSession.make().0
+        let home = session.activeSpace
+        let orphan = BrowserSession.ArchivedTab(
+            snapshot: SessionSnapshot.Tab(url: url, title: "Orphan"),
+            spaceID: UUID(),
+            archivedAt: .now
+        )
+        session.archive([session.newTab(url: URL(string: "https://example.com/other")!)])
+
+        let restored = session.restoreArchived(orphan)
+        #expect(restored == nil, "a record the session does not hold cannot be put back")
+        #expect(home.tabs.allSatisfy { $0.url != url })
     }
 
     @Test("The archive survives a relaunch")

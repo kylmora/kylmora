@@ -21,7 +21,13 @@ final class ArchiveListView: NSView {
     var onForget: ((BrowserSession.ArchivedTab) -> Void)?
     /// Empty the archive, which is everything this list is showing.
     var onClear: (() -> Void)?
+    /// Put every listed tab back in the sidebar, in one go.
+    var onRestoreAll: (() -> Void)?
 
+    /// The two things you can do to the whole list. Put Back All comes first,
+    /// and Clear is the one further from the eye's path: of the pair, only one
+    /// cannot be taken back.
+    private let restoreAllButton = NSButton(title: "Put Back All", target: nil, action: nil)
     private let clearButton = NSButton(title: "Clear", target: nil, action: nil)
     private let emptyLabel = NSTextField(wrappingLabelWithString: "")
     private let tableView = NSTableView()
@@ -65,16 +71,34 @@ final class ArchiveListView: NSView {
         title.textColor = Style.Colors.primaryText
         title.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
+        restoreAllButton.target = self
+        restoreAllButton.action = #selector(restoreAll)
+        restoreAllButton.toolTip = "Put every tab listed here back in the sidebar."
+
         clearButton.target = self
         clearButton.action = #selector(clear)
-        clearButton.bezelStyle = .rounded
-        clearButton.controlSize = .small
         clearButton.toolTip = "Remove every tab listed here from the archive. They will not come back."
-        clearButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        let header = NSStackView(views: [title, clearButton])
+        for button in [restoreAllButton, clearButton] {
+            button.bezelStyle = .rounded
+            button.controlSize = .small
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            // They give way rather than hold the sidebar open.
+            //
+            // A split view item takes its minimum thickness from what its view
+            // says it needs, and this list is in the hierarchy even while the
+            // tabs are the thing on screen -- so two buttons that insisted on
+            // their full titles would put a floor under the whole sidebar,
+            // which people drag down to about 105. Below priority, the titles
+            // truncate instead, and the archive is not the mode anyone is in
+            // while dragging the sidebar narrow.
+            button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+
+        let header = NSStackView(views: [title, restoreAllButton, clearButton])
         header.orientation = .horizontal
         header.distribution = .fill
+        header.spacing = Style.Metrics.iconButtonSpacing
         header.translatesAutoresizingMaskIntoConstraints = false
 
         configureTable()
@@ -154,7 +178,10 @@ final class ArchiveListView: NSView {
             isArchivingEnabled: isArchivingEnabled
         )
         emptyLabel.isHidden = !entries.isEmpty
+        // Both act on the whole list, so an empty list leaves both with
+        // nothing to act on.
         clearButton.isEnabled = !entries.isEmpty
+        restoreAllButton.isEnabled = !entries.isEmpty
         setAccessibilityLabel("Archive, \(entries.count) tab\(entries.count == 1 ? "" : "s")")
     }
 
@@ -196,6 +223,10 @@ final class ArchiveListView: NSView {
 
     @objc private func clear() {
         onClear?()
+    }
+
+    @objc private func restoreAll() {
+        onRestoreAll?()
     }
 }
 

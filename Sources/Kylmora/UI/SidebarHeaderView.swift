@@ -138,6 +138,15 @@ final class MenuLabelButton: NSView {
     var menuProvider: (() -> NSMenu?)?
 
     private let label = NSTextField(labelWithString: "")
+    /// The space's mark, before its name. Hidden for a space wearing nothing,
+    /// so a header that never had an icon looks exactly as it did.
+    private let icon = NSImageView()
+    /// The name's leading edge: against the button's own edge when there is no
+    /// icon, against the icon when there is. Two constraints rather than a
+    /// stack view, because the label's width priorities are load-bearing here
+    /// -- see below -- and a stack view would have its own opinion about them.
+    private var labelLeadingToEdge: NSLayoutConstraint?
+    private var labelLeadingToIcon: NSLayoutConstraint?
     private var trackingArea: NSTrackingArea?
     private var highlight: RowHighlight?
     private var isHovered = false {
@@ -188,8 +197,25 @@ final class MenuLabelButton: NSView {
         }
         addSubview(label)
 
+        icon.imageScaling = .scaleProportionallyDown
+        icon.isHidden = true
+        icon.setAccessibilityElement(false)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        // The mark keeps its size while the name gives way: an icon that
+        // shrank with the sidebar would be a smudge long before the name it
+        // belongs to ran out of room.
+        icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+        addSubview(icon)
+
+        labelLeadingToEdge = label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6)
+        labelLeadingToIcon = label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5)
+        labelLeadingToEdge?.isActive = true
+
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: Self.iconSide),
+            icon.heightAnchor.constraint(equalToConstant: Self.iconSide),
             label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             label.topAnchor.constraint(equalTo: topAnchor, constant: 3),
             label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3)
@@ -205,8 +231,19 @@ final class MenuLabelButton: NSView {
         fatalError("MenuLabelButton is created in code only")
     }
 
-    func show(title: String, accessibilityLabel: String, tooltip: String?) {
+    /// The mark before the name: a touch under the cap height of the title, so
+    /// it sits in the line rather than towering over it.
+    static let iconSide: CGFloat = 16
+
+    /// - Parameter icon: the space's emoji, symbol or picture, or nil for a
+    ///   space wearing nothing -- which leaves the header as a name alone,
+    ///   exactly as it was before spaces could be marked.
+    func show(title: String, icon image: NSImage?, accessibilityLabel: String, tooltip: String?) {
         label.stringValue = title
+        icon.image = image
+        icon.isHidden = image == nil
+        labelLeadingToEdge?.isActive = image == nil
+        labelLeadingToIcon?.isActive = image != nil
         setAccessibilityLabel(accessibilityLabel)
         setAccessibilityValue(title)
         toolTip = tooltip
