@@ -108,6 +108,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         SitePolicy.shared.tabResolver = { [weak session] webView in
             session?.allTabs.first { $0.currentWebView === webView }
         }
+        // Web notifications: the system centre hands back an identifier and
+        // nothing else, so Kylmora has to be able to find the tab again and
+        // let the page's own handler run. Starting the centre also takes over
+        // the system delegate, without which a notification posted while
+        // Kylmora is frontmost is never shown at all.
+        WebNotificationCentre.shared.start()
+        WebNotificationCentre.shared.focusTab = { [weak session] tabID in
+            session?.revealTab(id: tabID)
+        }
+        WebNotificationCentre.shared.dispatchEvent = { [weak session] record, type in
+            guard let tabID = record.tabID,
+                  let tab = session?.allTabs.first(where: { $0.id == tabID }),
+                  let webView = tab.currentWebView else { return }
+            let id = WebNotificationCentre.javaScriptString(record.id)
+            let event = WebNotificationCentre.javaScriptString(type)
+            webView.evaluateJavaScript(
+                "window.__kylmoraNotificationEvent && window.__kylmoraNotificationEvent(\(id), \(event))"
+            ) { _, _ in }
+        }
         DownloadManager.shared.spaceResolver = { [weak session] download in
             guard let session else { return nil }
             if let webView = download.webView,

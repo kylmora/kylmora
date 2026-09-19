@@ -525,6 +525,11 @@ final class BrowserSession {
             liveFolders.tabWasRemoved(tab.id, fromFolder: groupID)
         }
         let tabURL = tab.url
+        // The page that would have answered a click on one of its notifications
+        // is about to stop existing, so its notifications leave the screen with
+        // it. A service worker's are left alone: outliving the page is the
+        // whole reason a site posts them that way.
+        WebNotificationCentre.shared.forget(tabID: tab.id)
         detach(tab, from: space)
         forgetDataIfNeeded(for: tabURL, in: space)
         return true
@@ -1272,6 +1277,19 @@ final class BrowserSession {
         space.setActiveTabID(tab.id)
         changes.send(.activeTab)
         scheduleSave()
+    }
+
+    /// Brings a tab to the front wherever it lives, changing Space if it is
+    /// not in the current one. A web notification's click arrives with nothing
+    /// but a tab identifier, and the tab it names may be anywhere -- or gone,
+    /// which is why this answers rather than assuming.
+    @discardableResult
+    func revealTab(id: UUID) -> Tab? {
+        guard let space = spaces.first(where: { $0.tabs.contains { $0.id == id } }),
+              let tab = space.tabs.first(where: { $0.id == id }) else { return nil }
+        if space.id != activeSpace.id { selectSpace(space) }
+        selectTab(tab)
+        return tab
     }
 
     /// 1-based, to match the Cmd-1 ... Cmd-9 menu items. Cmd-9 is the last tab.

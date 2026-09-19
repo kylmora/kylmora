@@ -100,46 +100,237 @@ enum SiteBehaviourScripts {
     """
 
     /// The Notification API, answered by Kylmora and the system's centre.
+    ///
+    /// A real one, not a stub: notifications carry an identifier, so the page's
+    /// own `click` and `close` handlers run when the person acts on the banner,
+    /// `tag` replaces rather than stacks, `close()` takes it off the screen,
+    /// and the service worker spelling -- which is how most sites post now --
+    /// goes down the same path.
     static let notifications = """
     (function () {
       var bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.kylmoraSite;
       if (!bridge) { return; }
-      var state = "default";
+      if (typeof EventTarget !== "function") { return; }
+
+      function setting() { return \(policy).notifications || "ask"); }
+      // What `requestPermission` last answered. The site setting outranks it,
+      // and a grant is written back to that setting by Kylmora, so this only
+      // has to carry the answer until the next page load.
+      var asked = "default";
+      function permission() {
+        var value = setting();
+        if (value === "deny") { return "denied"; }
+        if (value === "allow") { return "granted"; }
+        return asked;
+      }
+
+      // The notifications this page has on screen, by the identifier Kylmora
+      // gave them. A click arrives as an identifier and nothing else, so this
+      // is how the right object gets the event.
+      var live = Object.create(null);
+
+      function absolute(value) {
+        if (!value) { return ""; }
+        try { return new URL(String(value), location.href).href; } catch (e) { return ""; }
+      }
+
+      function payload(source, fromServiceWorker) {
+        var data = null;
+        try { data = source.data === undefined || source.data === null ? null : JSON.stringify(source.data); } catch (e) { data = null; }
+        return {
+          kind: "notification",
+          title: String(source.title),
+          body: String(source.body || ""),
+          tag: String(source.tag || ""),
+          icon: absolute(source.icon || source.image || source.badge),
+          lang: String(source.lang || ""),
+          dir: String(source.dir || "auto"),
+          silent: !!source.silent,
+          requireInteraction: !!source.requireInteraction,
+          renotify: !!source.renotify,
+          timestamp: Number(source.timestamp) || Date.now(),
+          data: data,
+          fromServiceWorker: !!fromServiceWorker
+        };
+      }
+
       function KylmoraNotification(title, options) {
+        if (!(this instanceof KylmoraNotification)) {
+          throw new TypeError("Failed to construct 'Notification': Please use the 'new' operator.");
+        }
+        if (arguments.length < 1) {
+          throw new TypeError("Failed to construct 'Notification': 1 argument required, but only 0 present.");
+        }
+        var target = new EventTarget();
+        this.addEventListener = target.addEventListener.bind(target);
+        this.removeEventListener = target.removeEventListener.bind(target);
+        this.dispatchEvent = target.dispatchEvent.bind(target);
+
         options = options || {};
-        this.title = title; this.body = options.body || ""; this.tag = options.tag || ""; this.data = options.data;
+        this.title = String(title);
+        this.body = options.body === undefined ? "" : String(options.body);
+        this.tag = options.tag === undefined ? "" : String(options.tag);
+        this.icon = options.icon === undefined ? "" : String(options.icon);
+        this.badge = options.badge === undefined ? "" : String(options.badge);
+        this.image = options.image === undefined ? "" : String(options.image);
+        this.lang = options.lang === undefined ? "" : String(options.lang);
+        this.dir = options.dir === undefined ? "auto" : String(options.dir);
+        this.silent = !!options.silent;
+        this.requireInteraction = !!options.requireInteraction;
+        this.renotify = !!options.renotify;
+        this.timestamp = Number(options.timestamp) || Date.now();
+        this.data = options.data === undefined ? null : options.data;
+        this.actions = [];
         this.onclick = null; this.onclose = null; this.onerror = null; this.onshow = null;
+        this.__id = null;
+        this.__closed = false;
+
         var self = this;
-        if (KylmoraNotification.permission !== "granted") {
-          setTimeout(function () { if (self.onerror) { self.onerror(new Event("error")); } }, 0);
+        // Permission is checked here rather than at the bridge so a page that
+        // never asked gets the same silent `error` a real browser gives it.
+        if (permission() !== "granted") {
+          setTimeout(function () { fire(self, "error"); }, 0);
           return;
         }
-        bridge.postMessage({ kind: "notification", title: String(title), body: String(this.body) }).then(function () {
-          if (self.onshow) { self.onshow(new Event("show")); }
-        }, function () { if (self.onerror) { self.onerror(new Event("error")); } });
+        bridge.postMessage(payload(this, false)).then(function (id) {
+          if (!id) { fire(self, "error"); return; }
+          // `close()` can beat the reply. Honour it rather than leaving a
+          // notification on screen that the page believes it has dismissed.
+          if (self.__closed) { bridge.postMessage({ kind: "closeNotification", id: id }); return; }
+          self.__id = id;
+          live[id] = self;
+          fire(self, "show");
+        }, function () { fire(self, "error"); });
       }
-      KylmoraNotification.prototype.close = function () { if (this.onclose) { this.onclose(new Event("close")); } };
-      KylmoraNotification.prototype.addEventListener = function () {};
-      KylmoraNotification.prototype.removeEventListener = function () {};
+
+      function fire(notification, type) {
+        var event = new Event(type);
+        try { notification.dispatchEvent(event); } catch (e) {}
+        var handler = notification["on" + type];
+        if (typeof handler === "function") {
+          try { handler.call(notification, event); } catch (e) {}
+        }
+      }
+
+      KylmoraNotification.prototype.close = function () {
+        if (this.__closed) { return; }
+        this.__closed = true;
+        var id = this.__id;
+        if (id) {
+          delete live[id];
+          this.__id = null;
+          bridge.postMessage({ kind: "closeNotification", id: id });
+        }
+        fire(this, "close");
+      };
+
       KylmoraNotification.requestPermission = function (callback) {
-        var setting = \(policy).notifications || "ask");
-        var result = setting === "deny" ? Promise.resolve("denied") : bridge.postMessage({ kind: "askNotification" });
-        return result.then(function (answer) {
-          state = answer === "granted" ? "granted" : "denied";
-          if (callback) { callback(state); }
-          return state;
+        var value = setting();
+        var answer;
+        if (value === "deny") { answer = Promise.resolve("denied"); }
+        else if (value === "allow") { answer = Promise.resolve("granted"); }
+        else {
+          answer = bridge.postMessage({ kind: "askNotification" }).then(function (reply) {
+            return reply === "granted" ? "granted" : "denied";
+          }, function () { return "denied"; });
+        }
+        return answer.then(function (result) {
+          asked = result;
+          if (typeof callback === "function") { try { callback(result); } catch (e) {} }
+          return result;
         });
       };
-      Object.defineProperty(KylmoraNotification, "permission", {
-        get: function () {
-          var setting = \(policy).notifications || "ask");
-          if (setting === "deny") { return "denied"; }
-          if (setting === "allow") { return "granted"; }
-          return state;
-        }
-      });
+
+      Object.defineProperty(KylmoraNotification, "permission", { get: permission, configurable: true });
       KylmoraNotification.maxActions = 0;
+
+      // How a click or a dismissal from the system centre reaches the page.
+      window.__kylmoraNotificationEvent = function (id, type) {
+        var notification = live[id];
+        if (!notification) { return false; }
+        delete live[id];
+        notification.__id = null;
+        notification.__closed = true;
+        fire(notification, type);
+        return true;
+      };
+
       window.Notification = KylmoraNotification;
+
+      // The service worker spelling. Most sites that notify do it through a
+      // registration rather than the constructor, and WebKit gives a page
+      // neither -- so the registration's methods go down the same bridge, and
+      // a click still brings the tab to the front even though the worker's own
+      // `notificationclick` handler is out of reach from here.
+      function showFromRegistration(title, options) {
+        if (permission() !== "granted") {
+          return Promise.reject(new TypeError("No notification permission has been granted for this origin."));
+        }
+        var source = options || {};
+        source.title = title;
+        return bridge.postMessage(payload(source, true)).then(function (id) {
+          if (!id) { throw new Error("The notification could not be shown."); }
+          return undefined;
+        });
+      }
+
+      function listFromRegistration(filter) {
+        var tag = filter && filter.tag ? String(filter.tag) : "";
+        return bridge.postMessage({ kind: "getNotifications", tag: tag }).then(function (list) {
+          return (list || []).map(function (item) {
+            var shown = Object.create(KylmoraNotification.prototype);
+            shown.title = item.title; shown.body = item.body; shown.tag = item.tag;
+            shown.icon = item.icon || ""; shown.lang = item.lang || ""; shown.dir = item.dir || "auto";
+            shown.silent = !!item.silent; shown.requireInteraction = !!item.requireInteraction;
+            shown.timestamp = item.timestamp; shown.actions = [];
+            try { shown.data = item.data ? JSON.parse(item.data) : null; } catch (e) { shown.data = null; }
+            shown.__id = item.id; shown.__closed = false;
+            var target = new EventTarget();
+            shown.addEventListener = target.addEventListener.bind(target);
+            shown.removeEventListener = target.removeEventListener.bind(target);
+            shown.dispatchEvent = target.dispatchEvent.bind(target);
+            live[item.id] = shown;
+            return shown;
+          });
+        }, function () { return []; });
+      }
+
+      // WebKit does define these, and in a WKWebView they are attached to
+      // nothing: there is no notification provider behind them, so a page that
+      // calls the built-in one is refused. They are replaced rather than filled
+      // in behind, for the same reason `window.Notification` is.
+      if (window.ServiceWorkerRegistration && ServiceWorkerRegistration.prototype) {
+        var proto = ServiceWorkerRegistration.prototype;
+        try {
+          Object.defineProperty(proto, "showNotification", {
+            value: showFromRegistration, writable: true, configurable: true
+          });
+          Object.defineProperty(proto, "getNotifications", {
+            value: listFromRegistration, writable: true, configurable: true
+          });
+        } catch (e) {}
+      } else if (navigator.serviceWorker) {
+        // No prototype to reach: decorate whatever a registration comes back
+        // from instead, which covers the same calls one object at a time.
+        var decorate = function (registration) {
+          if (registration && typeof registration.showNotification !== "function") {
+            registration.showNotification = showFromRegistration;
+            registration.getNotifications = listFromRegistration;
+          }
+          return registration;
+        };
+        var worker = navigator.serviceWorker;
+        var register = worker.register;
+        if (typeof register === "function") {
+          worker.register = function () { return register.apply(worker, arguments).then(decorate); };
+        }
+        try {
+          var ready = worker.ready;
+          Object.defineProperty(worker, "ready", {
+            get: function () { return ready.then(decorate); }, configurable: true
+          });
+        } catch (e) {}
+      }
     })();
     """
 
