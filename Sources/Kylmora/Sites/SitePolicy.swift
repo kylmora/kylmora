@@ -1,6 +1,5 @@
 import AppKit
 import CoreLocation
-import UserNotifications
 import WebKit
 
 /// The per-site choices that can only be honoured from inside the page.
@@ -24,13 +23,15 @@ final class SitePolicy: NSObject {
     private static let policyPrefix = "window.__kylmoraSite = "
 
     private let settings: SiteSettings
+    private let centre: WebNotificationCentre
     private let controllers = NSHashTable<WKUserContentController>.weakObjects()
     private let location = LocationProvider()
     /// The tab behind a web view, for reports that belong to a tab.
     var tabResolver: ((WKWebView) -> Tab?)?
 
-    init(settings: SiteSettings = .shared) {
+    init(settings: SiteSettings = .shared, centre: WebNotificationCentre = .shared) {
         self.settings = settings
+        self.centre = centre
     }
 
     /// Adds the behaviour scripts and the message handler once.
@@ -81,25 +82,26 @@ final class SitePolicy: NSObject {
 
     // MARK: - Notifications
 
-    /// Whether this process can talk to the notification centre at all: a
-    /// test binary cannot, and asking crashes rather than failing.
-    private static var hasNotificationCentre: Bool {
-        Bundle.main.bundleURL.pathExtension == "app" && Bundle.main.bundleIdentifier != nil
+    /// The origin a notification belongs to: scheme and host, so that two
+    /// pages on the same site share a group in the notification centre and
+    /// neither can close the other site's notifications.
+    static func origin(of url: URL?) -> String? {
+        guard let url, let scheme = url.scheme?.lowercased(), let host = url.host() else { return nil }
+        guard scheme == "http" || scheme == "https" else { return nil }
+        if let port = url.port { return "\(scheme)://\(host):\(port)" }
+        return "\(scheme)://\(host)"
     }
 
-    private func requestNotificationAuthorisation() async -> Bool {
-        guard Self.hasNotificationCentre else { return false }
-        return (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])) ?? false
-    }
-
-    private func deliverNotification(title: String, body: String, site: String) async {
-        guard Self.hasNotificationCentre else { return }
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.subtitle = site
-        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
-        try? await UNUserNotificationCenter.current().add(request)
+    /// Asks the person, then remembers the answer where the Websites pane can
+    /// show it. Without writing it back, a page that was granted permission
+    /// would find `Notification.permission` back at "default" on its next load
+    /// and ask again on every visit.
+    private func requestNotificationAuthorisation(for url: URL?) async -> Bool {
+        let granted = await centre.requestAuthorisation()
+        if let host = url?.host() {
+            settings.update { $0.set(granted ? "allow" : "deny", for: host, in: .notifications) }
+        }
+        return granted
     }
 }
 
@@ -116,13 +118,23 @@ extension SitePolicy: WKScriptMessageHandlerWithReply {
         switch kind {
         case "askNotification":
             if settings.permission(.notifications, for: pageURL) == .deny { return ("denied", nil) }
-            return (await requestNotificationAuthorisation() ? "granted" : "denied", nil)
+            return (await requestNotificationAuthorisation(for: pageURL) ? "granted" : "denied", nil)
         case "notification":
             guard settings.permission(.notifications, for: pageURL) != .deny else { return (nil, "Denied.") }
-            let title = body["title"] as? String ?? site
-            let text = body["body"] as? String ?? ""
-            await deliverNotification(title: title, body: text, site: site)
+            guard let origin = Self.origin(of: pageURL) else { return (nil, "Denied.") }
+            var payload = body
+            if payload["title"] == nil { payload["title"] = site }
+            let tabID = message.webView.flatMap { tabResolver?($0) }?.id
+            let id = await centre.show(payload: payload, origin: origin, tabID: tabID)
+            return (id, nil)
+        case "closeNotification":
+            guard let origin = Self.origin(of: pageURL), let id = body["id"] as? String else { return (nil, "Unknown.") }
+            centre.close(id: id, origin: origin)
             return (true, nil)
+        case "getNotifications":
+            guard let origin = Self.origin(of: pageURL) else { return ([], nil) }
+            let tag = body["tag"] as? String ?? ""
+            return (centre.notifications(origin: origin, tag: tag), nil)
         case "pictureInPicture":
             if let webView = message.webView, let tab = tabResolver?(webView) {
                 tab.setPictureInPicture(body["active"] as? Bool ?? false)

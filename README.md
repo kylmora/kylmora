@@ -220,6 +220,12 @@ locking settings across a fleet with a configuration profile or a
   extensions may reach it. Settings ▸ Extensions lists what is installed,
   says why a manifest was refused, and can switch any of it off. See
   [docs/native-messaging.md](docs/native-messaging.md).
+- **Web notifications:** a page that calls `Notification` or a service
+  worker's `showNotification` gets a real macOS notification, and clicking it
+  comes back to the tab that sent it -- switching Space if need be. WebKit
+  defines the API in a `WKWebView` and attaches nothing behind it, so Kylmora
+  provides both the API and the delivery. Per-site, from the Websites pane. See
+  [docs/web-notifications.md](docs/web-notifications.md).
 - Sync through iCloud, Google Drive, Dropbox, OneDrive, Nextcloud or WebDAV,
   or any folder: open tabs, bookmarks, website settings and rules, and
   optionally the last 2,000 visits of history. With a passphrase the archive
