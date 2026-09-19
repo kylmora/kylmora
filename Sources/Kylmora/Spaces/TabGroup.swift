@@ -45,6 +45,11 @@ final class TabGroup: Identifiable {
     /// than an emoji. The two are separate fields, not one enum, so that a
     /// session written before symbols existed still restores its emoji.
     var symbolName: String?
+    /// A picture chosen instead of either, by its file name in
+    /// `SpaceIconStore`. A third field rather than a third case for the same
+    /// reason the first two are separate: a session written before pictures
+    /// existed still restores its emoji.
+    var iconFileName: String?
 
     /// True when the contents are maintained by a `LiveFolderProvider` rather
     /// than by the user. The provider's configuration and its accumulated state
@@ -68,6 +73,7 @@ final class TabGroup: Identifiable {
         isCollapsed: Bool = false,
         parentID: TabGroup.ID? = nil,
         symbolName: String? = nil,
+        iconFileName: String? = nil,
         isLive: Bool = false,
         isLocked: Bool = false
     ) {
@@ -79,6 +85,7 @@ final class TabGroup: Identifiable {
         self.isCollapsed = isCollapsed
         self.parentID = parentID
         self.symbolName = symbolName
+        self.iconFileName = iconFileName
         self.isLive = isLive
         self.isLocked = isLocked
     }
@@ -88,11 +95,31 @@ final class TabGroup: Identifiable {
         return "\(emoji) \(name)"
     }
 
-    /// What the folder header draws. An emoji the user typed wins over a symbol
-    /// because it is the more deliberate choice of the two.
+    /// What the folder header draws.
+    ///
+    /// A picture wins over an emoji, which wins over a symbol, in order of how
+    /// deliberate the choice is. In practice only one field is ever set --
+    /// `BrowserSession.setIcon(_:for:)` clears the others -- and the order is
+    /// what decides it for a session file written by hand or merged by sync.
     var icon: FolderIcon {
+        if let iconFileName, !iconFileName.isEmpty { return .custom(iconFileName) }
         if let emoji, !emoji.isEmpty { return .emoji(emoji) }
         if let symbolName, !symbolName.isEmpty { return .symbol(symbolName) }
         return .automatic
+    }
+
+    /// Puts one of the three fields in and takes the other two out, so the
+    /// folder wears one thing at a time.
+    func setIcon(_ icon: FolderIcon) {
+        switch icon {
+        case .automatic:
+            (emoji, symbolName, iconFileName) = (nil, nil, nil)
+        case .emoji(let text):
+            (emoji, symbolName, iconFileName) = (text, nil, nil)
+        case .symbol(let name):
+            (emoji, symbolName, iconFileName) = (nil, name, nil)
+        case .custom(let fileName):
+            (emoji, symbolName, iconFileName) = (nil, nil, fileName)
+        }
     }
 }

@@ -555,6 +555,10 @@ struct ArchiveListTests {
         UITestSupport.buttons(in: list).first { $0.title == "Clear" }
     }
 
+    private func restoreAllButton(in list: ArchiveListView) -> NSButton? {
+        UITestSupport.buttons(in: list).first { $0.title == "Put Back All" }
+    }
+
     @Test("With archiving off, an empty list says where to turn it on")
     func emptyStatePointsAtTheSetting() {
         let list = ArchiveListView()
@@ -586,6 +590,27 @@ struct ArchiveListTests {
         let table = UITestSupport.descendants(of: list).compactMap { $0 as? NSTableView }.first
         #expect(table?.numberOfRows == 2)
         #expect(clearButton(in: list)?.isEnabled == true)
+        #expect(restoreAllButton(in: list)?.isEnabled == true)
+    }
+
+    @Test("Put Back All is the way out of the archive that Clear is not")
+    func putBackAllIsOfferedBesideClear() {
+        let list = ArchiveListView()
+        var restored = 0
+        list.onRestoreAll = { restored += 1 }
+
+        list.show([], isArchivingEnabled: true)
+        // Nothing listed, nothing to put back.
+        #expect(restoreAllButton(in: list)?.isEnabled == false)
+
+        list.show([entry("one"), entry("two")], isArchivingEnabled: true)
+        guard let button = restoreAllButton(in: list) else {
+            Issue.record("the list offers no way to put everything back")
+            return
+        }
+        #expect(button.isEnabled)
+        button.performClick(nil)
+        #expect(restored == 1)
     }
 
     @Test("The list is not a selection: a click puts the tab back")
@@ -1188,6 +1213,68 @@ struct SidebarArchiveTests {
 
     private func archive(in sidebar: SidebarViewController) -> ArchiveListView? {
         UITestSupport.descendants(of: sidebar.view).compactMap { $0 as? ArchiveListView }.first
+    }
+
+    /// The footer's Archive button, found the way the sidebar itself finds it.
+    private func archiveButton(in sidebar: SidebarViewController) -> IconButton? {
+        UITestSupport.descendants(of: sidebar.view)
+            .compactMap { $0 as? IconButton }
+            .first { $0.accessibilityLabel() == "Archive" }
+    }
+
+    @Test("The sidebar shows one Space's archive, and the count agrees with it")
+    func archiveAndCountAreOneSpaces() {
+        let session = TestSession.make().0
+        let first = session.activeSpace
+        let sidebar = SidebarViewController(session: session)
+        sidebar.loadViewIfNeeded()
+
+        let list = archive(in: sidebar)
+        let button = archiveButton(in: sidebar)
+        #expect(button?.badgeCount == 0, "an empty archive counts nothing")
+
+        let keep = session.activeTab!
+        session.archive([session.newTab(url: URL(string: "https://first.example/a")!)])
+        session.selectTab(keep)
+        #expect(list?.count == 1)
+        #expect(button?.badgeCount == 1)
+
+        // A second Space with an archive of its own. The sidebar is showing
+        // that one now, so both the list and the count are its.
+        let other = session.addSpace(named: "Other")
+        session.selectSpace(other)
+        session.archive([session.newTab(url: URL(string: "https://other.example/a")!)])
+        session.archive([session.newTab(url: URL(string: "https://other.example/b")!)])
+        #expect(list?.count == 2, "the sidebar is showing another Space's archive")
+        #expect(button?.badgeCount == 2)
+
+        // ...and back, without either of them having grown by the other's.
+        session.selectSpace(first)
+        #expect(list?.count == 1)
+        #expect(button?.badgeCount == 1)
+    }
+
+    @Test("Putting a Space's whole archive back empties it and leaves the archive")
+    func puttingEverythingBackLeavesTheMode() {
+        let session = TestSession.make().0
+        let sidebar = SidebarViewController(session: session)
+        sidebar.loadViewIfNeeded()
+
+        let keep = session.activeTab!
+        session.archive([session.newTab(url: URL(string: "https://example.com/a")!)])
+        session.archive([session.newTab(url: URL(string: "https://example.com/b")!)])
+        session.selectTab(keep)
+
+        sidebar.toggleArchive()
+        #expect(sidebar.isShowingArchive)
+        #expect(archive(in: sidebar)?.count == 2)
+
+        session.restoreAllArchived(in: session.activeSpace)
+        sidebar.setArchiveVisible(false)
+
+        #expect(!sidebar.isShowingArchive, "nothing left to look at, so the sidebar is the sidebar again")
+        #expect(archive(in: sidebar)?.isEmpty == true)
+        #expect(archiveButton(in: sidebar)?.badgeCount == 0)
     }
 
     @Test("The archive takes the pins' and the tab list's place, and gives them back")

@@ -126,8 +126,19 @@ final class TabOverviewHeaderView: NSView, NSSearchFieldDelegate {
         ])
     }
 
-    func update(scope: TabOverviewScope, spaceName: String, tabCount: Int, totalSpacesTabCount: Int) {
+    /// - Parameter spaceIcon: the mark on the space, or nil for one wearing
+    ///   nothing. The segment carries it beside the name, so the overview says
+    ///   which space it is showing the way every other list of spaces does.
+    func update(
+        scope: TabOverviewScope,
+        spaceName: String,
+        spaceIcon: NSImage? = nil,
+        tabCount: Int,
+        totalSpacesTabCount: Int
+    ) {
         scopeControl.setLabel("\(spaceName) (\(tabCount))", forSegment: 0)
+        scopeControl.setImage(spaceIcon, forSegment: 0)
+        scopeControl.setImageScaling(.scaleProportionallyDown, forSegment: 0)
         scopeControl.setLabel("All Spaces (\(totalSpacesTabCount))", forSegment: 1)
         scopeControl.selectedSegment = scope.rawValue
 

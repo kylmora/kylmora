@@ -199,6 +199,9 @@ final class TabOverviewGridViewController: NSViewController {
         headerView.update(
             scope: scope,
             spaceName: activeSpace.name,
+            spaceIcon: activeSpace.icon.isCustomized
+                ? activeSpace.icon.image(color: activeSpace.color, title: activeSpace.name, side: 14)
+                : nil,
             tabCount: activeSpace.tabs.count,
             totalSpacesTabCount: totalCount
         )

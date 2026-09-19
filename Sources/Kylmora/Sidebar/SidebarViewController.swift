@@ -293,6 +293,7 @@ final class SidebarViewController: NSViewController {
         archiveList.onRestore = { [weak self] record in self?.restoreFromArchive(record) }
         archiveList.onForget = { [weak self] record in self?.confirmForgetFromArchive(record) }
         archiveList.onClear = { [weak self] in self?.confirmClearArchive() }
+        archiveList.onRestoreAll = { [weak self] in self?.restoreWholeArchive() }
 
         // Everything above the footer lives in one stack of its own, because a
         // space switch moves it as a unit. Transforming four sibling views in
@@ -844,6 +845,16 @@ final class SidebarViewController: NSViewController {
         let space = shownSpace
         diaHeader.spaceButton.show(
             title: space.name,
+            // Only what the user put there. The dot is not repeated in the
+            // header: the window is already washed in the space's colour, and
+            // a dot beside the name would be saying it a second time.
+            icon: space.icon.isCustomized
+                ? space.icon.image(
+                    color: space.color,
+                    title: space.name,
+                    side: MenuLabelButton.iconSide
+                )
+                : nil,
             accessibilityLabel: "Space",
             tooltip: space.isPrivate
                 ? "\(space.name). Private: nothing is written to disk."
@@ -1367,6 +1378,20 @@ final class SidebarViewController: NSViewController {
         reloadArchive()
     }
 
+    /// Puts this space's whole archive back, and leaves the archive: the list
+    /// is empty now, and staying in an empty list to look at the sentence about
+    /// sleeping tabs is not what someone who just asked for all of them back
+    /// wants to see. The sidebar they are dropped back into is.
+    ///
+    /// No confirmation. Everything here can be archived again -- by hand from a
+    /// row's menu, or by the sweep that put it here in the first place -- which
+    /// is exactly what `confirmClearArchive` asks about and this does not have
+    /// to.
+    private func restoreWholeArchive() {
+        guard !session.restoreAllArchived(in: shownSpace).isEmpty else { return }
+        setArchiveVisible(false)
+    }
+
     /// Asks first. The archive is itself the undo for everything else, so
     /// forgetting is the one thing here that cannot be taken back.
     private func confirmForgetFromArchive(_ record: BrowserSession.ArchivedTab) {
@@ -1461,7 +1486,11 @@ final class SidebarViewController: NSViewController {
             initialPrivate: initialPrivate
         ) { [weak self] options in
             guard let self else { return }
-            let space = session.addSpace(named: options.name, isPrivate: options.isPrivate)
+            let space = session.addSpace(
+                named: options.name,
+                isPrivate: options.isPrivate,
+                icon: options.icon
+            )
             if options.keepsItsOwnColour {
                 switch options.wash {
                 case .solid(let colour):
@@ -1708,6 +1737,23 @@ final class SidebarViewController: NSViewController {
         }
         if !group.isLive {
             add("Rename\u{2026}", #selector(renameGroupFromMenu(_:)), symbol: "pencil")
+            // The same four choices a space gets, out of the same menu. A
+            // folder is the other thing in this sidebar with a name and a
+            // mark, so it marks itself the same way.
+            let icon = NSMenuItem(title: "Icon", action: nil, keyEquivalent: "")
+            icon.image = group.icon.image(tint: group.tint)
+            icon.submenu = NSMenu()
+            for item in IconMenu.items(
+                current: group.icon.asMenuChoice,
+                color: group.tint,
+                anchor: tableView
+            ) { [weak self] choice in
+                guard let self else { return }
+                session.setIcon(FolderIcon(choice), for: group)
+            } {
+                icon.submenu?.addItem(item)
+            }
+            menu.addItem(icon)
             add("Customize Appearance\u{2026}", #selector(customizeGroupFromMenu(_:)), symbol: "paintpalette")
             menu.addItem(.separator())
         }
@@ -1813,10 +1859,18 @@ final class SidebarViewController: NSViewController {
         let editor = GroupAppearanceEditor(
             appearance: group.appearance,
             tint: group.tint,
-            name: group.name
-        ) { [weak self] appearance in
-            self?.session.setAppearance(appearance, for: group)
-        }
+            name: group.name,
+            icon: group.icon,
+            onChange: { [weak self] appearance in
+                self?.session.setAppearance(appearance, for: group)
+            },
+            onRename: { [weak self] name in
+                self?.session.rename(group, to: name)
+            },
+            onIcon: { [weak self] icon in
+                self?.session.setIcon(icon, for: group)
+            }
+        )
         let popover = NSPopover()
         popover.contentViewController = editor
         // Semitransient, not transient: the colour panel is another window, and
@@ -2123,9 +2177,24 @@ final class SidebarViewController: NSViewController {
         session.closeAllTabs(in: shownSpace)
     }
 
+    /// The sheet that names a folder, marks it and colours it in one step --
+    /// the New Space sheet's counterpart.
+    ///
+    /// A folder used to arrive from a text prompt with a name and nothing
+    /// else, and then needed two more trips through two more menus to get the
+    /// icon and the colour it was always going to get. It is the same panel
+    /// the folder's own Customize Appearance opens, with a name on top.
     @objc private func newGroupFromMenu() {
-        guard let name = prompt(title: "New Group", message: "Name this group.", initial: "") else { return }
-        session.createGroup(named: name)
+        let sheet = GroupAppearanceEditor(
+            creatingWithTint: shownSpace.color
+        ) { [weak self] options in
+            guard let self else { return }
+            let group = session.createGroup(named: options.name)
+            if options.icon.isCustomized { session.setIcon(options.icon, for: group) }
+            if !options.appearance.isStandard { session.setAppearance(options.appearance, for: group) }
+        }
+        presentAsSheet(sheet)
+        sheet.focusName()
     }
 
     @objc private func newRSSGroupFromMenu() {

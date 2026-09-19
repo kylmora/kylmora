@@ -13,6 +13,7 @@ final class SpacesSettingsViewController: NSViewController {
     private let session: BrowserSession
     private let grid = SpaceGridView()
     private let nameField = NSTextField()
+    private let iconWell = IconWell()
     private let picker = SpaceThemePicker()
     private let borderSummary = NSTextField(labelWithString: "")
     private let appearanceControl = NSSegmentedControl(labels: SpaceAppearanceChoice.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
@@ -148,8 +149,22 @@ final class SpacesSettingsViewController: NSViewController {
         // The field refuses the character past the limit rather than letting a
         // long name be typed and silently cut when it is stored.
         nameField.formatter = LimitedLengthFormatter(limit: Space.maximumNameLength)
-        form.addRow("Space name", SettingsForm.fill(nameField))
+        iconWell.onChange = { [weak self] choice in
+            guard let self, let editing else { return }
+            session.setIcon(SpaceIcon(choice), for: editing)
+            showIcon(for: editing)
+            reloadGrid()
+        }
+        // On the name's row rather than a row of its own: the mark and the
+        // name are the one thing, and the well sits before the field exactly
+        // where the icon sits before the name everywhere it is drawn.
+        let nameRow = NSStackView(views: [iconWell, SettingsForm.fill(nameField)])
+        nameRow.orientation = .horizontal
+        nameRow.alignment = .centerY
+        nameRow.spacing = 8
+        form.addRow("Space name", nameRow)
         form.addNote(detailLabel)
+        form.addNote("The icon is shown wherever this space is named -- the sidebar header, the space menu, the window list. Choose an emoji, one of the symbols, or a picture of your own (PNG, SVG, JPEG, TIFF, HEIC, GIF or PDF).")
 
         appearanceControl.target = self
         appearanceControl.action = #selector(appearanceChoiceChanged)
@@ -360,6 +375,7 @@ final class SpacesSettingsViewController: NSViewController {
         editing = space
         reloadGrid()
         nameField.stringValue = space.name
+        showIcon(for: space)
         picker.show(space.theme)
         picker.showCustomColor(space.look.customColor)
         showBorder(space.border)
@@ -398,6 +414,17 @@ final class SpacesSettingsViewController: NSViewController {
         sleepPopUp.selectItem(at: space.sleepMinutes.flatMap { Self.sleepChoices.firstIndex(of: $0) }.map { $0 + 1 } ?? 0)
         zoomPopUp.selectItem(at: space.defaultZoom.flatMap { zoom in SiteSettingCategory.pageZoom.options.firstIndex { $0.id == zoom } }.map { $0 + 1 } ?? 0)
         userAgentField.stringValue = space.userAgent ?? ""
+    }
+
+    /// The well, in the space's own colour: a symbol is drawn in it, and the
+    /// dot *is* it, so the well has to be told the colour again whenever the
+    /// space's colour changes.
+    private func showIcon(for space: Space) {
+        iconWell.show(
+            image: space.icon.image(color: space.color, title: space.name, side: IconWell.side),
+            current: space.icon.asMenuChoice,
+            color: space.color
+        )
     }
 
     static let sleepChoices = [0, 5, 10, 30, 60]
@@ -518,6 +545,7 @@ final class SpacesSettingsViewController: NSViewController {
     /// segments, and, while customised, the solid/gradient fill and its
     /// controls. Only the rows for the current fill are shown.
     private func updateColorControls(for space: Space) {
+        showIcon(for: space)
         let choice = SpaceAppearanceChoice.of(space)
         appearanceControl.selectedSegment = choice.rawValue
 

@@ -141,7 +141,12 @@ final class BrowserSession {
     ///   - theme: the colour, or nil for the next one no space is using, so
     ///     two spaces made in a row are told apart without a visit to Settings.
     @discardableResult
-    func addSpace(named name: String, isPrivate: Bool = false, theme: SpaceTheme? = nil) -> Space {
+    func addSpace(
+        named name: String,
+        isPrivate: Bool = false,
+        theme: SpaceTheme? = nil,
+        icon: SpaceIcon = .automatic
+    ) -> Space {
         // Held to the limit here rather than at each caller: a name reaches
         // this from a sheet, from Settings, from the menu bar and from the
         // companion iPhone, and only one of those is a text field we control.
@@ -150,6 +155,7 @@ final class BrowserSession {
             identity: isPrivate ? .makeEphemeral() : .makeIsolated(),
             theme: theme ?? nextUnusedTheme()
         )
+        space.icon = icon
         spaces.append(space)
         activeSpaceID = space.id
         changes.send(.spaces)
@@ -163,6 +169,21 @@ final class BrowserSession {
     func nextUnusedTheme() -> SpaceTheme {
         let taken = Set(spaces.map(\.theme))
         return SpaceTheme.palette.first { $0 != .neutral && !taken.contains($0) } ?? .default
+    }
+
+    /// Puts an emoji, a symbol or a picture on a space -- or takes it off.
+    ///
+    /// The picture the space was carrying is deleted as it is replaced. These
+    /// files are owned by the icon that names them and referred to by nothing
+    /// else, so one no space points at is a file nothing will ever draw.
+    func setIcon(_ icon: SpaceIcon, for space: Space) {
+        guard space.icon != icon else { return }
+        if let old = space.icon.customFileName, old != icon.customFileName {
+            SpaceIconStore.shared.remove(named: old)
+        }
+        space.icon = icon
+        changes.send(.spaces)
+        scheduleSave()
     }
 
     /// Recolours a space. Every window showing it repaints, which is the whole
@@ -318,6 +339,11 @@ final class BrowserSession {
     func removeSpace(_ space: Space) {
         guard spaces.count > 1, let index = spaces.firstIndex(where: { $0.id == space.id }) else { return }
         for tab in space.tabs { forget(tab) }
+        // ...and so does the picture it was wearing, for the same reason: the
+        // file is the icon's, and the icon is going.
+        if let fileName = space.icon.customFileName {
+            SpaceIconStore.shared.remove(named: fileName)
+        }
         // Its archive goes with it. The records are filed by space id, so ones
         // left behind by a deleted space are unreachable -- no list will ever
         // show them and nothing can restore them -- while still counting
@@ -1106,6 +1132,56 @@ final class BrowserSession {
         guard let index = archivedTabs.firstIndex(where: { $0.id == archived.id }) else { return nil }
         let record = archivedTabs.remove(at: index)
         let space = spaces.first { $0.id == record.spaceID } ?? activeSpace
+        let tab = revive(record, into: space)
+        if space.id != activeSpaceID { selectSpace(space) }
+        insert(tab, into: space, at: space.tabs.count, select: true)
+        scheduleSave()
+        return tab
+    }
+
+    /// Puts a space's whole archive back where it came from, in the order it
+    /// left: the sidebar ends up reading the way it did before the sweep, not
+    /// reversed.
+    ///
+    /// The counterpart to Clear. Clear is the answer to "I am never going to
+    /// want any of these"; this is the answer to the opposite, and without it
+    /// the only way back from an archive of thirty tabs is thirty clicks.
+    ///
+    /// The rows go in without announcing themselves one at a time -- a `.tabs`
+    /// per tab would rebuild and re-animate the sidebar's list once for every
+    /// tab restored, which on a full archive is the difference between a list
+    /// appearing and a list flickering into place.
+    @discardableResult
+    func restoreAllArchived(in space: Space) -> [Tab] {
+        let records = archivedTabs
+            .filter { $0.spaceID == space.id }
+            .sorted { $0.archivedAt < $1.archivedAt }
+        guard !records.isEmpty else { return [] }
+        archivedTabs.removeAll { $0.spaceID == space.id }
+
+        let restored = records.map { record -> Tab in
+            let tab = revive(record, into: space)
+            adopt(tab)
+            space.insert(tab, at: space.tabs.count)
+            return tab
+        }
+        // The one archived most recently ends up selected: it is the one a
+        // user who has just emptied the archive went looking for.
+        if space.activeTabID == nil, let last = restored.last {
+            space.setActiveTabID(last.id)
+        }
+        if space.id != activeSpaceID { selectSpace(space) }
+        if let last = restored.last { selectTab(last) }
+
+        changes.send(.structure)
+        changes.send(.tabs)
+        changes.send(.activeTab)
+        scheduleSave()
+        return restored
+    }
+
+    /// One archived record as a tab again, ready to be put into `space`.
+    private func revive(_ record: ArchivedTab, into space: Space) -> Tab {
         var snapshot = record.snapshot
         // Its folder may have been deleted while it sat in the archive; a tab
         // pointing at a group that no longer exists would be invisible.
@@ -1117,11 +1193,7 @@ final class BrowserSession {
         // on the next pass -- because its saved `lastActiveAt` is still days old
         // -- would be the single most infuriating bug this feature could have.
         snapshot.lastActiveAt = .now
-        let tab = Tab(restoring: snapshot, identity: space.identity)
-        if space.id != activeSpaceID { selectSpace(space) }
-        insert(tab, into: space, at: space.tabs.count, select: true)
-        scheduleSave()
-        return tab
+        return Tab(restoring: snapshot, identity: space.identity)
     }
 
     /// Drops one from the archive without bringing it back.
@@ -1290,6 +1362,23 @@ final class BrowserSession {
         scheduleSave()
     }
 
+    /// Puts an emoji, a symbol or a picture on a folder -- or takes it off.
+    ///
+    /// The same three choices a space has, from the same menu and out of the
+    /// same store, because they are the same feature: the only difference is
+    /// what a folder falls back to when it wears nothing, which is its plate.
+    func setIcon(_ icon: FolderIcon, for group: TabGroup) {
+        guard group.icon != icon else { return }
+        // The picture it was wearing goes as it is replaced. These files are
+        // owned by the icon that names them and referred to by nothing else.
+        if let old = group.icon.customFileName, old != icon.customFileName {
+            SpaceIconStore.shared.remove(named: old)
+        }
+        group.setIcon(icon)
+        changes.send(.structure)
+        scheduleSave()
+    }
+
     /// Repaints the plate behind a group: its fill, gradient and raised rim.
     func setAppearance(_ appearance: TabGroupAppearance, for group: TabGroup) {
         guard group.appearance != appearance else { return }
@@ -1308,6 +1397,11 @@ final class BrowserSession {
             for tab in activeSpace.tabs.filter({ $0.groupID == group.id }) {
                 closeTab(tab)
             }
+        }
+        // Its picture goes with it, for the same reason a deleted space's
+        // does: the file is the icon's, and the icon is going.
+        if let fileName = group.icon.customFileName {
+            SpaceIconStore.shared.remove(named: fileName)
         }
         activeSpace.removeGroup(group)
         changes.send(.structure)
@@ -1953,6 +2047,7 @@ final class BrowserSession {
                             isCollapsed: $0.isCollapsed,
                             parentID: $0.parentID,
                             symbolName: $0.symbolName,
+                            iconFileName: $0.iconFileName,
                             isLive: $0.isLive ? true : nil,
                             isLocked: $0.isLocked ? true : nil
                         )
@@ -1975,7 +2070,8 @@ final class BrowserSession {
                     searchEngineID: space.searchEngineID,
                     userAgent: space.userAgent,
                     sleepMinutes: space.sleepMinutes,
-                    defaultZoom: space.defaultZoom
+                    defaultZoom: space.defaultZoom,
+                    icon: space.icon
                 )
             },
             activeSpaceIndex: spaces.firstIndex { $0.id == activeSpaceID } ?? 0
@@ -2025,6 +2121,7 @@ final class BrowserSession {
                 sleepMinutes: stored.sleepMinutes,
                 defaultZoom: stored.defaultZoom
             )
+            space.icon = stored.icon ?? .automatic
             WebEnvironment.shared.setFonts(space.look.fonts, for: space.identity)
             let groups = (stored.groups ?? []).map {
                 TabGroup(
@@ -2036,6 +2133,7 @@ final class BrowserSession {
                     isCollapsed: $0.isCollapsed,
                     parentID: $0.parentID,
                     symbolName: $0.symbolName,
+                    iconFileName: $0.iconFileName,
                     isLive: $0.isLive ?? false,
                     isLocked: $0.isLocked ?? false
                 )
