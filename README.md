@@ -5,10 +5,10 @@
 ![Swift](https://img.shields.io/badge/swift-6-orange.svg)
 [![CI](https://github.com/kylmora/kylmora/actions/workflows/ci.yml/badge.svg)](https://github.com/kylmora/kylmora/actions/workflows/ci.yml)
 
-**A lightweight, native macOS browser.** An AppKit shell over the system WebKit,
+**A native macOS browser.** An AppKit shell over the system WebKit,
 one window with Spaces inside it, and no bundled engine or third-party
 dependencies. The whole app is a few hundred Swift files linking only Apple's
-frameworks, and the release bundle is about 5 MB.
+frameworks, and the universal download is 6.1 MB.
 
 <p align="center">
   <img src="assets/screenshot.png" alt="Kylmora's vertical sidebar with Spaces, pinned sites and tab groups" width="440">
@@ -377,26 +377,44 @@ What is not built yet is in [docs/roadmap.md](docs/roadmap.md).
 
 ## Performance
 
-Measured with `make measure` on Apple silicon, macOS 26, with 35 tabs
-restored and one page shown. Memory is physical footprint, the number
-Activity Monitor shows.
+Measured with `make measure` on 2026-09-19 against v0.1.63, Apple silicon,
+macOS 26.6. Memory is physical footprint, the number Activity Monitor shows.
+
+**Memory here is the whole browser**, not Kylmora's process: the UI process plus
+every WebKit process working for it. Pages render in WebKit content, network and
+GPU processes that are XPC services parented to launchd, so quoting Kylmora's own
+process reports a fraction of what the browser costs. It is a true number that
+gives a false impression, and a reader with Activity Monitor open will say so.
+`make measure` attributes those services by the client bundle id each one writes
+into its own cache and temp directory, which is exact rather than inferred.
 
 | Metric | Value |
 |---|---|
-| Release bundle | 5.2 MB, no bundled frameworks, no package dependencies |
-| First line of app code | 0.39 s after launch (warm), 0.76 s (cold) |
-| Window on screen | 0.62 s (warm), 0.97 s (cold) |
-| Kylmora's own launch work, database to window | about 0.2 s |
-| Browser process at the window | 38 MB |
-| Browser process once launch finishes | 58 MB |
-| WebKit content process, one page | about 200 MB, which is the page's |
+| Universal download | 6.1 MB, installs to 12.2 MB |
+| Apple-silicon-only download | 3.1 MB, installs to 5.8 MB |
+| Bundled frameworks, package dependencies | 0, 0 |
+| Window on screen, warm | 0.62 s |
+| Whole browser, one tab | 99 MB |
+| Whole browser, 31 tabs restored, one shown | 502 MB |
+| Kylmora's own process in that state | 66 MB |
+| Whole browser, 5 Reddit tabs all opened | 1,783 MB |
+| The same 5 tabs after a restart, one shown | 479 MB |
 
-Most of the time before the window is the system loading the binary and
-the frameworks it links; Kylmora's own work, from opening the database to
-ordering the window, is a fifth of a second. Sync, live folders, timers,
-housekeeping and the update check start only after the window has drawn.
-Twenty-five restored tabs cost a single content process, because a tab that
-has not been shown has no web view.
+The last two rows are the point. A live page costs about what it costs in Safari,
+because it is the same engine; Kylmora cannot make a page cheaper. What it does
+is decline to pay for tabs nobody has looked at: a restored tab has no web view
+until it is shown, which is the whole difference between 1,783 MB and 479 MB.
+The app's own log states it directly, `tabs=31 loaded=1`.
+
+Most of the time before the window is the system loading the binary and the
+frameworks it links. Sync, live folders, timers, housekeeping and the update
+check start only after the window has drawn.
+
+An earlier version of this table quoted a 5.2 MB bundle, which was the
+Apple-silicon slice rather than the build the download button hands you, and
+38 MB and 58 MB for the browser process, which excluded the pages. Both are
+corrected above rather than quietly restated. Figures not re-measured on
+2026-09-19 have been dropped instead of carried forward.
 
 ## Where data lives
 
