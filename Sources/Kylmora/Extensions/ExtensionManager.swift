@@ -33,6 +33,9 @@ final class ExtensionManager: NSObject {
         let icon: NSImage?
         /// Load errors, WebKit's words.
         let problems: [String]
+        /// Something worth saying that is not a fault, such as how many
+        /// blocking rules an extension contributed.
+        let note: String?
         var id: UUID { record.id }
     }
 
@@ -93,6 +96,20 @@ final class ExtensionManager: NSObject {
         ExtensionSidebarStore.shared.onChange = { id in
             ExtensionSidebarService.shared.stateChanged(for: id)
         }
+        // An extension's declarativeNetRequest rules are enforced by WebKit's
+        // content rule matcher, which knows nothing about Spaces -- so it is
+        // told here which extension applies where.
+        DeclarativeNetRequestService.shared.isEnabledInSpace = { [weak self] recordID, identity in
+            guard let self else { return false }
+            let space = self.session?.spaces.first { $0.identity == identity }
+            return self.isExtensionEnabled(recordID, in: space)
+        }
+        DeclarativeNetRequestService.shared.extensionBaseURL = { [weak self] recordID in
+            self?.contexts[recordID]?.baseURL
+        }
+        DeclarativeNetRequestService.shared.onChange = {
+            ContentBlocker.shared.extensionRulesChanged()
+        }
         for record in records where record.isEnabled {
             Task { await load(record) }
         }
@@ -108,7 +125,8 @@ final class ExtensionManager: NSObject {
                 displayVersion: ext?.displayVersion ?? record.version,
                 summary: ext?.displayDescription ?? "",
                 icon: ext?.icon(for: CGSize(width: 32, height: 32)),
-                problems: problems[record.id] ?? []
+                problems: problems[record.id] ?? [],
+                note: DeclarativeNetRequestService.shared.summary(for: record.id)
             )
         }
     }
@@ -223,6 +241,9 @@ final class ExtensionManager: NSObject {
             extensions[record.id] = ext
             contexts[record.id] = context
             ExtensionSidebarStore.shared.adopt(sidebar?.definition, for: record.id)
+            // Read from the folder rather than from the engine: WebKit does
+            // not implement the API, so it has nothing to tell us about it.
+            await DeclarativeNetRequestService.shared.load(recordID: record.id, folder: folder)
             problems[record.id] = (ext.errors + context.errors).map(\.localizedDescription)
             if Self.isLogging {
                 let probe = URL(string: "https://duckduckgo.com/")!
@@ -248,6 +269,7 @@ final class ExtensionManager: NSObject {
 
     private func unload(_ id: UUID) {
         ExtensionSidebarService.shared.forget(id)
+        DeclarativeNetRequestService.shared.forget(recordID: id)
         if let context = contexts[id] {
             try? controller.unload(context)
         }
@@ -433,6 +455,24 @@ extension ExtensionManager: WKWebExtensionControllerDelegate {
         for context: WKWebExtensionContext,
         replyHandler: @escaping (Any?, Error?) -> Void
     ) {
+        // Kylmora's own name for the rules API, answered in process. Nothing
+        // is started on the Mac for it.
+        if DeclarativeNetRequestService.isBrokerHost(applicationIdentifier) {
+            guard let id = recordID(for: context), let body = message as? [String: Any] else {
+                return replyHandler(nil, NativeMessagingService.error(NativeMessagingService.Denial.noSuchHost(DeclarativeNetRequestShim.brokerHostName)))
+            }
+            let method = body["method"] as? String ?? ""
+            let arguments = (body["args"] as? [String: Any]) ?? [:]
+            Task { @MainActor in
+                switch await DeclarativeNetRequestService.shared.perform(method, arguments: arguments, for: id) {
+                case .value(let value):
+                    replyHandler(["value": value ?? NSNull()], nil)
+                case .failure(let reason):
+                    replyHandler(["error": reason], nil)
+                }
+            }
+            return
+        }
         if ExtensionSidebarService.isBrokerHost(applicationIdentifier) {
             guard let id = recordID(for: context), let body = message as? [String: Any] else {
                 return replyHandler(nil, NativeMessagingService.error(NativeMessagingService.Denial.noSuchHost(ExtensionSidebarShim.brokerHostName)))

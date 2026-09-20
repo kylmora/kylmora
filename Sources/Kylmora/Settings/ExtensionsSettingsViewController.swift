@@ -173,6 +173,9 @@ final class ExtensionsSettingsViewController: NSViewController {
         } else if entry.record.firefoxSlug != nil {
             summary = summary.isEmpty ? "From Firefox Add-ons." : summary + " From Firefox Add-ons."
         }
+        if let note = entry.note {
+            summary = summary.isEmpty ? note : summary + " " + note
+        }
         let detail = NSTextField(wrappingLabelWithString: entry.problems.isEmpty
             ? summary
             : entry.problems.joined(separator: " "))
