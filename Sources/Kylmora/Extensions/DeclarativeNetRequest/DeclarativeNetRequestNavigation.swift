@@ -39,12 +39,12 @@ enum DeclarativeNetRequestNavigation {
     ) -> Decision {
         guard let url = request.url else { return Decision(outcome: .proceed, ruleID: nil) }
 
-        let matches = rules.filter {
+        let candidates = rules.filter {
             matches($0, url: url, request: request, isMainFrame: isMainFrame, pageURL: pageURL)
         }
-        guard !matches.isEmpty else { return Decision(outcome: .proceed, ruleID: nil) }
+        guard !candidates.isEmpty else { return Decision(outcome: .proceed, ruleID: nil) }
 
-        let winner = matches.max { left, right in
+        let winner = candidates.max { left, right in
             if left.priority != right.priority { return left.priority < right.priority }
             return rank(left.action) < rank(right.action)
         }
