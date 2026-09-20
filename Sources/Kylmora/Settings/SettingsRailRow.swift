@@ -20,6 +20,10 @@ final class SettingsRailRow: NSView {
     private let mark = SettingsPlateView()
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
+    /// A live number at the trailing edge -- a space's memory in the Task
+    /// Manager's rail. Hidden unless something sets it, so every rail that does
+    /// not want one is unchanged.
+    private let detail = NSTextField(labelWithString: "")
     private let onClick: () -> Void
     private var trackingArea: NSTrackingArea?
     private let pill = CALayer()
@@ -40,10 +44,31 @@ final class SettingsRailRow: NSView {
         }
     }
 
+    /// What goes inside a row's coloured mark.
+    ///
+    /// A pane is always a white SF Symbol. A space is whatever its owner put on
+    /// it -- an emoji, a picture, a symbol -- which is the whole point of space
+    /// icons, and a rail that redrew them all as the same glyph would be a
+    /// third place in the browser where a space does not look like itself.
+    enum Mark {
+        /// A white SF Symbol on the accent.
+        case symbol(String)
+        /// A picture drawn as it is: an emoji, or a space's own icon.
+        case picture(NSImage)
+        /// The coloured tile and nothing on it, for a space that never chose
+        /// an icon. Its mark *is* a coloured dot, and drawing that dot on a
+        /// tile of the same colour would draw nothing you can see.
+        case plain
+    }
+
     /// A row is its name, its mark and what happens when it is pressed --
     /// nothing about panes. The spine builds one per pane; the Websites pane
-    /// builds one per category.
-    init(title: String, symbolName: String, accent: NSColor, onClick: @escaping () -> Void) {
+    /// builds one per category; the Task Manager builds one per space.
+    convenience init(title: String, symbolName: String, accent: NSColor, onClick: @escaping () -> Void) {
+        self.init(title: title, mark: .symbol(symbolName), accent: accent, onClick: onClick)
+    }
+
+    init(title: String, mark markKind: Mark, accent: NSColor, onClick: @escaping () -> Void) {
         self.title = title
         self.onClick = onClick
         super.init(frame: .zero)
@@ -57,13 +82,32 @@ final class SettingsRailRow: NSView {
         mark.cornerRadius = Style.SettingsUI.spineTileRadius
         addSubview(mark)
 
-        icon.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
-        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
-        icon.contentTintColor = .white
+        switch markKind {
+        case .symbol(let name):
+            icon.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+            icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+            icon.contentTintColor = .white
+        case .picture(let image):
+            // No tint: the picture is already whatever the user chose, and
+            // painting it white would be the thing this case exists to avoid.
+            icon.image = image
+        case .plain:
+            icon.image = nil
+        }
         icon.imageScaling = .scaleProportionallyDown
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.setAccessibilityElement(false)
         addSubview(icon)
+
+        detail.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .medium)
+        detail.textColor = Style.Colors.tertiaryText
+        detail.alignment = .right
+        detail.translatesAutoresizingMaskIntoConstraints = false
+        detail.setAccessibilityElement(false)
+        detail.isHidden = true
+        detail.setContentHuggingPriority(.required, for: .horizontal)
+        detail.setContentCompressionResistancePriority(.required, for: .horizontal)
+        addSubview(detail)
 
         label.stringValue = title
         label.font = Style.Fonts.settingsRow
@@ -87,8 +131,11 @@ final class SettingsRailRow: NSView {
                 constant: Style.SettingsUI.spineTileGapToLabel
             ),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10)
+            label.trailingAnchor.constraint(lessThanOrEqualTo: detail.leadingAnchor, constant: -6),
+            detail.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -(inset + 8)),
+            detail.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         setAccessibilityRole(.button)
         setAccessibilityLabel(title)
@@ -97,6 +144,13 @@ final class SettingsRailRow: NSView {
 
     required init?(coder: NSCoder) {
         fatalError("SettingsRailRow is created in code only")
+    }
+
+    /// The number at the trailing edge. Nil takes it away again.
+    func setDetail(_ text: String?) {
+        detail.stringValue = text ?? ""
+        detail.isHidden = text == nil
+        setAccessibilityLabel(text.map { "\(title), \($0)" } ?? title)
     }
 
     override var wantsUpdateLayer: Bool { true }

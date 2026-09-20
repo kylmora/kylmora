@@ -26,6 +26,7 @@ final class Settings {
         static let sidebarHoverDelay = "sidebarHoverDelay"
         static let sidebarDensity = "sidebarDensity"
         static let showsTabStrip = "showsTabStrip"
+        static let taskManagerInSidebar = "showsTaskManagerInSidebar"
         static let toolbarLayout = "toolbarLayout"
         static let zenMode = "zenModeEnabled"
         static let spaceSwitchWraps = "spaceSwitchWrapsAround"
@@ -196,6 +197,11 @@ final class Settings {
             Key.sidebarHoverDelay: SidebarHoverDelayPreset.balanced.rawValue,
             Key.sidebarDensity: SidebarDensity.regular.rawValue,
             Key.showsTabStrip: false,
+            // On. The button is how most people will ever find the Task
+            // Manager -- a keyboard shortcut nobody has been told about is not
+            // a way in -- and the switch is there for the people who want the
+            // footer back.
+            Key.taskManagerInSidebar: true,
             Key.zenMode: false,
             Key.spaceSwitchWraps: true,
             Key.appearance: AppearancePreference.system.rawValue,
@@ -993,6 +999,21 @@ final class Settings {
         }
     }
 
+    /// Whether the sidebar's footer carries the Task Manager button.
+    ///
+    /// Switching it off does not take the Task Manager away: it stays on the
+    /// Window menu, on Shift-Command-U, and on its own pane in Settings, which
+    /// is where the switch is. A control that could hide the only way back to
+    /// itself would be a trap.
+    var showsTaskManagerInSidebar: Bool {
+        get { defaults.bool(forKey: Key.taskManagerInSidebar) }
+        set {
+            guard newValue != showsTaskManagerInSidebar else { return }
+            defaults.set(newValue, forKey: Key.taskManagerInSidebar)
+            NotificationCenter.default.post(name: .taskManagerButtonDidChange, object: nil)
+        }
+    }
+
     /// How tall the sidebar's rows are. Changing it rebuilds the rows.
     var sidebarDensity: SidebarDensity {
         get { SidebarDensity(rawValue: defaults.string(forKey: Key.sidebarDensity) ?? "") ?? .regular }
@@ -1508,6 +1529,7 @@ public struct CustomFilterList: Codable, Identifiable, Equatable, Sendable {
 
 extension Notification.Name {
     static let developMenuSettingDidChange = Notification.Name("developMenuSettingDidChange")
+    static let taskManagerButtonDidChange = Notification.Name("taskManagerButtonDidChange")
     static let mouseGesturesSettingDidChange = Notification.Name("mouseGesturesSettingDidChange")
     static let linkHintsSettingDidChange = Notification.Name("linkHintsSettingDidChange")
     static let vimBindingsSettingDidChange = Notification.Name("vimBindingsSettingDidChange")
