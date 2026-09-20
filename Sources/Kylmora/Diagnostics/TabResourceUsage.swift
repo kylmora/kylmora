@@ -9,6 +9,10 @@ public struct TabResourceUsage: Identifiable, Sendable, Equatable {
     public let url: URL?
     public let domain: String
     public let spaceName: String
+    /// Which space the tab is in, for the per-space rollups. Optional so a
+    /// reading taken without a session to hand -- a test, a tab already gone
+    /// by the time the sweep reached it -- is still a valid one.
+    public let spaceID: UUID?
     public let isSuspended: Bool
     public let isPlayingAudio: Bool
     public let pid: pid_t?
@@ -23,6 +27,7 @@ public struct TabResourceUsage: Identifiable, Sendable, Equatable {
         url: URL?,
         domain: String,
         spaceName: String,
+        spaceID: UUID? = nil,
         isSuspended: Bool,
         isPlayingAudio: Bool,
         pid: pid_t?,
@@ -37,6 +42,7 @@ public struct TabResourceUsage: Identifiable, Sendable, Equatable {
         self.url = url
         self.domain = domain
         self.spaceName = spaceName
+        self.spaceID = spaceID
         self.isSuspended = isSuspended
         self.isPlayingAudio = isPlayingAudio
         self.pid = pid

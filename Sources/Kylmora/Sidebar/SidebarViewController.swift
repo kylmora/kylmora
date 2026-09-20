@@ -253,11 +253,11 @@ final class SidebarViewController: NSViewController {
         }
         // One way to reach each thing. The dots switch spaces; everything
         // else about a space -- making, renaming, recolouring, deleting --
-        // is the header menu's and Settings' job. The two standing buttons are
-        // the browser-wide lists that outlive any tab or space, one in each
-        // corner: Downloads for what came out of the web, Archive for what
-        // left the sidebar. A foot-of-the-sidebar affordance is where the eye
-        // looks for both.
+        // is the header menu's and Settings' job. The standing buttons are the
+        // browser-wide lists that outlive any tab or space: Downloads for what
+        // came out of the web, the Task Manager for what the browser is
+        // costing right now, Archive for what left the sidebar. A foot-of-the-sidebar
+        // affordance is where the eye looks for all three.
         //
         // The Archive button is always there, including when the archive is
         // empty and when archiving is switched off. A control that appears only
@@ -266,11 +266,7 @@ final class SidebarViewController: NSViewController {
         // the sidebar into the archive and lights up while the archive is what
         // the sidebar is showing; the archive's own empty state explains
         // itself, and says where the setting is.
-        diaFooter.setLeadingActions([
-            TopBarAction(symbolName: "arrow.down.circle", label: "Downloads") {
-                DownloadManager.shared.showList()
-            }
-        ])
+        rebuildFooterLeadingActions()
         diaFooter.setTrailingActions([
             TopBarAction(symbolName: "archivebox", label: "Archive") { [weak self] in
                 self?.toggleArchive()
@@ -457,6 +453,18 @@ final class SidebarViewController: NSViewController {
             }
         }
 
+        // The footer's Task Manager button, switched on or off in Settings
+        // while the window is open.
+        NotificationCenter.default.addObserver(
+            forName: .taskManagerButtonDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.rebuildFooterLeadingActions()
+            }
+        }
+
         // A new density means new row heights, so every row is rebuilt.
         NotificationCenter.default.addObserver(
             forName: .sidebarDensityDidChange,
@@ -469,6 +477,35 @@ final class SidebarViewController: NSViewController {
                 self.reloadTabs()
             }
         }
+    }
+
+    /// The buttons in the footer's leading corner.
+    ///
+    /// Rebuilt rather than hidden, because the footer owns its buttons and
+    /// hands them out fresh whenever its actions are set -- and because the
+    /// Task Manager one is optional, so what is down there depends on a
+    /// setting that can change while the window is open.
+    private func rebuildFooterLeadingActions() {
+        var actions = [
+            TopBarAction(symbolName: "arrow.down.circle", label: "Downloads") {
+                DownloadManager.shared.showList()
+            }
+        ]
+        // The Task Manager sits beside Downloads rather than opposite Archive
+        // because it belongs to the same family: a browser-wide window that is
+        // about the browser, not about this space. It opens the same one as
+        // Shift-Command-U -- the gauge is for the people who never learn the
+        // shortcut, which is most people, and "why is the fan on" is a question
+        // you ask while looking at the window.
+        if settings.showsTaskManagerInSidebar {
+            actions.append(
+                TopBarAction(symbolName: "speedometer", label: "Task Manager") { [weak self] in
+                    guard let self else { return }
+                    TaskManagerWindowController.show(session: self.session)
+                }
+            )
+        }
+        diaFooter.setLeadingActions(actions)
     }
 
     private func findActiveMediaTab() -> Tab? {

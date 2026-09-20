@@ -428,6 +428,19 @@ enum Style {
         static var secondaryText: NSColor { .secondaryLabelColor }
         static var tertiaryText: NSColor { .tertiaryLabelColor }
 
+        // MARK: Graphs
+
+        /// The plate a usage graph is drawn on, in the Task Manager.
+        ///
+        /// Ink rather than a window background: these sit on a plain window and
+        /// have to read as raised off it in both coats, which a fixed grey can
+        /// only do in one.
+        static var graphCardFill: NSColor { ink(light: 0.035, dark: 0.07) }
+        static var graphCardBorder: NSColor { ink(light: 0.09, dark: 0.12) }
+        /// The two or three rules behind a graph's line. Faint on purpose: they
+        /// are there to give a height a reference, not to be read themselves.
+        static var graphGrid: NSColor { ink(light: 0.08, dark: 0.12) }
+
         /// Near-full contrast for the current space and a clearly visible grey
         /// for the others: a dot the user cannot see is not an indicator.
         static var pageDotActive: NSColor { .labelColor }

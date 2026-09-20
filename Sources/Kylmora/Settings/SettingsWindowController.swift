@@ -50,6 +50,7 @@ final class SettingsWindowController: NSWindowController {
         case importData
         case sync
         case advanced
+        case taskManager
         case about
 
         var group: PaneGroup {
@@ -57,7 +58,7 @@ final class SettingsWindowController: NSWindowController {
             case .general, .browsing, .search, .spaces, .shortcuts, .automations: return .browsing
             case .privacy, .passwords, .websites: return .privacy
             case .extensions, .importData, .sync: return .content
-            case .advanced, .about: return .system
+            case .advanced, .taskManager, .about: return .system
             }
         }
 
@@ -76,6 +77,7 @@ final class SettingsWindowController: NSWindowController {
             case .websites: return "Websites"
             case .sync: return "Sync"
             case .advanced: return "Advanced"
+            case .taskManager: return "Task Manager"
             case .about: return "About"
             }
         }
@@ -98,6 +100,7 @@ final class SettingsWindowController: NSWindowController {
             case .websites: return "Per-site permissions: zoom, camera, sound, notifications."
             case .sync: return "Keep tabs, bookmarks and settings together across your Macs."
             case .advanced: return "Developer tools, rendering and everything not settled elsewhere."
+            case .taskManager: return "What every space and page is costing in memory, processor and graphics."
             case .about: return "Version, updates, and who made this."
             }
         }
@@ -121,6 +124,7 @@ final class SettingsWindowController: NSWindowController {
             case .importData: return ["safari", "chrome", "firefox", "bookmarks", "migrate"]
             case .sync: return ["icloud", "devices", "backup"]
             case .advanced: return ["developer", "inspector", "json", "experimental"]
+            case .taskManager: return ["memory", "ram", "cpu", "processor", "gpu", "graphics", "activity", "performance", "usage", "slow", "hog"]
             case .about: return ["version", "update", "licence", "license", "credits"]
             }
         }
@@ -149,13 +153,14 @@ final class SettingsWindowController: NSWindowController {
             case .websites: return "globe"
             case .sync: return "arrow.triangle.2.circlepath"
             case .advanced: return "slider.horizontal.3"
+            case .taskManager: return "speedometer"
             case .about: return "info.circle"
             }
         }
 
         /// The tile's colour, and the card edge and eyebrow on its page.
         ///
-        /// Thirteen hues, walked around the wheel in rail order so neighbours
+        /// Fifteen hues, walked around the wheel in rail order so neighbours
         /// never collide, and grouped by meaning where it helps: the three
         /// privacy panes are the warm end, the three content panes the cool.
         /// You stop reading the spine after a week and start reaching for
@@ -175,6 +180,7 @@ final class SettingsWindowController: NSWindowController {
             case .importData: return NSColor(srgbRed: 0.47, green: 0.52, blue: 0.90, alpha: 1)
             case .sync: return NSColor(srgbRed: 0.42, green: 0.63, blue: 0.94, alpha: 1)
             case .advanced: return NSColor(srgbRed: 0.55, green: 0.57, blue: 0.64, alpha: 1)
+            case .taskManager: return NSColor(srgbRed: 0.30, green: 0.74, blue: 0.82, alpha: 1)
             case .about: return NSColor(srgbRed: 0.85, green: 0.48, blue: 0.66, alpha: 1)
             }
         }
@@ -529,6 +535,7 @@ final class SettingsWindowController: NSWindowController {
             return websites
         case .sync: return SyncSettingsViewController(coordinator: syncCoordinator, settings: settings)
         case .advanced: return AdvancedSettingsViewController(settings: settings)
+        case .taskManager: return TaskManagerSettingsViewController(session: session, settings: settings)
         case .about: return AboutSettingsViewController()
         }
     }

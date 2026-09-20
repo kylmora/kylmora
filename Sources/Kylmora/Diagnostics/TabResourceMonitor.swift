@@ -19,6 +19,24 @@ final class TabResourceMonitor: NSObject {
     }
 
     private var previousSamples: [pid_t: CPUSample] = [:]
+
+    /// CPU and memory for the processes that are not pages: Kylmora itself and
+    /// WebKit's GPU helper. Separate from `previousSamples` because those are
+    /// keyed by a tab's content process and swept when tabs close.
+    var helperSampler = ProcessSampler()
+
+    /// What the graphs draw. Held by the monitor rather than by the window, so
+    /// the line survives closing the Task Manager and opening it again.
+    var totalCpuHistory = UsageHistory()
+    var totalMemoryHistory = UsageHistory()
+    var gpuHistory = UsageHistory()
+    /// The last reading of Kylmora's cumulative GPU time, which is what a
+    /// percentage is worked out against.
+    private var lastGpuSample: (timestamp: TimeInterval, nanoseconds: UInt64)?
+    var tabCpuHistory: [UUID: UsageHistory] = [:]
+    var tabMemoryHistory: [UUID: UsageHistory] = [:]
+    var spaceCpuHistory: [UUID: UsageHistory] = [:]
+    var spaceMemoryHistory: [UUID: UsageHistory] = [:]
     private var alertedHogTabs: Set<UUID> = []
     private var backgroundSweepTimer: Timer?
 
@@ -43,15 +61,16 @@ final class TabResourceMonitor: NSObject {
         var results: [TabResourceUsage] = []
 
         // Precompute space mappings
-        var tabSpaceMap: [UUID: String] = [:]
+        var tabSpaceMap: [UUID: (name: String, id: UUID)] = [:]
         for space in session.spaces {
             for tab in space.tabs {
-                tabSpaceMap[tab.id] = space.name
+                tabSpaceMap[tab.id] = (space.name, space.id)
             }
         }
 
         for tab in session.allTabs {
-            let spaceName = tabSpaceMap[tab.id] ?? "Space"
+            let home = tabSpaceMap[tab.id]
+            let spaceName = home?.name ?? "Space"
             let isSuspended = !tab.isLoaded
             let isPlayingAudio = tab.isPlayingAudio
             let domain = tab.url.host ?? ""
@@ -64,6 +83,7 @@ final class TabResourceMonitor: NSObject {
                     url: tab.url,
                     domain: domain,
                     spaceName: spaceName,
+                    spaceID: home?.id,
                     isSuspended: true,
                     isPlayingAudio: isPlayingAudio,
                     pid: nil,
@@ -113,6 +133,7 @@ final class TabResourceMonitor: NSObject {
                 url: tab.url,
                 domain: domain,
                 spaceName: spaceName,
+                spaceID: home?.id,
                 isSuspended: false,
                 isPlayingAudio: isPlayingAudio,
                 pid: pid,
@@ -169,4 +190,163 @@ final class TabResourceMonitor: NSObject {
             ))
         }
     }
+}
+
+// MARK: - Whole-browser sampling and history
+
+/// One pass over everything the browser is costing, at one moment.
+///
+/// Gathered in a single sweep rather than asked for column by column, because
+/// CPU is a difference between two readings: sampling the same process twice in
+/// one refresh makes the second reading a fraction of a second after the first
+/// and reports a busy page as idle.
+struct ResourceSnapshot {
+    var tabs: [TabResourceUsage] = []
+    /// Kylmora's own process -- the UI, the sidebar, everything that is not a
+    /// page.
+    var browserMemoryBytes: UInt64 = 0
+    var browserCpuPercentage: Double = 0
+    /// Every WebKit content process, counted once each however many tabs share
+    /// it.
+    var webContentMemoryBytes: UInt64 = 0
+    var webContentCpuPercentage: Double = 0
+    /// WebKit's one GPU helper, which every page's compositing goes through.
+    var gpuProcessMemoryBytes: UInt64 = 0
+    var gpuProcessCpuPercentage: Double = 0
+    /// Kylmora's own share of the GPU, as a percentage of wall-clock time:
+    /// the app, WebKit's GPU process and any page process that has drawn. Nil
+    /// on a Mac whose driver publishes no per-process GPU time.
+    var ownGpuPercentage: Double?
+    /// How busy the machine's GPU is, 0-100, everything on it included. Context
+    /// for the figure above -- a GPU at 90 per cent while Kylmora is at 3 is
+    /// something else's doing.
+    var machineGpuUtilisation: Double?
+
+    var totalMemoryBytes: UInt64 { browserMemoryBytes + webContentMemoryBytes + gpuProcessMemoryBytes }
+    var totalCpuPercentage: Double { browserCpuPercentage + webContentCpuPercentage + gpuProcessCpuPercentage }
+
+    var activeTabCount: Int { tabs.count { !$0.isSuspended } }
+    var suspendedTabCount: Int { tabs.count(where: \.isSuspended) }
+}
+
+extension TabResourceMonitor {
+    /// Everything the Task Manager draws, and the history behind it.
+    ///
+    /// Recording happens here rather than in the view, so the graphs keep
+    /// filling for as long as something is sampling -- and so two windows
+    /// looking at the same browser see the same line rather than each building
+    /// a history of its own.
+    func snapshot(in session: BrowserSession) -> ResourceSnapshot {
+        let now = ProcessInfo.processInfo.systemUptime
+        var snapshot = ResourceSnapshot()
+        snapshot.tabs = sampleAllTabs(in: session)
+
+        // Counted once per process. Several tabs in one space share a WebKit
+        // content process, and adding their identical readings together would
+        // report three times the memory that is actually in use.
+        var seen: Set<pid_t> = []
+        for usage in snapshot.tabs where !usage.isSuspended {
+            guard let pid = usage.pid else {
+                snapshot.webContentMemoryBytes += usage.memoryBytes
+                snapshot.webContentCpuPercentage += usage.cpuPercentage
+                continue
+            }
+            guard seen.insert(pid).inserted else { continue }
+            snapshot.webContentMemoryBytes += usage.memoryBytes
+            snapshot.webContentCpuPercentage += usage.cpuPercentage
+        }
+
+        if let own = helperSampler.sample(pid: getpid(), now: now) {
+            snapshot.browserMemoryBytes = Metrics.physicalFootprint() ?? own.memoryBytes
+            snapshot.browserCpuPercentage = own.cpuPercentage
+        } else {
+            snapshot.browserMemoryBytes = Metrics.physicalFootprint() ?? 0
+        }
+
+        var helpers: Set<pid_t> = [getpid()]
+        if let gpuPid = GPUMetrics.processIdentifier(in: session) {
+            helpers.insert(gpuPid)
+            if let reading = helperSampler.sample(pid: gpuPid, now: now) {
+                snapshot.gpuProcessMemoryBytes = reading.memoryBytes
+                snapshot.gpuProcessCpuPercentage = reading.cpuPercentage
+            }
+        }
+        helperSampler.forgetEveryPidExcept(helpers)
+
+        // Kylmora's own GPU time: this process, WebKit's GPU process, and every
+        // page process. In practice the GPU process is the one that has any --
+        // WebKit does all page drawing there -- which is exactly why this
+        // figure cannot be split per space.
+        var family = helpers
+        for usage in snapshot.tabs {
+            if let pid = usage.pid { family.insert(pid) }
+        }
+        snapshot.ownGpuPercentage = ownGpuPercentage(of: family, at: now)
+        snapshot.machineGpuUtilisation = GPUMetrics.deviceUtilisation()
+
+        record(snapshot)
+        return snapshot
+    }
+
+    /// Kylmora's GPU time since the last sweep, as a share of the time that
+    /// passed. Zero on the first reading, because a rate needs two points.
+    private func ownGpuPercentage(of pids: Set<pid_t>, at now: TimeInterval) -> Double? {
+        guard let total = GPUMetrics.accumulatedGPUTime(ofPids: pids) else { return nil }
+        defer { lastGpuSample = (now, total) }
+        guard let last = lastGpuSample else { return 0 }
+        let elapsed = now - last.timestamp
+        // A client that has gone takes its accumulated time with it, so the
+        // total can fall. That is not negative GPU use; it is a reset.
+        guard elapsed > 0.1, total >= last.nanoseconds else { return 0 }
+        return Double(total - last.nanoseconds) / (elapsed * 1_000_000_000) * 100
+    }
+
+    private func record(_ snapshot: ResourceSnapshot) {
+        totalCpuHistory.record(snapshot.totalCpuPercentage)
+        totalMemoryHistory.record(UsageFormat.megabytes(snapshot.totalMemoryBytes))
+        // The graph draws Kylmora's own share, not the machine's: a line that
+        // rose because something else started rendering would say the browser
+        // was doing it.
+        if let gpu = snapshot.ownGpuPercentage {
+            gpuHistory.record(gpu)
+        }
+
+        for usage in snapshot.tabs {
+            tabCpuHistory[usage.tabId, default: UsageHistory()].record(usage.cpuPercentage)
+            tabMemoryHistory[usage.tabId, default: UsageHistory()]
+                .record(UsageFormat.megabytes(usage.memoryBytes))
+        }
+        // A closed tab's history is not worth keeping: reopening it starts a
+        // new process, so the old line would describe something that no longer
+        // exists. Dropping it here is also what stops the two dictionaries
+        // growing for as long as the window is open.
+        let living = Set(snapshot.tabs.map(\.tabId))
+        tabCpuHistory = tabCpuHistory.filter { living.contains($0.key) }
+        tabMemoryHistory = tabMemoryHistory.filter { living.contains($0.key) }
+
+        // A space's line is the rollup's, not the sum of its tabs': tabs in
+        // one space share a WebKit process, and adding their identical
+        // readings together would draw a graph of several times the memory
+        // that is actually in use.
+        var bySpace: [UUID: [TabResourceUsage]] = [:]
+        for usage in snapshot.tabs {
+            guard let space = usage.spaceID else { continue }
+            bySpace[space, default: []].append(usage)
+        }
+        for (space, usages) in bySpace {
+            let rollup = ActivityMath.rollup(of: usages)
+            spaceCpuHistory[space, default: UsageHistory()].record(rollup.cpuPercentage)
+            spaceMemoryHistory[space, default: UsageHistory()]
+                .record(UsageFormat.megabytes(rollup.memoryBytes))
+        }
+        let livingSpaces = Set(bySpace.keys)
+        spaceCpuHistory = spaceCpuHistory.filter { livingSpaces.contains($0.key) }
+        spaceMemoryHistory = spaceMemoryHistory.filter { livingSpaces.contains($0.key) }
+    }
+
+    func cpuHistory(forSpace id: UUID) -> UsageHistory { spaceCpuHistory[id] ?? UsageHistory() }
+    func memoryHistory(forSpace id: UUID) -> UsageHistory { spaceMemoryHistory[id] ?? UsageHistory() }
+
+    func cpuHistory(forTab id: UUID) -> UsageHistory { tabCpuHistory[id] ?? UsageHistory() }
+    func memoryHistory(forTab id: UUID) -> UsageHistory { tabMemoryHistory[id] ?? UsageHistory() }
 }
