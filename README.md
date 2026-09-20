@@ -220,6 +220,12 @@ locking settings across a fleet with a configuration profile or a
   extensions may reach it. Settings ▸ Extensions lists what is installed,
   says why a manifest was refused, and can switch any of it off. See
   [docs/native-messaging.md](docs/native-messaging.md).
+- **Extension blocking rules:** an MV3 content blocker's
+  `declarativeNetRequest` rules are read, translated and enforced by WebKit's
+  own matcher. WebKit's extension engine does not implement the API, so such a
+  blocker otherwise installs, looks healthy and blocks nothing. Rules that
+  cannot be translated are reported rather than dropped quietly. See
+  [docs/declarative-net-request.md](docs/declarative-net-request.md).
 - **Web notifications:** a page that calls `Notification` or a service
   worker's `showNotification` gets a real macOS notification, and clicking it
   comes back to the tab that sent it -- switching Space if need be. WebKit
@@ -373,7 +379,10 @@ documentation, tests and code. The short version:
 New here? Issues labelled **`good first issue`** are a friendly starting point.
 The full guide covers setup, the project's code-style principles (Swift 6 strict
 concurrency, system frameworks only, no "fake" UI), and the review process.
-What is not built yet is in [docs/roadmap.md](docs/roadmap.md).
+What is not built yet is in [docs/roadmap.md](docs/roadmap.md), and where
+Kylmora stands against the nearest comparable browser -- what has been
+closed, and what this engine simply cannot do -- is in
+[docs/competitive-gap-status.md](docs/competitive-gap-status.md).
 
 ## Performance
 

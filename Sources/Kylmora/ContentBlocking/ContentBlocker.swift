@@ -91,9 +91,28 @@ final class ContentBlocker {
     var activeLists: [FilterList] { settings.contentBlocking.activeLists() }
 
     /// Registers a controller and gives it every list that is ready.
-    func attach(_ controller: WKUserContentController) {
+    ///
+    /// The Space is remembered because an extension's `declarativeNetRequest`
+    /// rules apply only where that extension is enabled, and the controller is
+    /// the only handle on the page this far down.
+    func attach(_ controller: WKUserContentController, identity: Space.Identity? = nil) {
         controllers.add(controller)
+        if let identity { identities.setObject(IdentityBox(identity), forKey: controller) }
         apply(to: controller)
+    }
+
+    /// A Space identity is an enum, and `NSMapTable` wants an object.
+    private final class IdentityBox {
+        let identity: Space.Identity
+        init(_ identity: Space.Identity) { self.identity = identity }
+    }
+
+    private let identities = NSMapTable<WKUserContentController, IdentityBox>.weakToStrongObjects()
+
+    /// An extension's translated rules changed: every open page's controller
+    /// takes the new list on its next load, as with any other list here.
+    func extensionRulesChanged() {
+        applyToAll()
     }
 
     /// Loads, fetching and compiling whatever is active and not yet ready.
@@ -300,6 +319,15 @@ final class ContentBlocker {
                 if let ruleList = customCompiled[customList.id] { controller.add(ruleList) }
             }
             if let userRules { controller.add(userRules) }
+            // An extension's own rules, translated. These are not part of the
+            // user's filter lists and are not switched by them: an extension
+            // the person installed and enabled for this Space blocks what it
+            // says it blocks.
+            if let identity = identities.object(forKey: controller)?.identity {
+                for ruleList in DeclarativeNetRequestService.shared.ruleLists(for: identity) {
+                    controller.add(ruleList)
+                }
+            }
         }
         // The user's own per-site rules apply whatever the filter lists do.
         if let siteRules { controller.add(siteRules) }

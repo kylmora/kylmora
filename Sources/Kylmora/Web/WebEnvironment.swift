@@ -124,7 +124,7 @@ final class WebEnvironment {
         ContextMenuManager.shared.install(in: configuration)
 
         // The chosen filter lists, applied inside WebKit.
-        ContentBlocker.shared.attach(configuration.userContentController)
+        ContentBlocker.shared.attach(configuration.userContentController, identity: identity)
         // Automatic cookie banner rejection for common CMPs.
         CookieConsentAutoReject.shared.attach(configuration.userContentController)
         // Interactive element picker and zapper message handler.

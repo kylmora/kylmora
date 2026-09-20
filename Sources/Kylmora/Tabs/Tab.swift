@@ -1191,6 +1191,28 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
             tab?.showBlockedByPolicy(url: url)
             return
         }
+        // An extension's redirect or header rule. WebKit's content matcher can
+        // do neither, so they are settled here, where a navigation can still
+        // be cancelled and re-issued. A subresource never reaches this point,
+        // which is why those rules are reported as page-and-frame only.
+        if let identity = tab?.identity, DeclarativeNetRequestService.shared.hasNavigationRules {
+            switch DeclarativeNetRequestService.shared.navigationDecision(
+                request: navigationAction.request,
+                isMainFrame: navigationAction.targetFrame?.isMainFrame ?? true,
+                pageURL: webView.url,
+                identity: identity
+            ) {
+            case .block:
+                decisionHandler(.cancel, preferences)
+                return
+            case .replace(let replacement):
+                decisionHandler(.cancel, preferences)
+                webView.load(replacement)
+                return
+            case .proceed:
+                break
+            }
+        }
         if navigationAction.targetFrame?.isMainFrame ?? true,
            let url, Settings.shared.trackerRemoval.applies(isPrivate: tab?.isPrivate ?? false),
            let cleaned = TrackingParameters.cleaned(url) {

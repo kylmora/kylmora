@@ -41,13 +41,27 @@ enum ExtensionSidebarPackage {
         guard var manifest = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             throw Failure.unreadableManifest
         }
-        guard ExtensionSidebarDefinition.wantsSidebarAPI(manifest) else { return .notWanted }
+        // Two APIs WebKit's engine does not provide are put in the same way,
+        // so an extension that wants either is wrapped once and gets both
+        // files it asked for -- and only those.
+        let wantsSidebar = ExtensionSidebarDefinition.wantsSidebarAPI(manifest)
+        let wantsNetRequest = DeclarativeNetRequestDefinition.wantsAPI(manifest)
+        guard wantsSidebar || wantsNetRequest else { return .notWanted }
 
-        let definition = ExtensionSidebarDefinition.read(from: manifest)
-        // Written every time, not only the first: the shim travels with
+        let definition = wantsSidebar ? ExtensionSidebarDefinition.read(from: manifest) : nil
+        // Written every time, not only the first: the shims travel with
         // Kylmora, and an extension installed against an older one should be
         // brought up to date rather than left on it.
-        try write(ExtensionSidebarShim.worker, to: folder.appending(path: ExtensionSidebarShim.workerFileName))
+        var shimFiles: [String] = []
+        if wantsSidebar {
+            try write(ExtensionSidebarShim.worker, to: folder.appending(path: ExtensionSidebarShim.workerFileName))
+            shimFiles.append(ExtensionSidebarShim.workerFileName)
+        }
+        if wantsNetRequest {
+            try write(DeclarativeNetRequestShim.worker,
+                      to: folder.appending(path: DeclarativeNetRequestShim.workerFileName))
+            shimFiles.append(DeclarativeNetRequestShim.workerFileName)
+        }
 
         if let marker = manifest[markerKey] as? [String: Any], marker["kind"] != nil {
             // Already wrapped. The shim file has just been refreshed, which is
@@ -63,7 +77,7 @@ enum ExtensionSidebarPackage {
         if var background = manifest["background"] as? [String: Any] {
             if let worker = background["service_worker"] as? String, !worker.isEmpty {
                 let isModule = (background["type"] as? String) == "module"
-                try write(entryPoint(loading: worker, asModule: isModule),
+                try write(entryPoint(loading: worker, asModule: isModule, shims: shimFiles),
                           to: folder.appending(path: ExtensionSidebarShim.workerEntryFileName))
                 background["service_worker"] = ExtensionSidebarShim.workerEntryFileName
                 manifest["background"] = background
@@ -71,19 +85,19 @@ enum ExtensionSidebarPackage {
                 marker["original"] = worker
                 wrapped = true
             } else if let scripts = background["scripts"] as? [String], !scripts.isEmpty {
-                background["scripts"] = [ExtensionSidebarShim.workerFileName] + scripts
+                background["scripts"] = shimFiles + scripts
                 manifest["background"] = background
                 marker["kind"] = "scripts"
                 marker["original"] = scripts
                 wrapped = true
             } else {
                 marker["kind"] = "none"
-                note = "This extension's background page is an HTML file, so the side panel API is available in its "
-                    + "panel but not in its background code."
+                note = "This extension's background page is an HTML file, so the APIs Kylmora adds are available in "
+                    + "its own pages but not in its background code."
             }
         } else {
             marker["kind"] = "none"
-            note = "This extension has no background code, so its panel is all there is to set up."
+            note = "This extension has no background code, so there was nothing to add the APIs to."
         }
 
         if wrapped {
@@ -116,22 +130,24 @@ enum ExtensionSidebarPackage {
     /// The file that becomes the extension's background entry: the shim, then
     /// the extension's own code, in that order so the API exists before the
     /// first line that might use it runs.
-    static func entryPoint(loading original: String, asModule: Bool) -> String {
+    static func entryPoint(loading original: String, asModule: Bool, shims: [String]) -> String {
         let originalPath = original.hasPrefix("./") ? original : "./" + original
         if asModule {
+            let imports = shims.map { "import './\($0)';" }.joined(separator: "\n")
             return """
             // Written by Kylmora. The extension's own worker is below, loaded
-            // unchanged; the line above it is the side panel API this engine
-            // does not provide.
-            import './\(ExtensionSidebarShim.workerFileName)';
+            // unchanged; the lines above it are the APIs this engine does not
+            // provide.
+            \(imports)
             import '\(originalPath)';
             """
         }
+        let loads = shims.map { "importScripts('\($0)');" }.joined(separator: "\n")
         return """
-        // Written by Kylmora. The extension's own worker is loaded second and
-        // unchanged; the first line is the side panel API this engine does not
+        // Written by Kylmora. The extension's own worker is loaded last and
+        // unchanged; the lines before it are the APIs this engine does not
         // provide.
-        importScripts('\(ExtensionSidebarShim.workerFileName)');
+        \(loads)
         importScripts('\(original)');
         """
     }
