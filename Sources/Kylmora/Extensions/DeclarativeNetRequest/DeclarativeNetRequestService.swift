@@ -410,15 +410,15 @@ extension DeclarativeNetRequestService {
 
         case "getDynamicRules", "getSessionRules":
             let session = method == "getSessionRules"
-            var rules = rules(session: session, for: recordID)
+            var answer = rules(session: session, for: recordID)
             // Chrome's optional filter, which uBO and friends do pass.
             if let filter = arguments["filter"] as? [String: Any],
                let wanted = (filter["ruleIds"] as? [Any])?.compactMap({ ($0 as? NSNumber)?.intValue }),
                !wanted.isEmpty {
                 let keep = Set(wanted)
-                rules = rules.filter { keep.contains($0.id) }
+                answer = answer.filter { keep.contains($0.id) }
             }
-            return .value(rules.map(Self.encode))
+            return .value(answer.map(Self.encode))
 
         case "updateEnabledRulesets":
             let enable = (arguments["enableRulesetIds"] as? [Any])?.compactMap { $0 as? String } ?? []
