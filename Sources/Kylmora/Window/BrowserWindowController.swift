@@ -969,7 +969,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             defaultSpaceID: currentSpaceID
         )
 
-        installer.onInstall = { (finalName: String, targetURL: URL, spaceID: UUID?, icon: NSImage?) in
+        installer.onInstall = { (finalName: String, targetURL: URL, spaceID: UUID?, icon: NSImage?, opensAfterInstall: Bool) in
             do {
                 let app = try WebAppManager.shared.install(
                     name: finalName,
@@ -977,7 +977,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
                     spaceID: spaceID,
                     icon: icon
                 )
-                WebAppManager.shared.open(app: app)
+                if opensAfterInstall { WebAppManager.shared.open(app: app) }
                 if let bundlePath = app.appBundlePath {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: bundlePath)])
                 }

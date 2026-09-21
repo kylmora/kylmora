@@ -15,7 +15,27 @@ final class SessionStore {
 
     func load() -> SessionSnapshot? {
         guard let data = try? Data(contentsOf: fileURL) else { return nil }
-        return try? JSONDecoder().decode(SessionSnapshot.self, from: data)
+        do {
+            return try JSONDecoder().decode(SessionSnapshot.self, from: data)
+        } catch {
+            // A session that will not decode is every Space, tab, scroll
+            // position and half-typed form the user had open -- and `save`
+            // writes over this file, so the next one of those destroys it.
+            // Keep the bytes beside it so they survive that.
+            //
+            // One copy under a fixed name, not a timestamped one: a session
+            // that stays broken across launches would otherwise fill the
+            // support folder with copies of the same dead file.
+            //
+            // This matters most for the version that adds a field: the
+            // snapshot is synthesised `Codable`, so a new property without a
+            // default makes every file written by the previous version fail
+            // here, and every user loses their tabs on upgrade.
+            let backup = fileURL.deletingLastPathComponent()
+                .appending(path: "session.undecodable.json")
+            try? data.write(to: backup)
+            return nil
+        }
     }
 
     /// A digest of the bytes last written, so an unchanged session is not

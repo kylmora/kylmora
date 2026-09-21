@@ -158,14 +158,23 @@ public final class GestureTrailView: NSView {
     }
 
     /// Fades out the trail smoothly and executes completion callback.
-    public func fadeOut(duration: TimeInterval = 0.22, completion: (() -> Void)? = nil) {
+    ///
+    /// `completion` is `@MainActor @Sendable` because it has to cross into
+    /// AppKit's completion block, which is imported as `@Sendable`. A plain
+    /// `(() -> Void)?` cannot be sent there without risking a data race.
+    public func fadeOut(duration: TimeInterval = 0.22, completion: (@MainActor @Sendable () -> Void)? = nil) {
         NSAnimationContext.runAnimationGroup({ ctx in
             ctx.duration = duration
             self.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
-            self?.removeFromSuperview()
-            self?.reset()
-            completion?()
+            // AppKit runs this block on the main thread, but it is imported as
+            // `@Sendable`, so the compiler cannot prove it. Assume what is true
+            // rather than hop to the actor and leave the trail up an extra turn.
+            MainActor.assumeIsolated {
+                self?.removeFromSuperview()
+                self?.reset()
+                completion?()
+            }
         })
     }
 }

@@ -141,10 +141,10 @@ final class ExtensionManager: NSObject {
         let folder = try await Task.detached(priority: .userInitiated) {
             try ExtensionPackage.install(from: source, id: id, under: root)
         }.value
-        // Before the engine ever sees it: an extension with a side panel needs
-        // an API this engine does not have, and the only place to put one is
-        // inside the package.
-        try? ExtensionSidebarPackage.prepare(folder: folder)
+        // The side-panel shim is written by `load`, called at the end of this
+        // method, which is the place a failure can be recorded against the
+        // extension rather than thrown away. Writing it here as well only did
+        // the same work twice.
         let summary = ExtensionPackage.manifestSummary(in: folder)
         let record = InstalledExtension(
             id: id,
@@ -218,7 +218,19 @@ final class ExtensionManager: NSObject {
         let folder = index.folder(for: record)
         // Every load, not only the first: this brings an extension installed
         // before Kylmora could do side panels up to the shim it ships now.
-        let sidebar = try? ExtensionSidebarPackage.prepare(folder: folder)
+        //
+        // A failure here does not stop the extension loading -- the rest of it
+        // may work perfectly -- but its side panel will never appear, and the
+        // engine has nothing to say about it because WebKit does not implement
+        // the API at all. So it is recorded against the extension below rather
+        // than dropped quietly, the same rule the blocking rules follow.
+        var sidebar: ExtensionSidebarPackage.Outcome?
+        var sidebarProblem: String?
+        do {
+            sidebar = try ExtensionSidebarPackage.prepare(folder: folder)
+        } catch {
+            sidebarProblem = "Its side panel could not be set up, so it will not appear."
+        }
         do {
             let ext = try await WKWebExtension(resourceBaseURL: folder)
             let context = WKWebExtensionContext(for: ext)
@@ -244,7 +256,12 @@ final class ExtensionManager: NSObject {
             // Read from the folder rather than from the engine: WebKit does
             // not implement the API, so it has nothing to tell us about it.
             await DeclarativeNetRequestService.shared.load(recordID: record.id, folder: folder)
-            problems[record.id] = (ext.errors + context.errors).map(\.localizedDescription)
+            var found = (ext.errors + context.errors).map(\.localizedDescription)
+            if let sidebarProblem { found.append(sidebarProblem) }
+            // The shim can be written and still not load -- `prepare` says why
+            // in `note`, and until now nothing was reading it.
+            if let note = sidebar?.note { found.append(note) }
+            problems[record.id] = found
             if Self.isLogging {
                 let probe = URL(string: "https://duckduckgo.com/")!
                 NSLog("kylmora.extension: loaded %@ isLoaded=%d access=%d injected=%d patterns=%@ errors=%@",

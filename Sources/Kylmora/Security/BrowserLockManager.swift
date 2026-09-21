@@ -55,7 +55,7 @@ public final class BrowserLockManager: NSObject {
         isLocked = false
         lastActivityDate = Date()
 
-        for (window, overlay) in overlays {
+        for (_, overlay) in overlays {
             if animated {
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = 0.2

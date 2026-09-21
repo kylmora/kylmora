@@ -19,6 +19,13 @@ enum SiteBehaviourScripts {
         mediaWatcher, nativeVideoPlayer, antiFingerprinting, hostileBehaviourBlocker, clipboardRead
     ].map { "try {\n\($0)\n} catch (e) {}" }.joined(separator: "\n")
 
+    /// The scripts as WebKit objects, ready to add to a content controller.
+    ///
+    /// Main-actor only: `WKUserScript` is, and building one off the actor is a
+    /// race WebKit does not document and does not tolerate. The only caller is
+    /// `SitePolicy.attach`, which is already on the actor, so this states what
+    /// was already true rather than changing anything.
+    @MainActor
     static var all: [WKUserScript] {
         [
             WKUserScript(source: documentStart, injectionTime: .atDocumentStart, forMainFrameOnly: false),
