@@ -102,7 +102,10 @@ final class WindowBorderView: NSView {
     /// nobody can see is not left sweeping under the ring. Unless a drag has
     /// brought it back in the meantime, in which case it is not outgoing.
     private func retire(_ coat: Coat, after duration: TimeInterval) {
-        let clear = { [weak self] in
+        // `@MainActor @Sendable` because `asyncAfter` takes a `@Sendable`
+        // block, and everything the closure touches -- the view, the coat --
+        // is main-actor already. Both call sites below are on the actor.
+        let clear: @MainActor @Sendable () -> Void = { [weak self] in
             guard let self, coat === back, coat.container.opacity == 0, coat.border != .none else { return }
             coat.configure(.none)
             relayoutCoats()

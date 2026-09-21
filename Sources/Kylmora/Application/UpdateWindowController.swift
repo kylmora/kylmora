@@ -301,7 +301,7 @@ final class UpdateWindowController: NSWindowController {
                 let writtenMB = Double(bytesWritten) / (1024 * 1024)
                 progressDetailLabel.stringValue = String(format: "%.1f MB downloaded", writtenMB)
             }
-        case .readyToInstall(let fileURL):
+        case .readyToInstall:
             notesScrollView.isHidden = true
             autoUpdateCheckbox.isHidden = true
             buttonStack.isHidden = true

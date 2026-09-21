@@ -396,7 +396,7 @@ extension DownloadsPopover: NSTableViewDataSource, NSTableViewDelegate {
     }
 }
 
-extension DownloadsPopover: @preconcurrency QLPreviewPanelDataSource, @preconcurrency QLPreviewPanelDelegate {
+extension DownloadsPopover: @preconcurrency QLPreviewPanelDataSource, QLPreviewPanelDelegate {
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
         quickLookURL == nil ? 0 : 1
     }

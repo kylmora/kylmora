@@ -115,7 +115,12 @@ final class ReadingListViewController: NSViewController, NSTableViewDataSource, 
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.reloadItems()
+            // The observer is registered on `.main`, so this runs on the main
+            // thread -- but the block is imported as `@Sendable` and the
+            // compiler cannot prove it. Assume what is true.
+            MainActor.assumeIsolated {
+                self?.reloadItems()
+            }
         }
 
         reloadItems()

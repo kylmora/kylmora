@@ -80,7 +80,11 @@ enum SupportContact {
         guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 0 else { return "unknown" }
         var bytes = [CChar](repeating: 0, count: size)
         guard sysctlbyname("hw.model", &bytes, &size, nil, 0) == 0 else { return "unknown" }
-        return String(cString: bytes)
+        // `String(cString:)` is deprecated. Cut at the terminator the same way
+        // it did, then decode -- `String(decoding:as:)` repairs malformed bytes
+        // exactly as `String(cString:)` did, so this is the same string.
+        let utf8 = bytes.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+        return String(decoding: utf8, as: UTF8.self)
     }
 
     // MARK: - Composing mail

@@ -4,7 +4,10 @@ import AppKit
 /// as a standalone macOS application.
 @MainActor
 final class WebAppInstallViewController: NSViewController {
-    var onInstall: ((String, URL, UUID?, NSImage?) -> Void)?
+    /// Name, URL, Space, icon, and whether to open the app once it is built --
+    /// the last is the "Open application after install" checkbox, which used to
+    /// be handed to nobody, so unticking it changed nothing.
+    var onInstall: ((String, URL, UUID?, NSImage?, Bool) -> Void)?
     var onCancel: (() -> Void)?
 
     private let initialName: String
@@ -182,7 +185,7 @@ final class WebAppInstallViewController: NSViewController {
         }
 
         let selectedSpaceID = spacePopup.selectedItem?.representedObject as? UUID
-        onInstall?(finalName, url, selectedSpaceID, initialIcon)
+        onInstall?(finalName, url, selectedSpaceID, initialIcon, openAfterInstallCheckbox.state == .on)
         dismiss(nil)
     }
 }

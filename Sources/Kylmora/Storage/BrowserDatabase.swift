@@ -208,15 +208,21 @@ actor BrowserDatabase {
         try group(where: "1 = 1", parameters: [.integer(Int64(limit))], orderByRecency: true)
     }
 
+    /// Forgets every visit, and the search index with it.
+    ///
+    /// The index delete is deliberately not best-effort. Full-text search reads
+    /// `history_fts` directly rather than joining `visits`, so a row left
+    /// behind is a page the user deleted that search still hands back. A
+    /// failure here is reported to the caller instead of swallowed.
     func clearHistory() throws {
         try database.run("DELETE FROM visits;")
-        try? database.run("DELETE FROM history_fts;")
+        try database.run("DELETE FROM history_fts;")
     }
 
     /// Forgets everything visited before a moment.
     func deleteHistory(before date: Date) throws {
         try database.run("DELETE FROM visits WHERE visited_at < ?;", [.double(date.timeIntervalSince1970)])
-        try? database.run("DELETE FROM history_fts WHERE url NOT IN (SELECT url FROM visits);")
+        try database.run("DELETE FROM history_fts WHERE url NOT IN (SELECT url FROM visits);")
     }
 
     /// Indexes page text content for on-device full-text search.

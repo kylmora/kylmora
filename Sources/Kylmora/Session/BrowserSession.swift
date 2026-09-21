@@ -1758,9 +1758,17 @@ final class BrowserSession {
         return (try? await database.recentHistory(limit: limit)) ?? []
     }
 
+    /// Forgets every visit. Asked for from the menu, so a failure is said out
+    /// loud rather than left as a silent no-op the user would read as success.
     func clearHistory() {
         guard let database else { return }
-        Task { try? await database.clearHistory() }
+        Task {
+            do {
+                try await database.clearHistory()
+            } catch {
+                reportHistoryFailure()
+            }
+        }
     }
 
     // MARK: - Bookmarks
@@ -1776,10 +1784,21 @@ final class BrowserSession {
         let title = tab.displayTitle
         let isBookmarked = activeTabIsBookmarked
         Task {
-            if isBookmarked {
-                try? await database.removeBookmark(url: url)
-            } else {
-                try? await database.addBookmark(url: url, title: title)
+            do {
+                if isBookmarked {
+                    try await database.removeBookmark(url: url)
+                } else {
+                    try await database.addBookmark(url: url, title: title)
+                }
+            } catch {
+                // `loadBookmarks` below re-reads the store, so on a failure the
+                // star simply does not move. Without this it looks like the
+                // page refused to be saved for no reason.
+                showToast?(Toast(
+                    symbolName: "exclamationmark.triangle",
+                    message: isBookmarked ? "Could not remove the bookmark" : "Could not save the bookmark",
+                    identity: "toggle-bookmark"
+                ))
             }
             loadBookmarks()
         }
@@ -1795,9 +1814,24 @@ final class BrowserSession {
     }
 
     /// Removes history older than the retention setting, if there is one.
+    ///
+    /// Scheduled, not asked for: it runs at launch and when the setting
+    /// changes. A failure is not something to interrupt someone with mid-task,
+    /// and the next launch tries again, so this one stays best-effort.
     func pruneHistory() {
         guard let database, let cutoff = settings.historyRetention.cutoff() else { return }
         Task { try? await database.deleteHistory(before: cutoff) }
+    }
+
+    /// Says that history could not be cleared, once, wherever it was tried
+    /// from. One identity, so Clear History and a reset do not stack two
+    /// identical messages.
+    private func reportHistoryFailure() {
+        showToast?(Toast(
+            symbolName: "exclamationmark.triangle",
+            message: "Could not clear your history",
+            identity: "clear-history"
+        ))
     }
 
     /// Every space's identity that keeps data on disk.
@@ -1818,7 +1852,13 @@ final class BrowserSession {
     /// work, not the web's residue.
     func resetBrowsingData() async {
         closedTabs.removeAll()
-        if let database { try? await database.clearHistory() }
+        if let database {
+            do {
+                try await database.clearHistory()
+            } catch {
+                reportHistoryFailure()
+            }
+        }
         await WebsiteData.removeAll(for: storedIdentities)
         settings.lastCookieDeletion = .now
         for tab in allTabs where tab.isLoaded { tab.reload() }
@@ -1854,7 +1894,19 @@ final class BrowserSession {
              folder: entry.folderPath.joined(separator: "/"),
              date: base.addingTimeInterval(-Double(index) * 0.001))
         }
-        let added = (try? await database.importBookmarks(items)) ?? 0
+        let added: Int
+        do {
+            added = try await database.importBookmarks(items)
+        } catch {
+            // The pane that asked shows the count it gets back, and a bare "0"
+            // with no explanation reads as "your file had nothing in it".
+            added = 0
+            showToast?(Toast(
+                symbolName: "exclamationmark.triangle",
+                message: "Could not import your bookmarks",
+                identity: "import-bookmarks"
+            ))
+        }
         loadBookmarks()
         return added
     }
@@ -2277,6 +2329,11 @@ final class BrowserSession {
         return (try? await database.mergeVisits(visits)) ?? 0
     }
 
+    /// Merges bookmarks that arrived from another Mac.
+    ///
+    /// Background, and not something anyone asked for at this moment: the next
+    /// sync carries the same records again, so a failure stays best-effort
+    /// rather than raising a toast about a device nobody is looking at.
     func importSyncBookmarks(_ items: [SyncBookmark]) async {
         guard let database, !items.isEmpty else { return }
         let tuples = items.map { ($0.url, $0.title, $0.folder, $0.created) }

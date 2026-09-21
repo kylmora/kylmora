@@ -23,6 +23,11 @@ enum PDFViewing {
     }
 
     /// Whether `response` is a PDF document for the tab's own frame.
+    ///
+    /// Main-actor only: `WKNavigationResponse`'s own properties are, and this
+    /// reads them. The `mimeType`/`url` overload below stays callable from
+    /// anywhere -- it only touches the two values it is handed.
+    @MainActor
     static func isPDF(_ response: WKNavigationResponse) -> Bool {
         guard response.isForMainFrame else { return false }
         return isPDF(mimeType: response.response.mimeType, url: response.response.url)

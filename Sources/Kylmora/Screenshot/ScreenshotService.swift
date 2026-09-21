@@ -176,7 +176,12 @@ public enum ScreenshotService {
             ctx.duration = 0.2
             overlay.animator().alphaValue = 0
         }, completionHandler: {
-            overlay.removeFromSuperview()
+            // AppKit runs this block on the main thread, but it is imported as
+            // `@Sendable`, so the compiler cannot prove it. Assume what is true
+            // rather than hop to the actor and leave the flash up an extra turn.
+            MainActor.assumeIsolated {
+                overlay.removeFromSuperview()
+            }
         })
     }
 

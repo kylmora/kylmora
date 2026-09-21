@@ -24,9 +24,17 @@ final class ExtensionTabAdapter: NSObject, WKWebExtensionTab {
         manager.windowAdapter
     }
 
-    func indexInWindow(for context: WKWebExtensionContext) -> UInt {
-        guard let tab, let index = manager.visibleTabs.firstIndex(where: { $0 === tab }) else { return 0 }
-        return UInt(index)
+    /// The tab's position in the window, or `NSNotFound` when it is not in one.
+    ///
+    /// `Int`, not `UInt`: the requirement is declared `NSUInteger` in the
+    /// header, but Swift imports it as `Int`, and a `UInt` method only *nearly*
+    /// matches the optional requirement -- WebKit never calls it and falls back
+    /// to walking the window's whole tab list on every query. `NSNotFound`, not
+    /// `0`, is what the header asks for when the tab is in no window; `0` would
+    /// claim the first tab's place.
+    func indexInWindow(for context: WKWebExtensionContext) -> Int {
+        guard let tab, let index = manager.visibleTabs.firstIndex(where: { $0 === tab }) else { return NSNotFound }
+        return index
     }
 
     func webView(for context: WKWebExtensionContext) -> WKWebView? { tab?.currentWebView }
@@ -42,6 +50,13 @@ final class ExtensionTabAdapter: NSObject, WKWebExtensionTab {
         return session.activeTab === tab
     }
     func isPinned(for context: WKWebExtensionContext) -> Bool { tab?.pinnedSiteID != nil }
+    /// Kylmora keeps the mute state itself, for the audio badge and the tab
+    /// menu. The engine's default for this is always `NO`, so without it an
+    /// extension that muted a tab and asked would be told it was not muted.
+    func isMuted(for context: WKWebExtensionContext) -> Bool { tab?.isMuted ?? false }
+    /// Whether the page is making noise, which the engine defaults to `NO` --
+    /// so without this no extension can show an audio indicator.
+    func isPlayingAudio(for context: WKWebExtensionContext) -> Bool { tab?.isPlayingAudio ?? false }
     func shouldGrantPermissionsOnUserGesture(for context: WKWebExtensionContext) -> Bool { true }
 
     func activate(for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
@@ -55,6 +70,26 @@ final class ExtensionTabAdapter: NSObject, WKWebExtensionTab {
 
     func setSelected(_ selected: Bool, for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
         if selected { activate(for: context, completionHandler: completionHandler) } else { completionHandler(nil) }
+    }
+
+    /// Muting from an extension. The engine leaves this one to the embedder --
+    /// "No action is performed if not implemented" -- so without it a tab an
+    /// extension muted stayed audible, and the extension was told it worked.
+    func setMuted(_ muted: Bool, for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
+        tab?.setMuted(muted)
+        completionHandler(nil)
+    }
+
+    /// Pinning from an extension. Kylmora pins by turning the page into a tile
+    /// in the Space, which the session already knows how to do -- and `pin`
+    /// refuses a tab that is not in the active Space, so this cannot move a tab
+    /// somewhere it does not belong. The engine's default is again "no action
+    /// is performed", so without this an extension that pinned a tab was told
+    /// it worked and nothing moved.
+    func setPinned(_ pinned: Bool, for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
+        guard let tab, let session else { return completionHandler(nil) }
+        if pinned { session.pin(tab) } else { session.unpin(tab) }
+        completionHandler(nil)
     }
 
     func loadURL(_ url: URL, for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
