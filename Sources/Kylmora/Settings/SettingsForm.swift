@@ -30,6 +30,13 @@ final class SettingsForm: NSView {
     /// let go when the window closes.
     private var adaptors: [SettingsSwitchAdaptor] = []
     private var cards: [SettingsCardView] = []
+    /// The panel a pane's section is filling, when it opened one with
+    /// `addSection(_:subtitle:symbol:tint:)`. Cards and notes go into it
+    /// rather than onto the page until the next section or hero.
+    private var openSection: SettingsSectionPanel?
+    /// Where the next card or note goes: the open section's panel, or the
+    /// page itself.
+    private var container: NSStackView { openSection?.stack ?? stack }
 
     /// The pane's hue, worn by the controls: the chosen pill, the switch that
     /// is on, a field's focus. Set by the window when the pane is shown, so a
@@ -125,17 +132,57 @@ final class SettingsForm: NSView {
         openCard = nil
         cardBelongsToGroup = false
         radioGroup = nil
+        // A panel of its own, the heading inside it over the card, the way the
+        // General pane's sections are drawn -- so every pane reads the same.
+        let panel = SettingsSectionPanel(plainTitled: title)
+        stack.addArrangedSubview(panel)
+        panel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        openSection = panel
         let row = SettingsFormRow(header: title)
-        // More air above a heading than between two cards, and less between
-        // the heading and its own card: the heading belongs to what is under
-        // it, not to what is above.
-        if let last = stack.arrangedSubviews.last {
-            stack.setCustomSpacing(Style.SettingsUI.sectionGap, after: last)
-        }
-        stack.addArrangedSubview(row)
-        row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        stack.setCustomSpacing(Style.SettingsUI.sectionHeaderGap, after: row)
+        panel.stack.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: panel.stack.widthAnchor).isActive = true
+        panel.stack.setCustomSpacing(Style.SettingsUI.sectionHeaderGap + 4, after: row)
         return row
+    }
+
+    /// A section with a header of its own: a pastel tile carrying `symbol`, the
+    /// name, and a line saying what it is for. Everything added after it, up to
+    /// the next section or hero, goes inside its panel.
+    ///
+    /// - Parameter beside: put the panel next to the section before it, half
+    ///   the width each, instead of under it. Only pairs: a third asked to sit
+    ///   beside starts a row of its own.
+    @discardableResult
+    func addSection(
+        _ title: String,
+        subtitle: String?,
+        symbol: String,
+        tint: NSColor,
+        beside: Bool = false
+    ) -> SettingsSectionPanel {
+        openCard = nil
+        cardBelongsToGroup = false
+        radioGroup = nil
+        let panel = SettingsSectionPanel(title: title, subtitle: subtitle, symbolName: symbol, tint: tint)
+        if beside, let previous = openSection, let index = stack.arrangedSubviews.firstIndex(of: previous) {
+            stack.removeArrangedSubview(previous)
+            previous.removeFromSuperview()
+            let pair = NSStackView(views: [previous, panel])
+            pair.orientation = .horizontal
+            pair.alignment = .top
+            pair.distribution = .fillEqually
+            pair.spacing = Style.SettingsUI.cardSpacing
+            pair.translatesAutoresizingMaskIntoConstraints = false
+            stack.insertArrangedSubview(pair, at: index)
+            pair.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            // One height for both, so the pair reads as one band.
+            panel.heightAnchor.constraint(equalTo: previous.heightAnchor).isActive = true
+        } else {
+            stack.addArrangedSubview(panel)
+            panel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        openSection = panel
+        return panel
     }
 
     /// Rows a pane built itself, onto the open card -- or a new one.
@@ -149,7 +196,13 @@ final class SettingsForm: NSView {
 
     /// A label and one control.
     @discardableResult
-    func addRow(_ label: String, _ control: NSView, alignment: RowAlignment = .baseline) -> SettingsFormRow {
+    func addRow(
+        _ label: String,
+        _ control: NSView,
+        alignment: RowAlignment = .baseline,
+        symbol: String? = nil,
+        note: String? = nil
+    ) -> SettingsFormRow {
         // A row with a name of its own is a new subject, so it leaves a group's
         // card rather than joining it under a heading it has nothing to do
         // with.
@@ -165,10 +218,11 @@ final class SettingsForm: NSView {
             let adaptor = adaptor(for: checkbox)
             return add(SettingsFormRow(
                 label: label.isEmpty ? adaptor.title : label,
-                note: label.isEmpty ? nil : adaptor.title,
+                note: note ?? (label.isEmpty ? nil : adaptor.title),
                 control: adaptor.control,
                 style: .control,
-                stacking: .never
+                stacking: .never,
+                symbol: symbol
             ))
         }
         // A radio is a row too, with its mark where every other row keeps its
@@ -204,9 +258,11 @@ final class SettingsForm: NSView {
         let dressedControl = dressed(control)
         return add(SettingsFormRow(
             label: label,
+            note: note,
             control: dressedControl,
             style: .control,
-            stacking: Self.spansTheRow(dressedControl) || alignment == .top ? .always : .whenTight
+            stacking: Self.spansTheRow(dressedControl) || alignment == .top ? .always : .whenTight,
+            symbol: symbol
         ))
     }
 
@@ -230,7 +286,7 @@ final class SettingsForm: NSView {
 
     /// A label and several controls side by side.
     @discardableResult
-    func addRow(_ label: String, _ controls: [NSView]) -> SettingsFormRow {
+    func addRow(_ label: String, _ controls: [NSView], symbol: String? = nil) -> SettingsFormRow {
         let row = NSStackView(views: controls)
         row.orientation = .horizontal
         row.spacing = 8
@@ -239,7 +295,7 @@ final class SettingsForm: NSView {
         // link, a line of status -- takes the slack, instead of every control
         // sitting at its smallest and the row trailing off into empty card.
         row.distribution = .fill
-        return addRow(label, row)
+        return addRow(label, row, symbol: symbol)
     }
 
     /// A row whose label is the pane's own field, so the pane can change what
@@ -476,9 +532,10 @@ final class SettingsForm: NSView {
     private func addNoteRow(_ note: NSTextField) -> SettingsFormRow {
         guard openCard == nil else { return add(SettingsFormRow(note: note)) }
         let row = SettingsFormRow(note: note, onCanvas: true)
-        if stack.arrangedSubviews.isEmpty { row.sitAtTheTop() }
-        stack.addArrangedSubview(row)
-        row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        let container = container
+        if container.arrangedSubviews.isEmpty { row.sitAtTheTop() }
+        container.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
         return row
     }
 
@@ -509,11 +566,33 @@ final class SettingsForm: NSView {
     func addHero(_ hero: NSView) -> SettingsFormRow {
         openCard = nil
         cardBelongsToGroup = false
+        unwrapHeadingOnlySection()
+        openSection = nil
         let row = SettingsFormRow(hero: hero)
         if stack.arrangedSubviews.isEmpty { row.sitAtTheTop() }
         stack.addArrangedSubview(row)
         row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         return row
+    }
+
+    /// A section whose heading is followed straight away by a hero -- Task
+    /// Manager's "Right now" over its live readout -- would be an empty panel
+    /// with the hero under it. The panel goes; its heading stays on the page,
+    /// over the hero it names.
+    private func unwrapHeadingOnlySection() {
+        guard let panel = openSection,
+              panel.stack.arrangedSubviews.count == 1,
+              let heading = panel.stack.arrangedSubviews.first as? SettingsFormRow,
+              heading.style == .header,
+              let index = stack.arrangedSubviews.firstIndex(of: panel)
+        else { return }
+        panel.stack.removeArrangedSubview(heading)
+        heading.removeFromSuperview()
+        stack.removeArrangedSubview(panel)
+        panel.removeFromSuperview()
+        stack.insertArrangedSubview(heading, at: index)
+        heading.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        stack.setCustomSpacing(Style.SettingsUI.sectionHeaderGap + 4, after: heading)
     }
 
     /// Ends the current card. The next row starts a new one.
@@ -683,8 +762,9 @@ final class SettingsForm: NSView {
             let card = SettingsCardView()
             cards.append(card)
             openCard = card
-            stack.addArrangedSubview(card)
-            card.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            let container = container
+            container.addArrangedSubview(card)
+            card.widthAnchor.constraint(equalTo: container.widthAnchor).isActive = true
             return card
         }()
         card.add(row)
@@ -915,6 +995,12 @@ final class SettingsFormRow: NSView {
     private var control: NSView?
     private var isStacked: Bool?
     private var topPadding: NSLayoutConstraint?
+    /// The outline glyph at the start of the row, when the pane gave one.
+    private var glyph: NSImageView?
+    /// How far the glyph pushes the label in from the card's edge.
+    private var glyphInset: CGFloat {
+        glyph == nil ? 0 : Style.SettingsUI.rowGlyphSlot + Style.SettingsUI.rowGlyphGap
+    }
     /// A row that is nothing but its control goes where the control goes: a
     /// pane hides "Reset" or the custom DNS field, and a blank row with a
     /// hairline under it is not what it meant.
@@ -953,12 +1039,22 @@ final class SettingsFormRow: NSView {
         titleField: NSTextField? = nil,
         control: NSView,
         style: RowStyle,
-        stacking: Stacking
+        stacking: Stacking,
+        symbol: String? = nil
     ) {
         self.style = style
         self.stacking = stacking
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
+
+        if let symbol, let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
+            let glyph = NSImageView(image: image)
+            glyph.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 17, weight: .regular)
+            glyph.contentTintColor = Style.Colors.primaryText
+            glyph.translatesAutoresizingMaskIntoConstraints = false
+            glyph.setAccessibilityElement(false)
+            self.glyph = glyph
+        }
 
         let text = NSStackView()
         text.orientation = .vertical
@@ -1063,7 +1159,7 @@ final class SettingsFormRow: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         let title = NSTextField(labelWithString: header)
-        title.font = Style.Fonts.settingsSection
+        title.font = .systemFont(ofSize: 16, weight: .bold)
         title.textColor = Style.Colors.primaryText
         title.lineBreakMode = .byTruncatingTail
         title.translatesAutoresizingMaskIntoConstraints = false
@@ -1074,9 +1170,15 @@ final class SettingsFormRow: NSView {
         body.addArrangedSubview(title)
         // No air of its own: the gap the form leaves above it is the air, and
         // a heading at the top of a pane sits exactly where a card would.
-        install(minHeight: 0, topPadding: 0, bottomPadding: 0)
+        install(minHeight: 0, topPadding: 0, bottomPadding: 0, horizontalPadding: 6)
         setAccessibilityRole(.group)
         setAccessibilityLabel(header)
+    }
+
+    /// A heading whose words change with what it heads.
+    func retitle(_ text: String) {
+        titleLabel?.stringValue = text
+        setAccessibilityLabel(text)
     }
 
     /// The whole row chooses, where the control is a radio: a sixteen-point
@@ -1150,9 +1252,20 @@ final class SettingsFormRow: NSView {
         addSubview(body)
         let top = body.topAnchor.constraint(equalTo: topAnchor, constant: topPadding)
         self.topPadding = top
+        if let glyph {
+            addSubview(glyph)
+            // Beside the label's first line when the control drops under it;
+            // otherwise in the middle of the row, beside label and control.
+            let anchor = stacking == .always ? (titleLabel ?? body).centerYAnchor : centerYAnchor
+            NSLayoutConstraint.activate([
+                glyph.leadingAnchor.constraint(equalTo: leadingAnchor, constant: horizontalPadding),
+                glyph.widthAnchor.constraint(equalToConstant: Style.SettingsUI.rowGlyphSlot),
+                glyph.centerYAnchor.constraint(equalTo: anchor)
+            ])
+        }
         var constraints: [NSLayoutConstraint] = [
             top,
-            body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: horizontalPadding),
+            body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: horizontalPadding + glyphInset),
             body.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -horizontalPadding),
             body.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -bottomPadding)
         ]
@@ -1202,7 +1315,7 @@ final class SettingsFormRow: NSView {
     /// window has settled on a width.
     override func layout() {
         applyStacking()
-        let available = bounds.width - Style.SettingsUI.cardPadding * 2
+        let available = bounds.width - Style.SettingsUI.cardPadding * 2 - glyphInset
         if let paragraph = control.flatMap(Self.wrappingText),
            available > 0,
            abs(paragraph.preferredMaxLayoutWidth - available) > 0.5 {
@@ -1235,7 +1348,7 @@ final class SettingsFormRow: NSView {
         case .whenTight:
             let labelWidth = titleLabel.map { $0.intrinsicContentSize.width } ?? 0
             let needed = labelWidth + control.fittingSize.width + Style.SettingsUI.rowGap
-                + Style.SettingsUI.cardPadding * 2
+                + Style.SettingsUI.cardPadding * 2 + glyphInset
             // Sticky in one direction: unstacking only once there is room to
             // spare, so a row does not flutter between the two at the boundary.
             wanted = isStacked == true ? needed > bounds.width - 20 : needed > bounds.width

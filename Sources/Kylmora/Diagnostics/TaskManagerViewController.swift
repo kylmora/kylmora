@@ -201,7 +201,8 @@ final class TaskManagerViewController: NSViewController {
     }
 
     /// The same page, without a rail or a scroller of its own: the Settings
-    /// window supplies both.
+    /// window supplies both. Each block sits in a section panel of its own,
+    /// headed the way every other pane's sections are.
     private func buildEmbedded(in root: NSView) {
         scopeBar.onSelect = { [weak self] scope in self?.choose(scope) }
 
@@ -215,27 +216,31 @@ final class TaskManagerViewController: NSViewController {
         column.spacing = Style.SettingsUI.cardSpacing
         column.translatesAutoresizingMaskIntoConstraints = false
 
-        root.addSubview(scopeBar)
-        root.addSubview(subtitleLabel)
         root.addSubview(column)
         buildCards()
 
         NSLayoutConstraint.activate([
-            scopeBar.topAnchor.constraint(equalTo: root.topAnchor),
-            scopeBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            scopeBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            subtitleLabel.topAnchor.constraint(equalTo: scopeBar.bottomAnchor, constant: 6),
-            // Two points in, so the *text* lines up with the plate above it and
-            // the cards below: a label's frame sits two points outside the box
-            // AppKit aligns it by, which is the difference between a line that
-            // looks aligned and one that is.
-            subtitleLabel.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 2),
-            subtitleLabel.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor),
-            column.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 14),
+            column.topAnchor.constraint(equalTo: root.topAnchor),
             column.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             column.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             column.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         ])
+    }
+
+    /// A Settings section panel: its heading, then `views` across its width.
+    @discardableResult
+    private func addPanel(titled title: String, _ views: [NSView]) -> SettingsFormRow {
+        let panel = SettingsSectionPanel(plainTitled: title)
+        let heading = SettingsFormRow(header: title)
+        panel.stack.addArrangedSubview(heading)
+        panel.stack.setCustomSpacing(Style.SettingsUI.sectionHeaderGap + 4, after: heading)
+        for view in [heading] + views {
+            if view !== heading { panel.stack.addArrangedSubview(view) }
+            view.widthAnchor.constraint(equalTo: panel.stack.widthAnchor).isActive = true
+        }
+        column.addArrangedSubview(panel)
+        panel.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        return heading
     }
 
     /// The chips the bar shows: the whole browser, every space, and -- only
@@ -311,8 +316,21 @@ final class TaskManagerViewController: NSViewController {
     }
 
     private func addToColumn(_ view: NSView) {
-        column.addArrangedSubview(view)
-        view.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        guard presentation == .embedded else {
+            column.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+            return
+        }
+        if let card = view as? ActivityCardView {
+            // The panel's heading is the card's caption now, and follows it.
+            card.dressAsSettingsRow(keepsCaption: false)
+            let heading = addPanel(titled: card.captionText, [card])
+            card.onCaptionChange = { heading.retitle($0) }
+        } else {
+            // The headline cards, under the places they can measure.
+            for card in [cpuCard, memoryCard, gpuCard] { card.dressAsSettingsRow(keepsCaption: true) }
+            addPanel(titled: "Right now", [scopeBar, subtitleLabel, view])
+        }
     }
 
     private func buildTable() {

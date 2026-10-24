@@ -26,7 +26,19 @@ final class SettingsRailRow: NSView {
     private let detail = NSTextField(labelWithString: "")
     private let onClick: () -> Void
     private var trackingArea: NSTrackingArea?
-    private let pill = CALayer()
+    private let pill = CAGradientLayer()
+    private let accent: NSColor
+    /// Whether the glyph is ours to colour: a pane's symbol is, a space's own
+    /// picture is not.
+    private let tintsGlyph: Bool
+    private let chevron = NSImageView()
+
+    /// Whether the chosen row shows a chevron at its trailing edge, saying
+    /// "this is the page you are on". The spine wants it; a rail whose rows
+    /// carry a number there does not.
+    var showsChevronWhenChosen = false {
+        didSet { apply() }
+    }
 
     var isChosen = false {
         didSet {
@@ -71,22 +83,27 @@ final class SettingsRailRow: NSView {
     init(title: String, mark markKind: Mark, accent: NSColor, onClick: @escaping () -> Void) {
         self.title = title
         self.onClick = onClick
+        self.accent = accent
+        if case .symbol = markKind { tintsGlyph = true } else { tintsGlyph = false }
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.addSublayer(pill)
+        pill.startPoint = CGPoint(x: 0, y: 0.5)
+        pill.endPoint = CGPoint(x: 1, y: 0.5)
 
-        // The mark keeps its colour whether the row is chosen or not: it is
-        // the thing you learn the pane by, so it must not change under you.
-        mark.fill = accent
+        // A pastel of the pane's hue with the glyph in the hue itself: the
+        // colour is still what you learn the pane by, without a column of
+        // saturated squares shouting over the names.
+        mark.fill = tintsGlyph ? accent.withAlphaComponent(0.16) : accent
         mark.cornerRadius = Style.SettingsUI.spineTileRadius
         addSubview(mark)
 
         switch markKind {
         case .symbol(let name):
             icon.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
-            icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
-            icon.contentTintColor = .white
+            icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+            icon.contentTintColor = accent
         case .picture(let image):
             // No tint: the picture is already whatever the user chose, and
             // painting it white would be the thing this case exists to avoid.
@@ -108,6 +125,14 @@ final class SettingsRailRow: NSView {
         detail.setContentHuggingPriority(.required, for: .horizontal)
         detail.setContentCompressionResistancePriority(.required, for: .horizontal)
         addSubview(detail)
+
+        chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
+        chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        chevron.contentTintColor = .white
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.setAccessibilityElement(false)
+        chevron.isHidden = true
+        addSubview(chevron)
 
         label.stringValue = title
         label.font = Style.Fonts.settingsRow
@@ -133,7 +158,9 @@ final class SettingsRailRow: NSView {
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             label.trailingAnchor.constraint(lessThanOrEqualTo: detail.leadingAnchor, constant: -6),
             detail.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -(inset + 8)),
-            detail.centerYAnchor.constraint(equalTo: centerYAnchor)
+            detail.centerYAnchor.constraint(equalTo: centerYAnchor),
+            chevron.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -(inset + 12)),
+            chevron.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
@@ -168,11 +195,14 @@ final class SettingsRailRow: NSView {
         // The colour is. Choosing a pane and pointing at one are both worth
         // seeing happen, and they now travel at the speeds the browser
         // window's rows use rather than blinking on and off.
-        var colour: CGColor?
+        var colours: [CGColor]?
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            colour = isChosen
-                ? Style.Colors.settingsRailSelected.cgColor
-                : (isHovered ? Style.Colors.settingsRailHover.cgColor : nil)
+            if isChosen {
+                colours = [Style.Colors.kylmoraBlue.cgColor, Style.Colors.kylmoraBlueLight.cgColor]
+            } else if isHovered {
+                let hover = Style.Colors.settingsRailHover.cgColor
+                colours = [hover, hover]
+            }
         }
         let duration = Style.Motion.duration(
             isChosen || wasChosen ? Style.Motion.selection : Style.Motion.hover
@@ -182,7 +212,11 @@ final class SettingsRailRow: NSView {
         CATransaction.setAnimationDuration(duration)
         CATransaction.setAnimationTimingFunction(Style.Motion.curve)
         CATransaction.setDisableActions(duration == 0)
-        pill.backgroundColor = colour
+        pill.colors = colours
+        pill.shadowColor = Style.Colors.kylmoraBlue.cgColor
+        pill.shadowOpacity = isChosen ? 0.28 : 0
+        pill.shadowRadius = 6
+        pill.shadowOffset = CGSize(width: 0, height: -2)
         CATransaction.commit()
     }
 
@@ -206,11 +240,17 @@ final class SettingsRailRow: NSView {
     }
 
     private func apply() {
-        label.textColor = isChosen ? Style.Colors.primaryText : Style.Colors.secondaryText
+        // White on the blue pill; the ordinary ink everywhere else.
+        label.textColor = isChosen ? .white : Style.Colors.primaryText
         label.font = isChosen
-            ? .systemFont(ofSize: 13, weight: .semibold)
-            : Style.Fonts.settingsRow
-        mark.alphaValue = isChosen ? 1 : 0.85
+            ? .systemFont(ofSize: 13.5, weight: .semibold)
+            : .systemFont(ofSize: 13.5)
+        if tintsGlyph {
+            mark.fill = isChosen ? NSColor(white: 1, alpha: 0.22) : accent.withAlphaComponent(0.16)
+            icon.contentTintColor = isChosen ? .white : accent
+        }
+        detail.textColor = isChosen ? NSColor(white: 1, alpha: 0.85) : Style.Colors.tertiaryText
+        chevron.isHidden = !(isChosen && showsChevronWhenChosen && detail.isHidden)
         setAccessibilityValue(isChosen ? "selected" : "")
         needsDisplay = true
     }

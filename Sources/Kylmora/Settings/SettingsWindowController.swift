@@ -87,7 +87,7 @@ final class SettingsWindowController: NSWindowController {
         /// with a wall of controls.
         var subtitle: String {
             switch self {
-            case .general: return "What Kylmora opens with, downloads, and how tabs sleep."
+            case .general: return "Customize how Kylmora works and fits your workflow."
             case .importData: return "Bring bookmarks, history and passwords over from another browser."
             case .browsing: return "The sidebar, the top bar, and how pages behave as you read them."
             case .shortcuts: return "Every keyboard shortcut, and what you have changed."
@@ -100,7 +100,7 @@ final class SettingsWindowController: NSWindowController {
             case .websites: return "Per-site permissions: zoom, camera, sound, notifications."
             case .sync: return "Keep tabs, bookmarks and settings together across your Macs."
             case .advanced: return "Developer tools, rendering and everything not settled elsewhere."
-            case .taskManager: return "What every space and page is costing in memory, processor and graphics."
+            case .taskManager: return "Memory, processor and graphics, by space and page."
             case .about: return "Version, updates, and who made this."
             }
         }
@@ -167,7 +167,7 @@ final class SettingsWindowController: NSWindowController {
         /// "the orange one", which is the whole point of colouring it.
         var accent: NSColor {
             switch self {
-            case .general: return NSColor(srgbRed: 0.29, green: 0.56, blue: 0.92, alpha: 1)
+            case .general: return Style.Colors.kylmoraBlue
             case .browsing: return NSColor(srgbRed: 0.35, green: 0.70, blue: 0.90, alpha: 1)
             case .search: return NSColor(srgbRed: 0.25, green: 0.72, blue: 0.70, alpha: 1)
             case .spaces: return NSColor(srgbRed: 0.36, green: 0.74, blue: 0.47, alpha: 1)
@@ -206,13 +206,18 @@ final class SettingsWindowController: NSWindowController {
     /// here the window opens collapsed to a sliver. It did not before only by
     /// accident: the header band's subtitle was a long sentence, and its
     /// intrinsic width was holding the window open.
-    private static let openingSize = NSSize(width: 1060, height: 700)
-    private static let floorSize = NSSize(width: 880, height: 540)
+    private static let openingSize = NSSize(width: 1180, height: 800)
+    private static let floorSize = NSSize(width: 900, height: 560)
+    /// Where the scrolling page starts: just clear of the titlebar.
+    private static let pageTop: CGFloat = 34
 
     private let root = NSViewController()
     private let canvas = SettingsCanvasView()
     private let spine = SettingsSpineView()
-    private let eyebrow = NSTextField(labelWithString: "")
+    private let eyebrow = SettingsPageHeader()
+    /// The lake behind the page's title, at the top right of the window.
+    private let scenery = SettingsLandscapeView()
+    private let sceneryLine = NSTextField(labelWithString: "A calmer, smarter\nway to browse.")
     private let scroll = NSScrollView()
     private let pageBody = FlippedView()
     /// The reading width a form is held to. Lifted for a pane that is a wide
@@ -275,6 +280,20 @@ final class SettingsWindowController: NSWindowController {
 
         spine.onSelect = { [weak self] pane in self?.show(pane) }
         spine.onSearch = { [weak self] query in self?.filter(by: query) }
+        canvas.onSearchShortcut = { [weak self] in self?.spine.focusSearch() }
+        // One calm blue wash for the whole window, whichever pane is open.
+        canvas.accentHint = Style.Colors.kylmoraBlue
+
+        sceneryLine.font = .systemFont(ofSize: 13, weight: .medium)
+        sceneryLine.textColor = .white
+        sceneryLine.maximumNumberOfLines = 2
+        sceneryLine.alignment = .left
+        let glow = NSShadow()
+        glow.shadowColor = NSColor(srgbRed: 0.1, green: 0.2, blue: 0.4, alpha: 0.45)
+        glow.shadowBlurRadius = 6
+        sceneryLine.shadow = glow
+        sceneryLine.translatesAutoresizingMaskIntoConstraints = false
+        sceneryLine.setAccessibilityElement(false)
         spine.onAppearance = { [weak self] preference in
             self?.settings.settingsWindowAppearance = preference
             self?.applyAppearance()
@@ -283,7 +302,6 @@ final class SettingsWindowController: NSWindowController {
         applyAppearance()
 
         eyebrow.translatesAutoresizingMaskIntoConstraints = false
-        canvas.addSubview(eyebrow)
 
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.drawsBackground = false
@@ -291,7 +309,12 @@ final class SettingsWindowController: NSWindowController {
         scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay
         scroll.documentView = pageBody
+        // The landscape stays put at the top right; the title scrolls with the
+        // page, and the cards slide up over the sky.
+        canvas.addSubview(scenery, positioned: .below, relativeTo: spine)
+        canvas.addSubview(sceneryLine, positioned: .below, relativeTo: spine)
         canvas.addSubview(scroll)
+        pageBody.addSubview(eyebrow)
         pageBody.addSubview(paneContainer)
 
         let gutter = Style.SettingsUI.detailGutter
@@ -324,25 +347,32 @@ final class SettingsWindowController: NSWindowController {
             // the only things on this row, and a title floating a few points
             // above or below the field beside it is precisely the sort of
             // near-miss that reads as untidy without being nameable.
-            eyebrow.leadingAnchor.constraint(equalTo: spine.trailingAnchor, constant: gutter),
-            eyebrow.trailingAnchor.constraint(lessThanOrEqualTo: canvas.trailingAnchor, constant: -gutter),
-            eyebrow.centerYAnchor.constraint(
-                equalTo: canvas.topAnchor,
-                constant: Style.SettingsUI.titlebarHeight + Style.SettingsUI.spineRowHeight / 2
+            eyebrow.leadingAnchor.constraint(equalTo: paneContainer.leadingAnchor),
+            eyebrow.trailingAnchor.constraint(lessThanOrEqualTo: sceneryLine.leadingAnchor, constant: -16),
+            eyebrow.topAnchor.constraint(
+                equalTo: pageBody.topAnchor,
+                constant: Style.SettingsUI.titlebarHeight + 6 - Self.pageTop
             ),
 
-            scroll.topAnchor.constraint(
-                equalTo: eyebrow.bottomAnchor,
-                constant: Style.SettingsUI.eyebrowGap
-            ),
+            scenery.topAnchor.constraint(equalTo: canvas.topAnchor),
+            scenery.trailingAnchor.constraint(equalTo: canvas.trailingAnchor),
+            scenery.widthAnchor.constraint(equalToConstant: 560),
+            scenery.heightAnchor.constraint(equalToConstant: 260),
+            sceneryLine.trailingAnchor.constraint(equalTo: canvas.trailingAnchor, constant: -gutter - 110),
+            sceneryLine.topAnchor.constraint(equalTo: canvas.topAnchor, constant: Style.SettingsUI.titlebarHeight + 30),
+
+            // Below the titlebar, not under it: a scroll view that reaches up
+            // behind the titlebar gets the system's blurred edge band drawn
+            // across the top of the page.
+            scroll.topAnchor.constraint(equalTo: canvas.topAnchor, constant: Self.pageTop),
             scroll.leadingAnchor.constraint(equalTo: spine.trailingAnchor),
             scroll.trailingAnchor.constraint(equalTo: canvas.trailingAnchor),
             scroll.bottomAnchor.constraint(equalTo: canvas.bottomAnchor),
 
             pageBody.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             paneContainer.topAnchor.constraint(
-                equalTo: pageBody.topAnchor,
-                constant: Style.SettingsUI.paneTopGap
+                equalTo: eyebrow.bottomAnchor,
+                constant: Style.SettingsUI.eyebrowGap + Style.SettingsUI.paneTopGap
             ),
             paneContainer.bottomAnchor.constraint(equalTo: pageBody.bottomAnchor, constant: -32),
             paneContainer.centerXAnchor.constraint(equalTo: pageBody.centerXAnchor),
@@ -410,6 +440,9 @@ final class SettingsWindowController: NSWindowController {
     /// Puts the keyboard in the spine's search.
     @objc func searchSettings(_ sender: Any?) { spine.focusSearch() }
 
+    /// The page's title block, for a test that measures where panes begin.
+    var pageHeaderView: NSView { eyebrow }
+
     /// The pane on screen, for a test that measures how panes are laid out.
     var shownPaneView: NSView? { paneContainer.subviews.first }
 
@@ -434,19 +467,12 @@ final class SettingsWindowController: NSWindowController {
         // label rather than as the page's title, which is what it is. The
         // 22-point `settingsTitle` has existed all along, documented as "the
         // pane's name at the top of the detail side", and was used nowhere.
-        eyebrow.attributedStringValue = NSAttributedString(
-            string: pane.title,
-            attributes: [
-                .font: Style.Fonts.settingsTitle,
-                .foregroundColor: pane.accent
-            ]
-        )
+        eyebrow.show(title: pane.title, subtitle: pane.subtitle)
         // The pane's hue runs through its page: the eyebrow, and the edge down
         // every card. It is the same colour as the tile you pressed, which is
         // what ties the spine to what it opened.
         (controller.view as? SettingsForm)?.accent = pane.accent
         (controller.view as? SettingsScrollingPane)?.form.accent = pane.accent
-        canvas.accentHint = pane.accent
         spine.accent = pane.accent
 
         for view in paneContainer.subviews { view.removeFromSuperview() }

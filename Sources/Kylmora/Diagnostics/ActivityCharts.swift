@@ -16,8 +16,16 @@ class ActivityCardView: SettingsPlateView {
     private let caption = NSTextField(labelWithString: "")
     /// What a card puts under its caption. Subclasses and callers fill it.
     let body = NSStackView()
+    private var bodyTop: NSLayoutConstraint!
+    /// The window's cards shout their captions in small capitals; inside
+    /// Settings a caption is a row's title, and is written like one.
+    private var capitalises = true
+    /// Told when the caption changes, for a heading that stands in for it.
+    var onCaptionChange: ((String) -> Void)?
+    private(set) var captionText: String
 
     init(caption title: String) {
+        captionText = title
         super.init(frame: .zero)
         fill = Style.Colors.settingsCard
         stroke = Style.Colors.settingsCardStroke
@@ -43,11 +51,12 @@ class ActivityCardView: SettingsPlateView {
         addSubview(body)
 
         let padding = Style.SettingsUI.cardPadding
+        bodyTop = body.topAnchor.constraint(equalTo: caption.bottomAnchor, constant: 8)
         NSLayoutConstraint.activate([
             caption.topAnchor.constraint(equalTo: topAnchor, constant: padding - 2),
             caption.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             caption.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -padding),
-            body.topAnchor.constraint(equalTo: caption.bottomAnchor, constant: 8),
+            bodyTop,
             body.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             body.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -padding),
             body.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -padding)
@@ -59,8 +68,32 @@ class ActivityCardView: SettingsPlateView {
     }
 
     func setCaption(_ title: String) {
+        guard title != captionText else { return }
+        captionText = title
         let attributes = caption.attributedStringValue.attributes(at: 0, effectiveRange: nil)
-        caption.attributedStringValue = NSAttributedString(string: title.uppercased(), attributes: attributes)
+        caption.attributedStringValue = NSAttributedString(
+            string: capitalises ? title.uppercased() : title, attributes: attributes
+        )
+        onCaptionChange?(title)
+    }
+
+    /// Dressed as one of the rows of a Settings card: the same glass plate,
+    /// and either no caption at all -- the section panel's heading names it --
+    /// or a caption set the way a row's title is.
+    func dressAsSettingsRow(keepsCaption: Bool) {
+        fill = Style.Colors.settingsGlass
+        capitalises = false
+        guard keepsCaption else {
+            caption.isHidden = true
+            bodyTop.isActive = false
+            bodyTop = body.topAnchor.constraint(equalTo: topAnchor, constant: Style.SettingsUI.cardPadding)
+            bodyTop.isActive = true
+            return
+        }
+        caption.attributedStringValue = NSAttributedString(
+            string: captionText,
+            attributes: [.font: Style.Fonts.settingsRow, .foregroundColor: Style.Colors.primaryText]
+        )
     }
 }
 
@@ -193,7 +226,10 @@ final class ActivityBarListView: NSView {
             rows.trailingAnchor.constraint(equalTo: trailingAnchor),
             rows.bottomAnchor.constraint(equalTo: bottomAnchor),
             empty.topAnchor.constraint(equalTo: topAnchor),
-            empty.leadingAnchor.constraint(equalTo: leadingAnchor)
+            empty.leadingAnchor.constraint(equalTo: leadingAnchor),
+            // Room for the message when there are no bars to give the list a
+            // height: in Settings no caption above it holds the card open.
+            bottomAnchor.constraint(greaterThanOrEqualTo: empty.bottomAnchor)
         ])
     }
 

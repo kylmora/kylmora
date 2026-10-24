@@ -47,9 +47,11 @@ final class TaskManagerSettingsViewController: NSViewController, SettingsWidePan
             "With it off, the Task Manager is still on the Window menu, on ⇧⌘U, and here."
         )
 
-        form.addSection("Right now")
+        // The readout brings its own section panels, "Right now" first.
         addChild(activity)
         let row = form.addHero(activity.view)
+        // Its first panel sits one card's gap under the one above, as panels do.
+        row.sitAtTheTop()
         activity.view.widthAnchor.constraint(equalTo: row.widthAnchor).isActive = true
 
         reload()

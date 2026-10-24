@@ -26,7 +26,8 @@ struct ToolbarLayout: Codable, Equatable, Sendable {
         ("Find in Page", "magnifyingglass"),
         ("Add Bookmark", "bookmark"),
         ("Page Menu", "macwindow"),
-        ("Extensions", "puzzlepiece.extension")
+        ("Extensions", "puzzlepiece.extension"),
+        ("AI Assistant", "sparkles")
     ]
 
     var isDefault: Bool { order.isEmpty && hidden.isEmpty }

@@ -58,6 +58,9 @@ final class SettingsSearchField: NSView, NSTextFieldDelegate {
     private let field = NSTextField()
     private let glyph = NSImageView()
     private let clearButton: IconButton
+    /// The shortcut that puts the keyboard here, shown while the field is
+    /// empty. Only beside the pane list, where ⌘K is what reaches it.
+    private let shortcutHint = NSTextField(labelWithString: "\u{2318} K")
 
     private var highlight: RowHighlight?
     private var trackingArea: NSTrackingArea?
@@ -129,6 +132,20 @@ final class SettingsSearchField: NSView, NSTextFieldDelegate {
         clearButton.setClickHandler { [weak self] in self?.clear() }
         clearButton.isHidden = true
         addSubview(clearButton)
+
+        shortcutHint.font = .systemFont(ofSize: 11, weight: .medium)
+        shortcutHint.textColor = Style.Colors.secondaryText
+        shortcutHint.alignment = .center
+        shortcutHint.wantsLayer = true
+        shortcutHint.drawsBackground = false
+        shortcutHint.translatesAutoresizingMaskIntoConstraints = false
+        shortcutHint.setAccessibilityElement(false)
+        shortcutHint.isHidden = skin != .spine
+        addSubview(shortcutHint)
+        NSLayoutConstraint.activate([
+            shortcutHint.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            shortcutHint.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
 
         // Beside the pane list the glyph is centred in a slot the width of a
         // row's coloured mark and starts where that mark starts, so the text
@@ -234,6 +251,7 @@ final class SettingsSearchField: NSView, NSTextFieldDelegate {
 
     private func syncClearButton() {
         clearButton.isHidden = field.stringValue.isEmpty
+        shortcutHint.isHidden = skin != .spine || !field.stringValue.isEmpty
     }
 
     // MARK: - NSTextFieldDelegate

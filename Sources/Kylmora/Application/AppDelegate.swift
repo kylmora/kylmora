@@ -235,6 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         if #available(macOS 15.4, *) {
             NativeMessagingService.shared.disconnectAll()
         }
+        AgentServer.shared.stop()
         if Settings.shared.clearDiskCacheOnQuit || RAMCacheManager.shared.isRAMOnly {
             RAMCacheManager.shared.clearDiskCacheDirectory()
         }
@@ -517,6 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         // Rules act on tabs from here on: page loads, idle tabs, media,
         // downloads.
         AutomationService.shared.start(session: session)
+        AgentServer.shared.start(session: session)
         // Chords and custom-command keys, which the menus cannot carry.
         ShortcutDispatcher.shared.install()
         Metrics.reportLaunchIfRequested(stage: "rules-started")
