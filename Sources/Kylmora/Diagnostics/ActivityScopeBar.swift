@@ -209,13 +209,14 @@ final class ActivityScopeBar: NSView {
     override func layout() {
         super.layout()
         let clip = scroll.contentView
-        // At least the clip's width, so a row of two chips still fills the
-        // bar; wider than it whenever the chips need the room, which is what
-        // gives the scroller something to do.
+        // The chips' own width, wider than the clip whenever they need the
+        // room, which is what gives the scroller something to do. Never
+        // stretched to the clip: a filling stack drew the last chip across the
+        // whole bar.
         let target = NSRect(
             x: 0,
             y: 0,
-            width: max(contentWidth, clip.bounds.width),
+            width: contentWidth,
             height: clip.bounds.height
         )
         guard row.frame != target else {

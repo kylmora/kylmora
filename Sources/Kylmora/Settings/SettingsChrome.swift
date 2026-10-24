@@ -23,14 +23,14 @@ extension Style {
         static let cardShadowRadius: CGFloat = 6
         static let cardShadowOffset: CGFloat = 1
 
-        static let spineWidth: CGFloat = 206
-        static let spineRowHeight: CGFloat = 34
-        static let spineRowRadius: CGFloat = 9
-        static let spineTileSide: CGFloat = 24
-        static let spineTileRadius: CGFloat = 7
+        static let spineWidth: CGFloat = 252
+        static let spineRowHeight: CGFloat = 38
+        static let spineRowRadius: CGFloat = 11
+        static let spineTileSide: CGFloat = 28
+        static let spineTileRadius: CGFloat = 8
         static let spineTileGap: CGFloat = 2
         /// Mark to name.
-        static let spineTileGapToLabel: CGFloat = 10
+        static let spineTileGapToLabel: CGFloat = 12
         /// Air above a group of tiles, which is all that separates one group
         /// from the last now that the headings are gone.
         static let spineGroupGap: CGFloat = 18
@@ -57,13 +57,13 @@ extension Style {
         /// The detail side's gutter, and the widest a form is allowed to get.
         /// Past about 660 points a row's label and its control drift so far
         /// apart that the eye loses the pairing.
-        static let detailGutter: CGFloat = 28
-        static let contentMaxWidth: CGFloat = 660
+        static let detailGutter: CGFloat = 36
+        static let contentMaxWidth: CGFloat = 820
 
         /// The pane's name, set small and tracked out above the first card.
         /// It replaced a header band a hundred points tall that carried two
         /// lines of text; the name is worth about sixteen.
-        static let eyebrowGap: CGFloat = 14
+        static let eyebrowGap: CGFloat = 22
         /// Between the top of the scrolling page and the first thing on it.
         /// Every pane starts here, whether it opens on a card, a table or a
         /// hero: a pane that adds air of its own sits lower than its
@@ -93,7 +93,18 @@ extension Style {
         /// The column the live miniature sits in, beside the form.
         static let previewColumnWidth: CGFloat = 320
 
-        static let headerTitleSize: CGFloat = 22
+        static let headerTitleSize: CGFloat = 34
+
+        /// The brand block at the top of the spine: the app's icon and name.
+        static let brandHeight: CGFloat = 56
+        /// A section's own header inside its panel: a pastel tile, a name and
+        /// a line saying what the section is for.
+        static let sectionTileSide: CGFloat = 46
+        static let sectionPanelRadius: CGFloat = 22
+        static let sectionPanelPadding: CGFloat = 16
+        /// The outline glyph at the start of a row, and the room it takes.
+        static let rowGlyphSlot: CGFloat = 24
+        static let rowGlyphGap: CGFloat = 14
     }
 }
 
@@ -131,10 +142,26 @@ extension Style.Colors {
     /// would make it look like a settings panel again.
     static var settingsCanvas: NSColor {
         dynamic(
-            light: NSColor(srgbRed: 0.925, green: 0.925, blue: 0.94, alpha: 1),
-            dark: NSColor(srgbRed: 0.07, green: 0.07, blue: 0.09, alpha: 1)
+            light: NSColor(srgbRed: 0.925, green: 0.935, blue: 0.955, alpha: 1),
+            dark: NSColor(srgbRed: 0.065, green: 0.075, blue: 0.10, alpha: 1)
         )
     }
+
+    /// Kylmora's own blue: the chosen pane in the spine, the one button the
+    /// window most wants pressed. Not the user's system accent -- the design
+    /// is blue whatever the Mac is set to, the way the app's icon is.
+    static var kylmoraBlue: NSColor { NSColor(srgbRed: 0.13, green: 0.47, blue: 0.98, alpha: 1) }
+    /// The lighter end of the same blue, for the top of a gradient fill.
+    static var kylmoraBlueLight: NSColor { NSColor(srgbRed: 0.27, green: 0.60, blue: 1.0, alpha: 1) }
+
+    /// The spine's ground: a frosted pane over the canvas, a shade lighter in
+    /// light mode and a shade darker in dark.
+    static var settingsSpineGround: NSColor { veil(light: 0.55, dark: 0.03) }
+
+    /// A section's outer panel, which holds its header and its card of rows.
+    /// Lighter than the card inside it, so the rows still read as the part
+    /// you act on.
+    static var settingsSectionPanel: NSColor { veil(light: 0.5, dark: 0.035) }
 
     /// A plate floating on the canvas. Translucent, so the space's wash comes
     /// through it and every card is quietly the colour of the space you are in.
@@ -873,6 +900,18 @@ final class SettingsSwitchRow: NSView {
 /// surface quietly changes colour as you move down the spine.
 @MainActor
 final class SettingsCanvasView: NSView {
+    /// ⌘K was pressed anywhere in the window: the search wants the keyboard.
+    var onSearchShortcut: (() -> Void)?
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags == .command, event.charactersIgnoringModifiers?.lowercased() == "k", let onSearchShortcut {
+            onSearchShortcut()
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     /// The hue of the pane being shown. Changing it repaints the wash.
     var accentHint: NSColor? {
         didSet {

@@ -1021,10 +1021,15 @@ struct SettingsControlSkinTests {
             Issue.record("\(pane.title): the pane is not on the scrolling page")
             return
         }
-        let pageTop = page.convert(page.bounds, to: content).minY
+        _ = page
+        // The title block heads the page and scrolls with it; every pane's
+        // first thing sits the same distance under it.
+        let header = controller.pageHeaderView
+        let headerBottom = header.convert(header.bounds, to: content).maxY
+        let gap = Style.SettingsUI.eyebrowGap + Style.SettingsUI.paneTopGap
         #expect(
-            abs(union.minY - pageTop - Style.SettingsUI.paneTopGap) <= 1,
-            "\(pane.title) begins \(union.minY - pageTop) below the page, not \(Style.SettingsUI.paneTopGap)"
+            abs(union.minY - headerBottom - gap) <= 1,
+            "\(pane.title) begins \(union.minY - headerBottom) below the title, not \(gap)"
         )
     }
 

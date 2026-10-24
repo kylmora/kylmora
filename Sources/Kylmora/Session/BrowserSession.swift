@@ -397,9 +397,14 @@ final class BrowserSession {
     /// Creates a tab in the active space. The web view is not built until the
     /// tab is shown, so an unselected new tab costs a few hundred bytes.
     @discardableResult
-    func newTab(url: URL? = nil, select: Bool = true, origin: SpaceRouter.Origin = .inBrowser) -> Tab {
-        let target = url ?? settings.newTabURL(isPrivate: activeSpace.isPrivate)
-        let space = routedSpace(for: target, origin: origin) ?? activeSpace
+    func newTab(
+        url: URL? = nil,
+        inSpace targetSpace: Space? = nil,
+        select: Bool = true,
+        origin: SpaceRouter.Origin = .inBrowser
+    ) -> Tab {
+        let target = url ?? settings.newTabURL(isPrivate: (targetSpace ?? activeSpace).isPrivate)
+        let space = targetSpace ?? routedSpace(for: target, origin: origin) ?? activeSpace
         let tab = Tab(url: target, identity: space.identity)
         insert(tab, into: space, at: space.tabs.count, select: select)
 

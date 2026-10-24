@@ -3,11 +3,34 @@
 # Contents/Resources/kylmora-cli; link it somewhere on your PATH:
 #   ln -s /Applications/Kylmora.app/Contents/Resources/kylmora-cli /usr/local/bin/kylmora
 #
+# Usage:
 #   kylmora open URL [--space NAME] [--background]   open a page
 #   kylmora space NAME                               switch to a Space
 #   kylmora command ID                               run a palette command (e.g. print-page)
 #   kylmora new-tab                                  open a new tab
 #   kylmora url ...                                  print the kylmora:// address instead of opening it
+#
+# AI agent control (real input, in the agent's own window):
+#   kylmora agent status                             who has control (agent, user, idle)
+#   kylmora agent tabs                               list open tabs; the agent's is marked
+#   kylmora agent profiles                           list profiles (spaces) and their logins
+#   kylmora agent open URL [--profile NAME]          open a page in a profile (default: current)
+#   kylmora agent select TAB_ID                      make a tab the agent's target
+#   kylmora agent close TAB_ID                       close a tab
+#   kylmora agent navigate URL                       load a URL in the agent's tab
+#   kylmora agent snapshot [--scope full_page]       list the page's elements with @refs
+#   kylmora agent click REF|X,Y [--label TEXT]       real mouse click, cursor travels there
+#   kylmora agent hover REF|X,Y [--label TEXT]       move the cursor onto an element
+#   kylmora agent type TEXT [--ref REF] [--clear]    type key by key at a person's pace
+#   kylmora agent press KEY                          key or chord (Enter, Tab, Meta+a)
+#   kylmora agent scroll [DELTA_Y]                   wheel scroll (positive down)
+#   kylmora agent eval JS_CODE                       read page state (isolated world)
+#   kylmora agent screenshot                         viewport screenshot (base64 PNG)
+#   kylmora agent handoff REASON                     give the page to the user (captcha/2FA)
+#   kylmora agent wait [SECONDS]                     wait for the user to give it back
+#   kylmora agent resume                             take control back
+#   kylmora agent finish                             end the task, free the page
+#   kylmora agent mcp                                run stdio MCP server for terminal AI agents
 set -e
 
 encode() {
@@ -15,9 +38,212 @@ encode() {
 }
 
 usage() {
-    sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '3,33p' "$0" | sed 's/^# \{0,1\}//'
     exit 1
 }
+
+# --- Agent RPC Helper ---
+get_agent_config() {
+    config_file="$HOME/.kylmora/agent-runtime.json"
+    if [ ! -f "$config_file" ]; then
+        config_file="$HOME/Library/Application Support/com.kylmora.Kylmora/agent-runtime.json"
+    fi
+    if [ ! -f "$config_file" ]; then
+        echo "Error: Kylmora agent service is not running. Please launch Kylmora first." >&2
+        exit 1
+    fi
+
+    PORT=$(python3 -c "import json; c=json.load(open('$config_file')); print(c.get('port', 4999))")
+    TOKEN=$(python3 -c "import json; c=json.load(open('$config_file')); print(c.get('token', ''))")
+}
+
+rpc_call() {
+    method="$1"
+    params="$2"
+    get_agent_config
+
+    payload=$(python3 -c "import sys, json; print(json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': sys.argv[1], 'params': json.loads(sys.argv[2])}))" "$method" "$params")
+    
+    response=$(curl -s -X POST "http://127.0.0.1:$PORT/rpc" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer $TOKEN" \
+        -d "$payload")
+
+    # Check for error in response
+    has_error=$(printf '%s' "$response" | python3 -c "import sys, json; r=json.load(sys.stdin); print('yes' if 'error' in r else 'no')")
+    if [ "$has_error" = "yes" ]; then
+        printf '%s' "$response" | python3 -c "import sys, json; print('Error:', json.load(sys.stdin)['error']['message'])" >&2
+        exit 1
+    fi
+
+    printf '%s' "$response" | python3 -c "import sys, json; res=json.load(sys.stdin).get('result', {}); print(json.dumps(res, indent=2) if isinstance(res, (dict, list)) else res)"
+}
+
+mcp_bridge() {
+    get_agent_config
+    python3 -c '
+import sys, json, urllib.request
+
+port = sys.argv[1]
+token = sys.argv[2]
+url = f"http://127.0.0.1:{port}/mcp"
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        req = urllib.request.Request(
+            url,
+            data=line.encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as resp:
+            sys.stdout.buffer.write(resp.read() + b"\n")
+            sys.stdout.flush()
+    except Exception as e:
+        err_resp = {"jsonrpc": "2.0", "id": None, "error": {"code": -32603, "message": str(e)}}
+        sys.stdout.buffer.write(json.dumps(err_resp).encode("utf-8") + b"\n")
+        sys.stdout.flush()
+' "$PORT" "$TOKEN"
+}
+
+# --- CLI Routing ---
+if [ "$1" = "agent" ]; then
+    shift
+    sub="$1"
+    [ -n "$sub" ] || usage
+    shift
+
+    case "$sub" in
+        status)
+            rpc_call "kylmora.status" "{}"
+            ;;
+        tabs)
+            rpc_call "kylmora.tabs.list" "{}"
+            ;;
+        profiles|spaces)
+            rpc_call "kylmora.profiles.list" "{}"
+            ;;
+        open)
+            [ $# -ge 1 ] || usage
+            url="$1"
+            shift
+            space_arg=""
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --profile|--space) space_arg="$2"; shift 2 ;;
+                    --background|-g) shift ;;
+                    *) usage ;;
+                esac
+            done
+            params=$(python3 -c "import sys, json; print(json.dumps({'url': sys.argv[1], 'profile': sys.argv[2] if sys.argv[2] else None}))" "$url" "$space_arg")
+            rpc_call "kylmora.tabs.open" "$params"
+            ;;
+        select)
+            [ $# -ge 1 ] || usage
+            rpc_call "kylmora.tabs.select" "{\"id\": \"$1\"}"
+            ;;
+        close)
+            [ $# -ge 1 ] || usage
+            rpc_call "kylmora.tabs.close" "{\"id\": \"$1\"}"
+            ;;
+        navigate)
+            [ $# -ge 1 ] || usage
+            params=$(python3 -c "import sys, json; print(json.dumps({'url': sys.argv[1]}))" "$1")
+            rpc_call "kylmora.page.navigate" "$params"
+            ;;
+        snapshot)
+            scope="viewport"
+            if [ "$1" = "--scope" ] && [ "$2" = "full_page" ]; then
+                scope="full_page"
+            fi
+            # Output the markdown representation directly
+            get_agent_config
+            curl -s -X POST "http://127.0.0.1:$PORT/rpc" \
+                -H "Content-Type: application/json" \
+                -H "Authorization: Bearer $TOKEN" \
+                -d "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"kylmora.page.snapshot\", \"params\": {\"scope\": \"$scope\"}}" \
+                | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('result', {}).get('markdown', json.dumps(d, indent=2)))"
+            ;;
+        click|hover)
+            [ $# -ge 1 ] || usage
+            target="$1"
+            shift
+            label=""
+            if [ "$1" = "--label" ]; then label="$2"; shift 2; fi
+
+            if echo "$target" | grep -qE '^@[0-9]+$'; then
+                params=$(python3 -c "import sys, json; print(json.dumps({'ref': sys.argv[1], 'label': sys.argv[2] if sys.argv[2] else None}))" "$target" "$label")
+            else
+                # Coordinates x,y
+                x=$(echo "$target" | cut -d',' -f1)
+                y=$(echo "$target" | cut -d',' -f2)
+                params=$(python3 -c "import sys, json; print(json.dumps({'x': float(sys.argv[1]), 'y': float(sys.argv[2]), 'label': sys.argv[3] if sys.argv[3] else None}))" "$x" "$y" "$label")
+            fi
+            rpc_call "kylmora.page.$sub" "$params"
+            ;;
+        type)
+            [ $# -ge 1 ] || usage
+            text="$1"
+            shift
+            ref=""
+            clear="false"
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --ref) ref="$2"; shift 2 ;;
+                    --clear) clear="true"; shift ;;
+                    *) usage ;;
+                esac
+            done
+            params=$(python3 -c "import sys, json; print(json.dumps({'text': sys.argv[1], 'ref': sys.argv[2] if sys.argv[2] else None, 'clear': sys.argv[3] == 'true'}))" "$text" "$ref" "$clear")
+            rpc_call "kylmora.page.type" "$params"
+            ;;
+        press)
+            [ $# -ge 1 ] || usage
+            key="$1"
+            params=$(python3 -c "import sys, json; print(json.dumps({'key': sys.argv[1]}))" "$key")
+            rpc_call "kylmora.page.press" "$params"
+            ;;
+        scroll)
+            delta="${1:-400}"
+            rpc_call "kylmora.page.scroll" "{\"deltaY\": $delta}"
+            ;;
+        eval)
+            [ $# -ge 1 ] || usage
+            params=$(python3 -c "import sys, json; print(json.dumps({'script': sys.argv[1]}))" "$1")
+            rpc_call "kylmora.page.evaluate" "$params"
+            ;;
+        screenshot)
+            rpc_call "kylmora.page.screenshot" "{}"
+            ;;
+        handoff)
+            reason="${1:-User interaction required (e.g. login or captcha)}"
+            params=$(python3 -c "import sys, json; print(json.dumps({'reason': sys.argv[1]}))" "$reason")
+            rpc_call "kylmora.agent.handoff" "$params"
+            ;;
+        resume)
+            rpc_call "kylmora.agent.resume" "{}"
+            ;;
+        wait)
+            rpc_call "kylmora.agent.waitForControl" "{\"timeout\": ${1:-600}}"
+            ;;
+        finish)
+            rpc_call "kylmora.agent.finish" "{}"
+            ;;
+        mcp)
+            mcp_bridge
+            ;;
+        *)
+            usage
+            ;;
+    esac
+    exit 0
+fi
 
 print_only=0
 if [ "${1-}" = "url" ]; then print_only=1; shift; fi

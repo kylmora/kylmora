@@ -17,19 +17,28 @@ final class BannerActionButton: NSButton {
 
     /// Tall enough to read as a call to action beside a 52-point icon, and
     /// short enough to stay a button rather than become a panel.
-    private static let height: CGFloat = 34
+    private static let height: CGFloat = 42
     /// Air either side of the title. Generous on purpose: the width of a
     /// button is most of what makes it look pressable.
-    private static let horizontalPadding: CGFloat = 18
-    private static let cornerRadius: CGFloat = 10
+    private static let horizontalPadding: CGFloat = 26
+    private static let cornerRadius: CGFloat = 12
+    /// Glyph to title, when there is a glyph.
+    private static let glyphGap: CGFloat = 9
+
+    /// A white glyph before the title -- the shield on "Set as Default".
+    private let glyph: NSImage?
 
     private var trackingArea: NSTrackingArea?
     private var isHovered = false {
         didSet { if isHovered != oldValue { needsDisplay = true } }
     }
 
-    init(title: String, onClick: @escaping () -> Void) {
+    init(title: String, symbolName: String? = nil, onClick: @escaping () -> Void) {
         self.onClick = onClick
+        self.glyph = symbolName
+            .flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }?
+            .withSymbolConfiguration(.init(pointSize: 15, weight: .semibold)
+                .applying(.init(paletteColors: [.white])))
         super.init(frame: .zero)
         self.title = title
         isBordered = false
@@ -51,7 +60,8 @@ final class BannerActionButton: NSButton {
 
     override var intrinsicContentSize: NSSize {
         NSSize(
-            width: ceil(attributed().size().width) + Self.horizontalPadding * 2,
+            width: ceil(attributed().size().width) + Self.horizontalPadding * 2
+                + (glyph.map { $0.size.width + Self.glyphGap } ?? 0),
             height: Self.height
         )
     }
@@ -63,7 +73,7 @@ final class BannerActionButton: NSButton {
         NSAttributedString(
             string: title,
             attributes: [
-                .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+                .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
                 .foregroundColor: NSColor.white
             ]
         )
@@ -75,17 +85,32 @@ final class BannerActionButton: NSButton {
         let fill = isHovered && isEnabled
             ? tint.blended(withFraction: 0.12, of: .white) ?? tint
             : tint
-        (isEnabled ? fill : tint.withAlphaComponent(0.4)).setFill()
-        NSBezierPath(
+        let shape = NSBezierPath(
             roundedRect: bounds, xRadius: Self.cornerRadius, yRadius: Self.cornerRadius
-        ).fill()
+        )
+        if isEnabled {
+            // Lighter at the top, the way the design lights its one button.
+            NSGradient(
+                starting: fill.blended(withFraction: 0.18, of: .white) ?? fill, ending: fill
+            )?.draw(in: shape, angle: isFlipped ? 90 : -90)
+        } else {
+            tint.withAlphaComponent(0.4).setFill()
+            shape.fill()
+        }
 
         let text = attributed()
         let size = text.size()
-        text.draw(at: NSPoint(
-            x: ((bounds.width - size.width) / 2).rounded(),
-            y: ((bounds.height - size.height) / 2).rounded()
-        ))
+        let glyphWidth = glyph.map { $0.size.width + Self.glyphGap } ?? 0
+        var x = ((bounds.width - size.width - glyphWidth) / 2).rounded()
+        if let glyph {
+            let rect = NSRect(
+                x: x, y: ((bounds.height - glyph.size.height) / 2).rounded(),
+                width: glyph.size.width, height: glyph.size.height
+            )
+            glyph.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+            x += glyphWidth
+        }
+        text.draw(at: NSPoint(x: x, y: ((bounds.height - size.height) / 2).rounded()))
     }
 
     override func updateTrackingAreas() {
@@ -136,10 +161,12 @@ final class DefaultBrowserBanner: SettingsPlateView {
     /// because it owns the window the system's confirmation sheet belongs to.
     var onSet: (() -> Void)?
 
-    private let icon = NSImageView(image: NSApp.applicationIconImage)
+    private let icon = SettingsAppIconTile(side: DefaultBrowserBanner.iconSide)
     private let headline = NSTextField(labelWithString: "Make Kylmora your default browser")
     private let subtitle = NSTextField(wrappingLabelWithString: DefaultBrowserBanner.invitation)
-    private lazy var button = BannerActionButton(title: "Set as Default") { [weak self] in
+    private lazy var button = BannerActionButton(
+        title: "Set as Default", symbolName: "checkmark.shield.fill"
+    ) { [weak self] in
         self?.onSet?()
     }
 
@@ -147,26 +174,24 @@ final class DefaultBrowserBanner: SettingsPlateView {
     /// is not your default web browser" states a fact about a checkbox; this
     /// says what the user will notice tomorrow.
     private static let invitation =
-        "Links you open from Mail, Messages, Slack and everywhere else will open here."
+        "Open links from Mail, Messages, Slack and everywhere else in Kylmora."
 
     /// The icon at the size the Dock draws it. Smaller and it reads as a
     /// toolbar glyph beside the text rather than as the app itself.
-    private static let iconSide: CGFloat = 52
+    private static let iconSide: CGFloat = 68
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
 
-        cornerRadius = Style.SettingsUI.cardRadius
+        cornerRadius = Style.SettingsUI.sectionPanelRadius
         elevated = true
 
-        icon.imageScaling = .scaleProportionallyUpOrDown
         icon.setAccessibilityElement(false)
-        icon.translatesAutoresizingMaskIntoConstraints = false
 
-        headline.font = .systemFont(ofSize: 16, weight: .semibold)
+        headline.font = .systemFont(ofSize: 18, weight: .bold)
         headline.textColor = Style.Colors.primaryText
 
-        subtitle.font = Style.Fonts.settingsRow
+        subtitle.font = .systemFont(ofSize: 13.5)
         subtitle.textColor = Style.Colors.secondaryText
 
         let words = NSStackView(views: [headline, subtitle])
@@ -182,14 +207,12 @@ final class DefaultBrowserBanner: SettingsPlateView {
         addSubview(words)
         addSubview(button)
 
-        let padding = Style.SettingsUI.cardPadding
+        let padding: CGFloat = 26
         NSLayoutConstraint.activate([
-            icon.widthAnchor.constraint(equalToConstant: Self.iconSide),
-            icon.heightAnchor.constraint(equalToConstant: Self.iconSide),
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: padding),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            words.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 14),
+            words.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 22),
             words.centerYAnchor.constraint(equalTo: centerYAnchor),
             words.trailingAnchor.constraint(lessThanOrEqualTo: button.leadingAnchor, constant: -14),
 
@@ -199,7 +222,7 @@ final class DefaultBrowserBanner: SettingsPlateView {
             // The icon sets the height, and the padding is the same above and
             // below it, so the banner is one shape rather than a stack that
             // happens to be as tall as its tallest piece.
-            heightAnchor.constraint(greaterThanOrEqualTo: icon.heightAnchor, constant: padding * 2),
+            heightAnchor.constraint(greaterThanOrEqualTo: icon.heightAnchor, constant: 44),
             words.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: padding),
             words.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -padding)
         ])
@@ -238,12 +261,15 @@ final class DefaultBrowserBanner: SettingsPlateView {
     }
 
     private func applyAccent() {
-        let accent = settingsAccent ?? .controlAccentColor
+        let accent = settingsAccent ?? Style.Colors.kylmoraBlue
         button.tint = accent
-        // A wash of the hue rather than the card's own glass. The banner has
-        // to be the first thing the eye lands on when the pane opens, and a
-        // card that looks like every other card is not that.
-        fill = accent.withAlphaComponent(0.12)
-        stroke = accent.withAlphaComponent(0.32)
+        // A wash of the hue over the card's own glass. The banner has to be
+        // the first thing the eye lands on when the pane opens, and a card
+        // that looks like every other card is not that.
+        fill = Style.Colors.dynamic(
+            light: NSColor(srgbRed: 0.88, green: 0.93, blue: 1.0, alpha: 0.85),
+            dark: accent.withAlphaComponent(0.14)
+        )
+        stroke = accent.withAlphaComponent(0.28)
     }
 }

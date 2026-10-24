@@ -18,6 +18,9 @@ final class SettingsSpineView: NSView {
     /// What was typed in the search field.
     var onSearch: ((String) -> Void)?
 
+    private let ground = SettingsPlateView()
+    private let brand = SettingsBrandHeader()
+
     private let scroll = NSScrollView()
     private let stack = TopDownStackView()
     private var rows: [SettingsWindowController.Pane: RowView] = [:]
@@ -39,13 +42,15 @@ final class SettingsSpineView: NSView {
     private let appearanceCaption = NSTextField(labelWithString: "")
 
     /// The pane's hue, worn by the chosen appearance pill.
-    var accent: NSColor? {
-        didSet { appearanceSegments.tint = accent }
-    }
+    /// Kept for the window to set; the appearance switch wears Kylmora's own
+    /// blue whichever pane is open, because it is the window's, not the pane's.
+    var accent: NSColor?
 
     override init(frame frameRect: NSRect) {
         appearanceSegments = SettingsSegments(segmented: appearanceControl)
         super.init(frame: frameRect)
+        appearanceSegments.tint = Style.Colors.kylmoraBlue
+        appearanceSegments.fillsWidth = true
         translatesAutoresizingMaskIntoConstraints = false
 
         // The moments an exit is never delivered: the window stops being key,
@@ -60,6 +65,14 @@ final class SettingsSpineView: NSView {
                 self, selector: #selector(refreshHover), name: name, object: nil
             )
         }
+
+        // A frosted pane over the canvas, with the lake showing faintly
+        // through its lower half and a hairline down its trailing edge.
+        ground.fill = Style.Colors.settingsSpineGround
+        addSubview(ground)
+        let edge = SettingsHairlineView()
+        addSubview(edge)
+        addSubview(brand)
 
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -88,7 +101,6 @@ final class SettingsSpineView: NSView {
         appearanceControl.action = #selector(appearanceChanged)
         appearanceControl.setAccessibilityLabel("Settings window appearance")
         appearanceSegments.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(appearanceSegments)
         appearanceCaption.attributedStringValue = NSAttributedString(
             string: "APPEARANCE",
             attributes: [
@@ -99,27 +111,40 @@ final class SettingsSpineView: NSView {
         )
         appearanceCaption.translatesAutoresizingMaskIntoConstraints = false
         appearanceCaption.setAccessibilityElement(false)
+        // The window's own light, dark or automatic, pinned at the foot of the
+        // column so it is always in reach without scrolling the list.
         addSubview(appearanceCaption)
+        addSubview(appearanceSegments)
 
         let inset = Style.SettingsUI.railInset
 
         NSLayoutConstraint.activate([
+            ground.topAnchor.constraint(equalTo: topAnchor),
+            ground.leadingAnchor.constraint(equalTo: leadingAnchor),
+            ground.trailingAnchor.constraint(equalTo: trailingAnchor),
+            ground.bottomAnchor.constraint(equalTo: bottomAnchor),
+            edge.topAnchor.constraint(equalTo: topAnchor),
+            edge.bottomAnchor.constraint(equalTo: bottomAnchor),
+            edge.trailingAnchor.constraint(equalTo: trailingAnchor),
+            edge.widthAnchor.constraint(equalToConstant: 1),
+
+            brand.topAnchor.constraint(equalTo: topAnchor, constant: Style.SettingsUI.titlebarHeight - 8),
+            brand.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset + 4),
+            brand.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+
             appearanceCaption.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset + 8),
             appearanceCaption.bottomAnchor.constraint(equalTo: appearanceSegments.topAnchor, constant: -6),
             appearanceSegments.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-            appearanceSegments.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -inset),
-            appearanceSegments.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
-            scroll.bottomAnchor.constraint(equalTo: appearanceCaption.topAnchor, constant: -10),
+            appearanceSegments.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            appearanceSegments.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset - 2),
+            scroll.bottomAnchor.constraint(equalTo: appearanceCaption.topAnchor, constant: -12),
             widthAnchor.constraint(equalToConstant: Style.SettingsUI.spineWidth),
-            search.topAnchor.constraint(
-                equalTo: topAnchor,
-                constant: Style.SettingsUI.titlebarHeight
-            ),
+            search.topAnchor.constraint(equalTo: brand.bottomAnchor, constant: 14),
             search.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
             search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             empty.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 14),
             empty.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset + 8),
-            scroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 10),
+            scroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: 8),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             stack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)
@@ -147,6 +172,7 @@ final class SettingsSpineView: NSView {
             let row = RowView(
                 title: pane.title, symbolName: pane.symbolName, accent: pane.accent
             ) { [weak self] in self?.onSelect?(pane) }
+            row.showsChevronWhenChosen = true
             rows[pane] = row
             stack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
@@ -252,9 +278,9 @@ final class SettingsSpineView: NSView {
             label.attributedStringValue = NSAttributedString(
                 string: title.uppercased(),
                 attributes: [
-                    .font: Style.Fonts.settingsGroup,
-                    .foregroundColor: Style.Colors.tertiaryText,
-                    .kern: 0.6
+                    .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+                    .foregroundColor: Style.Colors.secondaryText,
+                    .kern: 1.2
                 ]
             )
             label.translatesAutoresizingMaskIntoConstraints = false
@@ -266,7 +292,7 @@ final class SettingsSpineView: NSView {
                 ),
                 label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -8),
                 label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
-                label.topAnchor.constraint(equalTo: topAnchor, constant: isFirst ? 2 : 14)
+                label.topAnchor.constraint(equalTo: topAnchor, constant: isFirst ? 6 : 16)
             ])
             setAccessibilityElement(false)
         }

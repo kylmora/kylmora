@@ -21,7 +21,8 @@ final class SettingsChoiceControl: SettingsPlateView {
     var tint: NSColor? {
         didSet {
             guard tint != oldValue else { return }
-            marker.fill = tint ?? .controlAccentColor
+            // The marker is a plain chevron now; the hue stays on the
+            // switches and the chosen segment, where it means "on".
         }
     }
 
@@ -61,15 +62,14 @@ final class SettingsChoiceControl: SettingsPlateView {
         addSubview(label)
 
         marker.cornerRadius = 6
-        marker.fill = .controlAccentColor
         addSubview(marker)
 
         chevron.image = NSImage(
             systemSymbolName: "chevron.down",
             accessibilityDescription: nil
         )
-        chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 8, weight: .bold)
-        chevron.contentTintColor = .white
+        chevron.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 10, weight: .semibold)
+        chevron.contentTintColor = Style.Colors.secondaryText
         chevron.translatesAutoresizingMaskIntoConstraints = false
         chevron.setAccessibilityElement(false)
         addSubview(chevron)
@@ -127,7 +127,7 @@ final class SettingsChoiceControl: SettingsPlateView {
         sync()
         let enabled = popUp.isEnabled
         label.textColor = enabled ? Style.Colors.primaryText : Style.Colors.secondaryText
-        marker.alphaValue = enabled ? 1 : 0.4
+        chevron.alphaValue = enabled ? 1 : 0.4
         super.viewWillDraw()
     }
 
@@ -171,6 +171,21 @@ final class SettingsSegments: NSView {
     private let segmented: NSSegmentedControl
     private var visibility: NSKeyValueObservation?
     private var pills: [Pill] = []
+    private let row = NSStackView()
+
+    /// Whether the segments share the whole width they are given, rather than
+    /// each sitting at its own size from the leading edge.
+    var fillsWidth = false {
+        didSet {
+            row.distribution = fillsWidth ? .fillEqually : .fill
+            // Equal shares win over a pill's own padding; the words still fit.
+            for pill in pills {
+                pill.setContentCompressionResistancePriority(
+                    fillsWidth ? .defaultLow : .defaultHigh, for: .horizontal
+                )
+            }
+        }
+    }
     private var shown = -1
 
     init(segmented: NSSegmentedControl) {
@@ -178,7 +193,6 @@ final class SettingsSegments: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
-        let row = NSStackView()
         row.orientation = .horizontal
         row.spacing = 4
         row.translatesAutoresizingMaskIntoConstraints = false

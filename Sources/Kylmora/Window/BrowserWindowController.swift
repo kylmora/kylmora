@@ -59,6 +59,9 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     var cheatSheet: ShortcutCheatSheetWindowController?
     private let webPanel: WebPanelViewController
     private var webPanelSplitItem: NSSplitViewItem?
+    /// The AI assistant chat, on the right of the page.
+    private let assistantPanel: AssistantPanelViewController
+    private var assistantSplitItem: NSSplitViewItem?
     /// An extension's side panel, docked on the same side as the web panel.
     /// Only one of the two is ever open: they are the same piece of screen.
     private var extensionPanelSplitItem: NSSplitViewItem?
@@ -74,22 +77,27 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     // card. These four keep the availability check in one place rather than at
     // every callsite in the sidebar's wiring.
     private func showPanelWash(_ wash: NSColor?, gradient: WashGradient?, animatedOver duration: TimeInterval) {
+        assistantPanel.showSpaceWash(wash, animatedOver: duration)
+        assistantPanel.showSpaceGradient(gradient, animatedOver: duration)
         guard #available(macOS 15.4, *) else { return }
         extensionPanel?.showSpaceWash(wash, animatedOver: duration)
         extensionPanel?.showSpaceGradient(gradient, animatedOver: duration)
     }
 
     private func blendPanelWash(toward other: NSColor?, fraction: CGFloat) {
+        assistantPanel.blendSpaceWash(toward: other, fraction: fraction)
         guard #available(macOS 15.4, *) else { return }
         extensionPanel?.blendSpaceWash(toward: other, fraction: fraction)
     }
 
     private func setPanelWash(_ wash: NSColor?) {
+        assistantPanel.spaceWash = wash
         guard #available(macOS 15.4, *) else { return }
         extensionPanel?.spaceWash = wash
     }
 
     private func setPanelGradient(_ gradient: WashGradient?) {
+        assistantPanel.spaceGradient = gradient
         guard #available(macOS 15.4, *) else { return }
         extensionPanel?.spaceGradient = gradient
     }
@@ -102,6 +110,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         self.sidebar = SidebarViewController(session: session)
         self.content = WebContentViewController(session: session)
         self.webPanel = WebPanelViewController(store: .shared)
+        self.assistantPanel = AssistantPanelViewController(browser: session)
 
         let window = BrowserWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
@@ -374,15 +383,26 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         webPanelItem.isCollapsed = !WebPanelStore.shared.isOpen
         self.webPanelSplitItem = webPanelItem
 
+        let assistantItem = NSSplitViewItem(viewController: assistantPanel)
+        assistantItem.minimumThickness = 320
+        assistantItem.maximumThickness = 560
+        assistantItem.canCollapse = true
+        assistantItem.holdingPriority = .defaultLow
+        assistantItem.isCollapsed = true
+        assistantSplitItem = assistantItem
+        assistantPanel.onClose = { [weak self] in self?.setAssistantOpen(false) }
+
         let isTrailing = Settings.shared.sidebarPosition == .trailing
         if isTrailing {
             if let extensionPanelItem { splitViewController.addSplitViewItem(extensionPanelItem) }
             splitViewController.addSplitViewItem(webPanelItem)
             splitViewController.addSplitViewItem(contentItem)
+            splitViewController.addSplitViewItem(assistantItem)
             splitViewController.addSplitViewItem(sidebarItem)
         } else {
             splitViewController.addSplitViewItem(sidebarItem)
             splitViewController.addSplitViewItem(contentItem)
+            splitViewController.addSplitViewItem(assistantItem)
             splitViewController.addSplitViewItem(webPanelItem)
             if let extensionPanelItem { splitViewController.addSplitViewItem(extensionPanelItem) }
         }
@@ -615,6 +635,9 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
                 self?.showExtensionsMenu()
             })
         }
+        actions.append(TopBarAction(symbolName: "sparkles", label: "AI Assistant") { [weak self] in
+            self?.toggleAssistant(nil)
+        })
         topBarActions = actions
         applyToolbarLayout()
         NotificationCenter.default.addObserver(forName: .toolbarLayoutDidChange, object: nil, queue: .main) { [weak self] _ in
@@ -2527,6 +2550,25 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         } else {
             item.isCollapsed = !open
         }
+    }
+
+    /// Opens or closes the AI assistant beside the page.
+    @objc func toggleAssistant(_ sender: Any?) {
+        setAssistantOpen(assistantSplitItem?.isCollapsed ?? true)
+    }
+
+    func setAssistantOpen(_ open: Bool) {
+        guard let item = assistantSplitItem else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            item.animator().isCollapsed = !open
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard open, let self else { return }
+                self.assistantPanel.focusInput()
+            }
+        }
+        (content.topBar.actionButton(labelled: "AI Assistant") as? IconButton)?.isActive = open
     }
 
     @objc func toggleWebPanel(_ sender: Any?) {

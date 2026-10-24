@@ -100,7 +100,9 @@ final class WebContainerView: NSView {
     var visibleContent: NSView? { currentDocument ?? current }
 
     private func swapWebView(_ webView: WKWebView?) {
-        guard webView !== current else { return }
+        // The agent window can borrow a web view that is off screen here, so
+        // the same one may need putting back.
+        guard webView !== current || webView?.superview !== self else { return }
 
         current?.removeFromSuperview()
         current = webView

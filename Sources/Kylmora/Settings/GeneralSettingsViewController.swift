@@ -65,71 +65,111 @@ final class GeneralSettingsViewController: NSViewController {
         // width of the pane like the cards under it.
         defaultBrowserBanner.widthAnchor.constraint(equalTo: bannerRow.widthAnchor).isActive = true
 
+        // Startup & Tabs.
+        form.addSection(
+            "Startup & Tabs",
+            subtitle: "Choose what opens when you start Kylmora and how new tabs behave.",
+            symbol: "person.crop.circle",
+            tint: Self.purple
+        )
         opensWithPopUp.addItems(withTitles: ["Tabs and spaces from last session", "A new tab"])
         opensWithPopUp.target = self
         opensWithPopUp.action = #selector(opensWithChanged)
-        form.addRow("Kylmora opens with", SettingsForm.fill(opensWithPopUp))
+        form.addRow("Kylmora opens with", SettingsForm.fill(opensWithPopUp), symbol: "house")
 
         newTabsPopUp.addItems(withTitles: NewTabTarget.allCases.map(\.title))
         newTabsPopUp.target = self
         newTabsPopUp.action = #selector(newTabsChanged)
-        form.addRow("New tabs open with", SettingsForm.fill(newTabsPopUp))
+        form.addRow("New tabs open with", SettingsForm.fill(newTabsPopUp), symbol: "plus.circle")
 
         commandBarOnNewTab.target = self
         commandBarOnNewTab.action = #selector(commandBarOnNewTabChanged)
-        form.addContinuation(commandBarOnNewTab)
-        form.addNote("Keeps the current page in view until you enter an address or choose a destination.")
+        form.addRow(
+            "", commandBarOnNewTab, symbol: "command",
+            note: "Keeps the current page in view until you enter an address or choose a destination."
+        )
 
         homepageField.placeholderString = "https://"
         homepageField.target = self
         homepageField.action = #selector(homepageCommitted)
-        form.addRow("Homepage", SettingsForm.fill(homepageField))
+        homepageField.translatesAutoresizingMaskIntoConstraints = false
+        homepageField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
         let setToCurrent = NSButton(title: "Set to Current Page", target: self, action: #selector(setHomepageToCurrent))
         setToCurrent.bezelStyle = .rounded
-        form.addContinuation(setToCurrent)
+        form.addRow("Homepage", [homepageField, setToCurrent], symbol: "globe")
 
-        form.addSeparator()
-
+        // Downloads.
+        form.addSection(
+            "Downloads",
+            subtitle: "Manage where files are saved and how they are handled.",
+            symbol: "arrow.down.to.line",
+            tint: Style.Colors.kylmoraBlue
+        )
         locationPopUp.addItems(withTitles: DownloadLocation.allCases.map(\.title))
         locationPopUp.target = self
         locationPopUp.action = #selector(locationChanged)
-        form.addRow("File download location", SettingsForm.fill(locationPopUp))
+        form.addRow("File download location", SettingsForm.fill(locationPopUp), symbol: "folder")
 
         removalPopUp.addItems(withTitles: DownloadRemoval.allCases.map(\.title))
         removalPopUp.target = self
         removalPopUp.action = #selector(removalChanged)
-        form.addRow("Remove download items", SettingsForm.fill(removalPopUp))
+        form.addRow("Remove download items", SettingsForm.fill(removalPopUp), symbol: "trash")
         safeFiles.target = self
         safeFiles.action = #selector(safeFilesChanged)
-        form.addContinuation(safeFiles)
-        form.addNote("\u{201c}Safe\u{201d} files include movies, pictures, sounds, PDF and text documents, and archives.")
+        form.addRow(
+            "", safeFiles, symbol: "doc.text",
+            note: "\u{201c}Safe\u{201d} files include movies, pictures, sounds, PDF and text documents, and archives."
+        )
 
+        // Language and Appearance, side by side.
+        form.addSection(
+            "Language",
+            subtitle: "Change the language used in Kylmora.",
+            symbol: "globe",
+            tint: Self.green
+        )
         languagePopUp.addItems(withTitles: ["English"])
         languagePopUp.isEnabled = false
-        form.addRow("Language", SettingsForm.fill(languagePopUp))
-        form.addNote("Kylmora is in English so far. More languages will appear here as they are added.")
+        form.addRow(
+            "Language", SettingsForm.fill(languagePopUp), symbol: "translate",
+            note: "Kylmora is currently in English. More languages will appear here as they are added."
+        )
 
+        form.addSection(
+            "Appearance",
+            subtitle: "Customize the look and behavior of Kylmora.",
+            symbol: "paintpalette",
+            tint: Self.red,
+            beside: true
+        )
         appearancePopUp.addItems(withTitles: AppearancePreference.allCases.map(\.title))
         appearancePopUp.target = self
         appearancePopUp.action = #selector(appearanceChanged)
-        form.addRow("Appearance", SettingsForm.fill(appearancePopUp))
+        form.addRow("Appearance", SettingsForm.fill(appearancePopUp), symbol: "moon")
 
         suspensionPopUp.addItems(withTitles: Settings.suspensionChoices.map(Self.suspensionTitle))
         suspensionPopUp.target = self
         suspensionPopUp.action = #selector(suspensionChanged)
-        form.addRow("Put inactive tabs to sleep after", SettingsForm.fill(suspensionPopUp))
-        form.addNote("""
-            A sleeping tab gives its memory back and reopens where you left it. \
-            It stays in the sidebar, dimmed, with a moon beside it. Tabs you have \
-            set to Keep Awake are left alone, unless macOS itself runs critically \
-            short of memory.
-            """)
+        form.addRow(
+            "Put inactive tabs to sleep after", SettingsForm.fill(suspensionPopUp), symbol: "clock",
+            note: """
+                A sleeping tab frees memory back and reopens where you left it. It stays \
+                in the sidebar, dimmed, with a moon beside it. Tabs set to Keep Awake are \
+                left alone, unless macOS itself runs critically short of memory.
+                """
+        )
 
+        // Tab lifecycle.
+        form.addSection(
+            "Sleeping Tabs",
+            subtitle: "What happens to tabs you have not touched in a while.",
+            symbol: "moon.zzz",
+            tint: Self.orange
+        )
         archivePopUp.addItems(withTitles: Settings.archiveChoices.map(Self.archiveTitle))
         archivePopUp.target = self
         archivePopUp.action = #selector(archiveChanged)
-        form.addRow("Then archive them after", SettingsForm.fill(archivePopUp))
-        form.addNote("""
+        form.addRow("Then archive them after", SettingsForm.fill(archivePopUp), symbol: "archivebox", note: """
             Off unless you turn it on. A sleeping tab that stays untouched for this \
             long \u{2014} including one you opened in the background and never read \u{2014} \
             leaves the sidebar for the Archive, where you can read it or put it \
@@ -141,29 +181,35 @@ final class GeneralSettingsViewController: NSViewController {
         idleBadgePopUp.addItems(withTitles: TabIdleBadgeMode.allCases.map(\.title))
         idleBadgePopUp.target = self
         idleBadgePopUp.action = #selector(idleBadgeChanged)
-        form.addRow("Show time since last use", SettingsForm.fill(idleBadgePopUp))
-        form.addNote("A small timer on the tab row, such as 10m or 2h. The tab you are reading never shows one.")
+        form.addRow(
+            "Show time since last use", SettingsForm.fill(idleBadgePopUp), symbol: "timer",
+            note: "A small timer on the tab row, such as 10m or 2h. The tab you are reading never shows one."
+        )
 
-        form.addSeparator()
-
+        // Spaces & Windows.
+        form.addSection(
+            "Spaces & Windows",
+            subtitle: "Where links land, which space opens first, and how the sidebar sizes.",
+            symbol: "square.stack.3d.up",
+            tint: Self.teal
+        )
         spacePopUp.target = self
         spacePopUp.action = #selector(defaultSpaceChanged)
         spacePopUp.translatesAutoresizingMaskIntoConstraints = false
         spacePopUp.widthAnchor.constraint(equalToConstant: 220).isActive = true
         let manageSpaces = NSButton(title: "Manage Spaces\u{2026}", target: self, action: #selector(manageSpaces))
         manageSpaces.bezelStyle = .rounded
-        form.addRow("Default space", [spacePopUp, manageSpaces])
+        form.addRow("Default space", [spacePopUp, manageSpaces], symbol: "square.stack")
 
         externalPopUp.addItems(withTitles: ExternalLinkTarget.allCases.map(\.title))
         externalPopUp.target = self
         externalPopUp.action = #selector(externalChanged)
-        form.addRow("Open external links in", SettingsForm.fill(externalPopUp))
+        form.addRow("Open external links in", SettingsForm.fill(externalPopUp), symbol: "arrow.up.forward.app")
 
         sidebarWidthScopePopUp.addItems(withTitles: SidebarWidthScope.allCases.map(\.title))
         sidebarWidthScopePopUp.target = self
         sidebarWidthScopePopUp.action = #selector(sidebarWidthScopeChanged)
-        form.addRow("Sidebar width", SettingsForm.fill(sidebarWidthScopePopUp))
-        form.addNote("""
+        form.addRow("Sidebar width", SettingsForm.fill(sidebarWidthScopePopUp), symbol: "sidebar.left", note: """
             Drag the edge of the sidebar to set it. Shared, every space opens at \
             the width you last left it. Its own, each space remembers how wide you \
             left it and switching spaces restores it -- worth having when one space \
@@ -171,13 +217,25 @@ final class GeneralSettingsViewController: NSViewController {
             avoiding otherwise, because the sidebar then moves every time you switch.
             """)
 
-        form.addSeparator()
-
+        // Quitting.
+        form.addSection(
+            "Quitting",
+            subtitle: "A last check before Kylmora closes every window.",
+            symbol: "power",
+            tint: Self.grey
+        )
         quitWarning.target = self
         quitWarning.action = #selector(quitWarningChanged)
-        form.addRow("Quitting", quitWarning)
-
+        form.addRow("", quitWarning, symbol: "exclamationmark.triangle")
     }
+
+    /// The section tiles' hues, as the design paints them.
+    private static let purple = NSColor(srgbRed: 0.60, green: 0.40, blue: 0.92, alpha: 1)
+    private static let green = NSColor(srgbRed: 0.20, green: 0.68, blue: 0.42, alpha: 1)
+    private static let red = NSColor(srgbRed: 0.93, green: 0.30, blue: 0.36, alpha: 1)
+    private static let orange = NSColor(srgbRed: 0.95, green: 0.58, blue: 0.20, alpha: 1)
+    private static let teal = NSColor(srgbRed: 0.18, green: 0.66, blue: 0.68, alpha: 1)
+    private static let grey = NSColor(srgbRed: 0.50, green: 0.53, blue: 0.62, alpha: 1)
 
     private func reload() {
         locationPopUp.selectItem(at: DownloadLocation.allCases.firstIndex(of: settings.downloadLocation) ?? 0)
