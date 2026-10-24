@@ -121,6 +121,23 @@ struct AgentTests {
         await #expect(throws: AgentError.self) { try await manager.waitForControl(timeout: 0.1) }
     }
 
+    @Test("One wait timing out does not release another while the user still holds the page")
+    func timeoutWakesOnlyItsOwnWaiter() async throws {
+        let manager = AgentHandoffManager.shared
+        manager.reset()
+        defer { manager.reset() }
+
+        manager.takeOverByUser()
+        let long = Task { @MainActor in try await manager.waitForControl(timeout: 5) }
+        await #expect(throws: AgentError.self) { try await manager.waitForControl(timeout: 0.05) }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(manager.isUserControlling)
+
+        manager.giveBackToAgent()
+        try await long.value
+        #expect(manager.isAgentDriving)
+    }
+
     @Test("Keys map to US key codes, with shift for capitals and symbols")
     func keyMapping() {
         #expect(AgentKey.forCharacter("a").code == 0)
