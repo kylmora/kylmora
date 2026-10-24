@@ -116,10 +116,12 @@ public final class AgentHandoffManager {
             expiry.passed = true
             self?.wakeControlWaiters()
         }
-        await withCheckedContinuation { controlWaiters.append($0) }
-        timer.cancel()
-        if expiry.passed, isUserControlling {
-            throw AgentError.controlWaitTimedOut(timeout)
+        defer { timer.cancel() }
+        // Waiters are woken together, by any state change or by any waiter's
+        // timeout, so each one checks its own reason before leaving.
+        while isUserControlling {
+            if expiry.passed { throw AgentError.controlWaitTimedOut(timeout) }
+            await withCheckedContinuation { controlWaiters.append($0) }
         }
     }
 
