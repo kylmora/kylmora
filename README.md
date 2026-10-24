@@ -18,10 +18,11 @@ frameworks, and the universal download is 6.1 MB.
 
 > **Status:** a complete daily browser. Spaces with separate identities,
 > sync, a command palette, automations, autofill, a PDF viewer, translation
-> on the Mac's own model, extensions and content blocking all work. Nothing
-> in the UI is a mock: if a control is there, it does something, and a
-> feature that cannot work on macOS says so instead of pretending. There is
-> no AI in it and nothing is sent anywhere about you or your Mac.
+> on the Mac's own model, extensions, content blocking and an optional AI
+> assistant all work. Nothing in the UI is a mock: if a control is there, it
+> does something, and a feature that cannot work on macOS says so instead of
+> pretending. The assistant is off until you add a model of your own, and
+> nothing is sent anywhere about you or your Mac.
 
 **Contributions are welcome** — see [Contributing](#contributing).
 
@@ -44,7 +45,7 @@ frameworks, and the universal download is 6.1 MB.
 ## Install
 
 Download the latest build from the releases page:
-**https://github.com/kylmora/kylmora/releases/latest**
+**https://github.com/kylmora/kylmora/releases/latest** (currently v0.1.65)
 
 - `Kylmora.dmg` for people: open it and drag Kylmora to Applications.
 - `Kylmora.pkg` for fleets: an installer a device-management tool can push
@@ -200,6 +201,32 @@ locking settings across a fleet with a configuration profile or a
 - A rule set to run from the command palette is a custom command, with a
   keyboard shortcut of its own if you want one.
 
+### AI assistant and agent
+
+- **Assistant panel:** the sparkles button at the top right of the window
+  opens a chat beside the page. Ask about what you are reading, or have it do
+  something on the page for you.
+- **Bring your own model:** Claude in Anthropic's format, or any server that
+  speaks the OpenAI format -- OpenAI, OpenRouter, Groq, a model on the Mac
+  through Ollama or LM Studio, or a custom address. Presets fill in the
+  address; any model ID can be added. Keys are kept in the login Keychain and
+  sent only to the server of the model they belong to. A model running on the
+  Mac needs no key.
+- **It uses the page like a person:** the agent works in the Space you are
+  in, with that Space's logins, and acts with real mouse and keyboard input
+  from a cursor you can watch. Take over at any moment. At a sign-in,
+  captcha, two-factor code or payment it stops and hands the page to you, and
+  it is told to ask before anything that cannot be undone.
+- The same agent is open to tools outside the app: see
+  [Driving it from outside](#driving-it-from-outside).
+
+### Task Manager
+
+- What every Space and page is costing in memory, processor and graphics,
+  live, with two minutes of history. Put a page to sleep, reload or close it
+  from the list. On the Window menu, on ⇧⌘U, in Settings, and optionally as a
+  gauge in the sidebar's footer.
+
 ### Extensions, sync and import
 
 - Extensions on WebKit's own extension engine, which reads the manifest
@@ -292,6 +319,9 @@ Sources/Kylmora/
 ├── Web/              WebKit environment, navigation, error pages, printing
 ├── PDF/              The PDF viewer and its inline fetch
 ├── Automations/      Rules: triggers, actions, the engine and the service
+├── Assistant/        The AI chat panel, model settings and the two API formats
+├── Agent/            The agent: real input, the cursor overlay, hand-off, its local server
+├── Diagnostics/      The Task Manager: per-tab metrics, charts, history
 ├── Routing/          Space routing rules
 ├── Passwords/        Keychain logins, identity and card autofill
 ├── Downloads/        Download manager, list, destinations
@@ -322,6 +352,19 @@ kylmora space Personal
 kylmora command print-page      # any command palette id
 kylmora new-tab
 kylmora url open https://a.b    # print the kylmora:// address instead
+```
+
+The same tool drives the AI agent, for a coding agent or a script on the Mac.
+It works in a Space you choose, with real input you can watch:
+
+```sh
+kylmora agent profiles              # Spaces and their logins
+kylmora agent open https://example.com --profile Work
+kylmora agent snapshot              # the page's elements, each with an @ref
+kylmora agent click @12 --label "Open the menu"
+kylmora agent type "hello" --ref @7
+kylmora agent handoff "Please sign in"   # give the page to the person
+kylmora agent mcp                   # serve the same tools over MCP (stdio)
 ```
 
 Anything that can run `open` can use the addresses directly:
