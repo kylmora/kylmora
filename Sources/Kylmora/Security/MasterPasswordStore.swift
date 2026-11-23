@@ -60,6 +60,8 @@ public enum MasterPasswordStore {
 
         if updateStatus == errSecItemNotFound {
             var addAttributes = query()
+            // kSecAttrSynchronizableAny is only valid for queries; SecItemAdd rejects it with errSecParam (-50).
+            addAttributes.removeValue(forKey: kSecAttrSynchronizable as String)
             addAttributes[kSecValueData as String] = data
             addAttributes[kSecAttrLabel as String] = "Kylmora Master Password"
             let addStatus = SecItemAdd(addAttributes as CFDictionary, nil)

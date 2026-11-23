@@ -45,10 +45,15 @@ final class WebContentViewController: NSViewController {
         return container
     }()
     private var cancellables: Set<AnyCancellable> = []
+    nonisolated(unsafe) private var notificationTokens: [NSObjectProtocol] = []
 
     init(session: BrowserSession) {
         self.session = session
         super.init(nibName: nil, bundle: nil)
+    }
+
+    deinit {
+        for token in notificationTokens { NotificationCenter.default.removeObserver(token) }
     }
 
     required init?(coder: NSCoder) {
@@ -149,9 +154,9 @@ final class WebContentViewController: NSViewController {
         contentContainer.tabStrip.onNewTab = { [weak self] in _ = self?.session.newTab() }
         contentContainer.tabStrip.onReorder = { [weak self] from, to in self?.session.moveTab(from: from, to: to) }
         for name in [Notification.Name.tabStripDidChange, .zenModeDidChange] {
-            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+            notificationTokens.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.updateTabStrip(rebuild: true) }
-            }
+            })
         }
         updateTabStrip(rebuild: true)
 

@@ -204,9 +204,14 @@ public final class EnterprisePoliciesViewController: NSViewController, NSTableVi
         panel.prompt = "Export"
         panel.message = "Save active enterprise policies"
 
-        panel.beginSheetModal(for: view.window ?? NSApp.keyWindow!) { response in
+        let completion: (NSApplication.ModalResponse) -> Void = { response in
             guard response == .OK, let url = panel.url else { return }
             try? data.write(to: url)
+        }
+        if let host = view.window ?? NSApp?.keyWindow {
+            panel.beginSheetModal(for: host, completionHandler: completion)
+        } else {
+            panel.begin(completionHandler: completion)
         }
     }
 

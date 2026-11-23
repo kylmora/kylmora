@@ -17,7 +17,7 @@ public final class ReadingListStore {
         if let fileURL {
             self.fileURL = fileURL
         } else {
-            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first ?? URL(fileURLWithPath: NSTemporaryDirectory())
             let dir = appSupport.appendingPathComponent("Kylmora", isDirectory: true)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             self.fileURL = dir.appendingPathComponent("reading_list.json")

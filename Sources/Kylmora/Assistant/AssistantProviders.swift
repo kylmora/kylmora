@@ -117,8 +117,9 @@ enum AssistantConfigStore {
     }
 
     static func remove(_ model: AssistantModelConfig) {
+        let wasSelected = defaults.string(forKey: selectedKey) == model.id.uuidString
         customModels = customModels.filter { $0.id != model.id }
-        if selected.id == model.id { selected = builtIns[0] }
+        if wasSelected { selected = builtIns[0] }
     }
 
     // MARK: - Keys, in the Keychain

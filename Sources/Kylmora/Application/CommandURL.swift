@@ -26,7 +26,10 @@ enum CommandURL: Equatable {
         func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
         switch action {
         case "tab":
-            guard let text = value("url"), let target = URL(string: text), target.scheme != nil else { return nil }
+            guard let text = value("url"),
+                  let target = URL(string: text),
+                  let targetScheme = target.scheme?.lowercased(),
+                  targetScheme == "http" || targetScheme == "https" else { return nil }
             let background = ["1", "true", "yes"].contains((value("background") ?? "").lowercased())
             self = .tab(target, space: value("space").flatMap { $0.isEmpty ? nil : $0 }, background: background)
         case "space":

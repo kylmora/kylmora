@@ -159,6 +159,10 @@ final class BoostCoordinator {
             .flatMap { String(data: $0, encoding: .utf8) }
             .map { String($0.dropFirst().dropLast()) } ?? "\"\""
 
+        let jsLiteral = (try? JSONSerialization.data(withJSONObject: [boost.customJS]))
+            .flatMap { String(data: $0, encoding: .utf8) }
+            .map { String($0.dropFirst().dropLast()) } ?? "\"\""
+
         let jsCode = """
         (function() {
             var head = document.head || document.documentElement;
@@ -192,9 +196,11 @@ final class BoostCoordinator {
             }
 
             // Custom JS
-            if (\(boost.isEnabled) && \(boost.customJS.isEmpty ? "false" : "true")) {
+            var customJS = \(jsLiteral);
+            if (\(boost.isEnabled) && customJS.trim()) {
                 try {
-                    \(boost.customJS)
+                    var fn = new Function(customJS);
+                    fn();
                 } catch(e) {
                     console.warn("Kylmora Boost JS error:", e);
                 }

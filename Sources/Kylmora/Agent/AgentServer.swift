@@ -24,14 +24,12 @@ public final class AgentServer: @unchecked Sendable {
         port = 4999
         publishRuntimeConfig()
 
-        let parameters = NWParameters.tcp
-        parameters.allowLocalEndpointReuse = true
-
-        // Try default port 4999 first; if unavailable, use ephemeral port 0
+        // Try default port 4999 on loopback first; if unavailable, use an ephemeral loopback port
         let targetPort: NWEndpoint.Port = NWEndpoint.Port(rawValue: 4999) ?? .any
+        let parameters = Self.loopbackParameters(port: targetPort)
 
         do {
-            let listener = try NWListener(using: parameters, on: targetPort)
+            let listener = try NWListener(using: parameters)
             self.listener = listener
 
             listener.stateUpdateHandler = { [weak self] state in
@@ -44,9 +42,9 @@ public final class AgentServer: @unchecked Sendable {
                     }
                 case .failed(let error):
                     NSLog("Kylmora AgentServer failed: \(error)")
-                    // Retry on any ephemeral port if default was busy
+                    // Retry on any ephemeral loopback port if default was busy
                     if targetPort != .any {
-                        self.retryWithEphemeralPort(parameters: parameters)
+                        self.retryWithEphemeralPort()
                     }
                 default:
                     break
@@ -63,11 +61,18 @@ public final class AgentServer: @unchecked Sendable {
         }
     }
 
-    private func retryWithEphemeralPort(parameters: NWParameters) {
+    private static func loopbackParameters(port: NWEndpoint.Port) -> NWParameters {
+        let parameters = NWParameters.tcp
+        parameters.allowLocalEndpointReuse = true
+        parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: port)
+        return parameters
+    }
+
+    private func retryWithEphemeralPort() {
         listener?.cancel()
         listener = nil
         do {
-            let fallbackListener = try NWListener(using: parameters, on: .any)
+            let fallbackListener = try NWListener(using: Self.loopbackParameters(port: .any))
             self.listener = fallbackListener
             fallbackListener.stateUpdateHandler = { [weak self] state in
                 if case .ready = state, let portValue = fallbackListener.port?.rawValue {
@@ -104,16 +109,20 @@ public final class AgentServer: @unchecked Sendable {
 
         guard let data = try? JSONSerialization.data(withJSONObject: config, options: .prettyPrinted) else { return }
 
-        // Write to App Support
+        let fm = FileManager.default
+        // Write to App Support with owner-only permissions
         let appSupportFile = AppPaths.supportDirectory.appending(path: "agent-runtime.json")
         try? data.write(to: appSupportFile, options: .atomic)
+        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: appSupportFile.path)
 
-        // Write to ~/.kylmora/agent-runtime.json for convenient user/tool access
-        let userHome = FileManager.default.homeDirectoryForCurrentUser
+        // Write to ~/.kylmora/agent-runtime.json with owner-only permissions
+        let userHome = fm.homeDirectoryForCurrentUser
         let dotKylmora = userHome.appending(path: ".kylmora", directoryHint: .isDirectory)
-        try? FileManager.default.createDirectory(at: dotKylmora, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: dotKylmora, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dotKylmora.path)
         let dotRuntimeFile = dotKylmora.appending(path: "agent-runtime.json")
         try? data.write(to: dotRuntimeFile, options: .atomic)
+        try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dotRuntimeFile.path)
     }
 
     private func removeRuntimeConfig() {
@@ -132,6 +141,9 @@ public final class AgentServer: @unchecked Sendable {
         readHTTPRequest(connection: connection, accumulated: Data())
     }
 
+    private static let maxRequestBytes = 4 * 1024 * 1024
+    private static let headerTerminator = Data("\r\n\r\n".utf8)
+
     private func readHTTPRequest(connection: NWConnection, accumulated: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] content, _, isComplete, error in
             guard let self else { return }
@@ -140,26 +152,38 @@ public final class AgentServer: @unchecked Sendable {
                 data.append(content)
             }
 
-            if let requestString = String(data: data, encoding: .utf8),
-               let headerEndRange = requestString.range(of: "\r\n\r\n") {
-                // Headers complete; check Content-Length
-                let headerText = String(requestString[..<headerEndRange.lowerBound])
-                let bodyStartIndex = data.index(data.startIndex, offsetBy: headerText.utf8.count + 4)
-                let bodyData = data.subdata(in: bodyStartIndex..<data.endIndex)
+            if data.count > Self.maxRequestBytes {
+                self.sendHTTPResponse(status: 413, body: "Payload Too Large", connection: connection)
+                return
+            }
+
+            if let headerEndRange = data.range(of: Self.headerTerminator) {
+                // Headers complete; decode header bytes only so split UTF-8 in the body never stalls parsing
+                let headerBytes = data[..<headerEndRange.lowerBound]
+                let headerText = String(data: headerBytes, encoding: .utf8)
+                    ?? String(data: headerBytes, encoding: .isoLatin1)
+                    ?? ""
+                let bodyStartIndex = headerEndRange.upperBound
+                let bodyData = data[bodyStartIndex..<data.endIndex]
 
                 var contentLength = 0
                 for line in headerText.components(separatedBy: "\r\n") {
                     if line.lowercased().hasPrefix("content-length:") {
-                        let parts = line.split(separator: ":")
+                        let parts = line.split(separator: ":", maxSplits: 1)
                         if parts.count > 1, let len = Int(parts[1].trimmingCharacters(in: .whitespaces)) {
-                            contentLength = len
+                            contentLength = max(0, len)
                         }
                     }
                 }
 
+                if contentLength > Self.maxRequestBytes {
+                    self.sendHTTPResponse(status: 413, body: "Payload Too Large", connection: connection)
+                    return
+                }
+
                 if bodyData.count >= contentLength {
-                    // Full request received
-                    self.dispatchHTTPRequest(headerText: headerText, body: bodyData, connection: connection)
+                    let exactBody = contentLength > 0 ? Data(bodyData.prefix(contentLength)) : Data()
+                    self.dispatchHTTPRequest(headerText: headerText, body: exactBody, connection: connection)
                     return
                 }
             }
@@ -242,6 +266,7 @@ public final class AgentServer: @unchecked Sendable {
         case 400: statusText = "Bad Request"
         case 401: statusText = "Unauthorized"
         case 404: statusText = "Not Found"
+        case 413: statusText = "Payload Too Large"
         case 500: statusText = "Internal Server Error"
         default: statusText = "Status \(status)"
         }
@@ -407,14 +432,47 @@ public final class AgentServer: @unchecked Sendable {
         }
     }
 
+    /// Converts arbitrary values (e.g. WebKit JS results containing Date, NaN, Infinity, URL)
+    /// into JSONSerialization-safe values so serialization never raises NSInvalidArgumentException.
+    static func sanitizeJSONValue(_ value: Any) -> Any {
+        switch value {
+        case is NSNull, is String, is Bool:
+            return value
+        case let number as NSNumber:
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return number }
+            let d = number.doubleValue
+            return d.isFinite ? number : NSNull()
+        case let d as Double:
+            return d.isFinite ? d : NSNull()
+        case let f as Float:
+            return f.isFinite ? f : NSNull()
+        case let date as Date:
+            return ISO8601DateFormatter().string(from: date)
+        case let url as URL:
+            return url.absoluteString
+        case let array as [Any]:
+            return array.map { sanitizeJSONValue($0) }
+        case let dict as [String: Any]:
+            return dict.mapValues { sanitizeJSONValue($0) }
+        default:
+            return String(describing: value)
+        }
+    }
+
     @MainActor
     private func sendRPCSuccess(id: Any?, result: Any, connection: NWConnection) {
         let resp: [String: Any] = [
             "jsonrpc": "2.0",
-            "id": id ?? NSNull(),
-            "result": result
+            "id": Self.sanitizeJSONValue(id ?? NSNull()),
+            "result": Self.sanitizeJSONValue(result)
         ]
-        let data = (try? JSONSerialization.data(withJSONObject: resp)) ?? Data()
+        let data: Data
+        if JSONSerialization.isValidJSONObject(resp),
+           let encoded = try? JSONSerialization.data(withJSONObject: resp) {
+            data = encoded
+        } else {
+            data = Data("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603,\"message\":\"Response not JSON-serializable\"}}".utf8)
+        }
         sendHTTPResponse(status: 200, contentType: "application/json", bodyData: data, connection: connection)
     }
 

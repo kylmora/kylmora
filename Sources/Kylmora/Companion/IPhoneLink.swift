@@ -156,7 +156,9 @@ public struct IPhoneLink: Codable, Identifiable, Equatable, Sendable {
             }
         }
 
-        guard let targetURL, targetURL.scheme?.hasPrefix("http") == true else { return nil }
+        guard let targetURL,
+              let scheme = targetURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return nil }
 
         return IPhoneLink(
             url: targetURL,
@@ -195,7 +197,8 @@ public struct IPhoneLink: Codable, Identifiable, Equatable, Sendable {
 
         guard let targetString = queryValue(for: ["url", "link", "address", "target"]),
               let validURL = URL(string: targetString),
-              validURL.scheme?.hasPrefix("http") == true else {
+              let scheme = validURL.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
             return nil
         }
 

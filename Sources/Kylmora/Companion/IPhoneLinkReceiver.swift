@@ -63,12 +63,7 @@ final class IPhoneLinkReceiver {
             }
 
         case .tab:
-            let tab = Tab(url: link.url, identity: targetSpace.identity)
-            targetSpace.insert(tab, at: targetSpace.tabs.count)
-            session.selectTab(tab)
-
-            session.changes.send(.tabs)
-            session.changes.send(.activeTab)
+            _ = session.newTab(url: link.url, inSpace: targetSpace, select: true, origin: .external)
             session.saveNow()
 
             // If target space is not active, activate it so the user sees their link

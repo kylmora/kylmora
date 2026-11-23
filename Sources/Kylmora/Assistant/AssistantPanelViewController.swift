@@ -10,6 +10,7 @@ import AppKit
 @MainActor
 final class AssistantPanelViewController: NSViewController {
     private let session: AssistantSession
+    nonisolated(unsafe) private var notificationTokens: [NSObjectProtocol] = []
     var onClose: (() -> Void)?
 
     private let card = NSView()
@@ -26,6 +27,10 @@ final class AssistantPanelViewController: NSViewController {
     init(browser: BrowserSession) {
         session = AssistantSession(browser: browser)
         super.init(nibName: nil, bundle: nil)
+    }
+
+    deinit {
+        for token in notificationTokens { NotificationCenter.default.removeObserver(token) }
     }
 
     required init?(coder: NSCoder) {
@@ -116,9 +121,9 @@ final class AssistantPanelViewController: NSViewController {
         }
         models.onDone = { [weak self] in self?.showModels(false) }
         session.onChange = { [weak self] in self?.chat.render() }
-        NotificationCenter.default.addObserver(forName: .assistantModelsDidChange, object: nil, queue: .main) { [weak self] _ in
+        notificationTokens.append(NotificationCenter.default.addObserver(forName: .assistantModelsDidChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateModelButton() }
-        }
+        })
         updateModelButton()
         // No usable model yet: start on the setup page rather than a chat
         // that can only answer with an error.

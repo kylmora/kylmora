@@ -70,7 +70,9 @@ class ActivityCardView: SettingsPlateView {
     func setCaption(_ title: String) {
         guard title != captionText else { return }
         captionText = title
-        let attributes = caption.attributedStringValue.attributes(at: 0, effectiveRange: nil)
+        let attributes: [NSAttributedString.Key: Any] = caption.attributedStringValue.length > 0
+            ? caption.attributedStringValue.attributes(at: 0, effectiveRange: nil)
+            : [.font: Style.Fonts.settingsRow, .foregroundColor: Style.Colors.primaryText]
         caption.attributedStringValue = NSAttributedString(
             string: capitalises ? title.uppercased() : title, attributes: attributes
         )

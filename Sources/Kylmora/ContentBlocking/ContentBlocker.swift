@@ -369,7 +369,7 @@ final class ContentBlocker {
                 let json = try output.encoded()
                 let ruleList = try await self.compileList(identifier: identifier, json: json)
                 if let previous = self.userRulesIdentifier, previous != identifier {
-                    self.ruleStore.removeContentRuleList(forIdentifier: previous) { _ in }
+                    try? await self.ruleStore.removeContentRuleList(forIdentifier: previous)
                 }
                 self.userRules = ruleList
                 self.userRulesIdentifier = identifier

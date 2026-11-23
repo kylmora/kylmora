@@ -155,8 +155,12 @@ final class SQLiteDatabase {
             case .integer(let number):
                 sqlite3_bind_int64(statement, index, number)
             case .blob(let data):
-                _ = data.withUnsafeBytes { buffer in
-                    sqlite3_bind_blob(statement, index, buffer.baseAddress, Int32(buffer.count), Self.transient)
+                if data.isEmpty {
+                    sqlite3_bind_zeroblob(statement, index, 0)
+                } else {
+                    _ = data.withUnsafeBytes { buffer in
+                        sqlite3_bind_blob(statement, index, buffer.baseAddress, Int32(buffer.count), Self.transient)
+                    }
                 }
             case .null:
                 sqlite3_bind_null(statement, index)

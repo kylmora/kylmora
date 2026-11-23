@@ -56,9 +56,20 @@ INSTALLER_ID   ?=
 PKG_SUFFIX     ?=
 PKG            := $(BUILD_DIR)/$(APP_NAME)$(PKG_SUFFIX).pkg
 
-# swift-testing's macro plugin ships in a subdirectory that SwiftPM does not
-# search automatically when only Command Line Tools are installed.
-TESTING_PLUGINS := $(shell xcode-select -p)/usr/lib/swift/host/plugins/testing
+# swift-testing's macro plugin and frameworks ship in subdirectories that
+# SwiftPM does not search automatically when only Command Line Tools are
+# installed.
+DEVELOPER_DIR_PATH := $(shell xcode-select -p)
+TESTING_PLUGINS    := $(DEVELOPER_DIR_PATH)/usr/lib/swift/host/plugins/testing
+TESTING_FRAMEWORKS := $(DEVELOPER_DIR_PATH)/Library/Developer/Frameworks
+TESTING_USR_LIB    := $(DEVELOPER_DIR_PATH)/Library/Developer/usr/lib
+TESTING_FLAGS      := -Xswiftc -plugin-path -Xswiftc "$(TESTING_PLUGINS)"
+ifneq ($(wildcard $(TESTING_FRAMEWORKS)/Testing.framework),)
+TESTING_FLAGS      += -Xswiftc -F -Xswiftc "$(TESTING_FRAMEWORKS)" \
+                      -Xlinker -F -Xlinker "$(TESTING_FRAMEWORKS)" \
+                      -Xlinker -rpath -Xlinker "$(TESTING_FRAMEWORKS)" \
+                      -Xlinker -rpath -Xlinker "$(TESTING_USR_LIB)"
+endif
 
 .PHONY: all build bundle run test clean size measure notarize icon pkg
 
@@ -141,7 +152,7 @@ run: bundle
 	@open "$(APP_BUNDLE)"
 
 test:
-	swift test -Xswiftc -plugin-path -Xswiftc "$(TESTING_PLUGINS)"
+	swift test $(TESTING_FLAGS) $(TEST_ARGS)
 
 size: bundle
 	@du -sh "$(APP_BUNDLE)"

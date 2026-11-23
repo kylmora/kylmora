@@ -235,9 +235,9 @@ final class WindowBorderView: NSView {
                     sweep.isRemovedOnCompletion = false
                     paint.add(sweep, forKey: Self.sweepKey)
                 } else if let running = paint.animation(forKey: Self.sweepKey) as? CABasicAnimation,
-                          running.duration != border.animation.secondsPerRevolution {
+                          running.duration != border.animation.secondsPerRevolution,
+                          let sweep = running.copy() as? CABasicAnimation {
                     paint.removeAnimation(forKey: Self.sweepKey)
-                    let sweep = running.copy() as! CABasicAnimation
                     sweep.duration = border.animation.secondsPerRevolution
                     paint.add(sweep, forKey: Self.sweepKey)
                 }

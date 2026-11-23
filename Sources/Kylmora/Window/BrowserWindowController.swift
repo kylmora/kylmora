@@ -104,6 +104,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     private var tabOverviewController: TabOverviewGridViewController?
     var isTabOverviewOpen: Bool { tabOverviewController?.isOpen ?? false }
     private var cancellables: Set<AnyCancellable> = []
+    nonisolated(unsafe) private var notificationTokens: [NSObjectProtocol] = []
 
     init(session: BrowserSession) {
         self.session = session
@@ -175,21 +176,21 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
             setSidebarMode(.iconsOnly)
         }
 
-        NotificationCenter.default.addObserver(
+        notificationTokens.append(NotificationCenter.default.addObserver(
             forName: .sidebarModeDidChange, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.setSidebarMode(Settings.shared.sidebarMode)
             }
-        }
-        NotificationCenter.default.addObserver(
+        })
+        notificationTokens.append(NotificationCenter.default.addObserver(
             forName: .sidebarPositionDidChange, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.applySidebarPosition(animated: true)
             }
-        }
-        NotificationCenter.default.addObserver(
+        })
+        notificationTokens.append(NotificationCenter.default.addObserver(
             forName: .sidebarHoverDelayDidChange, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -198,15 +199,15 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
                 config.hoverDebounce = Settings.shared.sidebarHoverDelay
                 self.compact.setConfiguration(config)
             }
-        }
-        NotificationCenter.default.addObserver(
+        })
+        notificationTokens.append(NotificationCenter.default.addObserver(
             forName: .zenModeDidChange, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.setZenMode(Settings.shared.zenModeEnabled)
             }
-        }
-        NotificationCenter.default.addObserver(
+        })
+        notificationTokens.append(NotificationCenter.default.addObserver(
             forName: .browserLockStateDidChange, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -214,7 +215,7 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
                     BrowserLockManager.shared.attachOverlayIfNeeded(to: window)
                 }
             }
-        }
+        })
         // The sidebar already follows the session for this; it hands the
         // space on so the strip around the page card and the rim around the
         // window match it exactly rather than being computed a second time
@@ -335,6 +336,10 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         if let window {
             BrowserLockManager.shared.attachOverlayIfNeeded(to: window)
         }
+    }
+
+    deinit {
+        for token in notificationTokens { NotificationCenter.default.removeObserver(token) }
     }
 
     required init?(coder: NSCoder) {
@@ -640,9 +645,9 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
         })
         topBarActions = actions
         applyToolbarLayout()
-        NotificationCenter.default.addObserver(forName: .toolbarLayoutDidChange, object: nil, queue: .main) { [weak self] _ in
+        notificationTokens.append(NotificationCenter.default.addObserver(forName: .toolbarLayoutDidChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.applyToolbarLayout() }
-        }
+        })
         if #available(macOS 15.4, *) {
             ExtensionManager.shared.popupAnchor = { [weak bar] in bar?.actionButton(labelled: "Extensions") }
         }
@@ -1717,19 +1722,19 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
     private func observeWindowState() {
         guard let window else { return }
         let center = NotificationCenter.default
-        center.addObserver(
+        notificationTokens.append(center.addObserver(
             forName: NSWindow.didResignKeyNotification, object: window, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.compact.controller.windowDidResignOrResize()
                 self?.gestures.cancelSwipe()
             }
-        }
+        })
         for (name, active) in [
             (NSWindow.didEnterFullScreenNotification, true),
             (NSWindow.didExitFullScreenNotification, false)
         ] {
-            center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+            notificationTokens.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.isWindowFullScreen = active
@@ -1738,17 +1743,17 @@ final class BrowserWindowController: NSWindowController, NSMenuItemValidation {
                     self.root.border.cornerRadius = active ? 0 : Style.Metrics.windowCornerRadius
                     self.applyLook(of: self.sidebar.shownSpaceForLook)
                 }
-            }
+            })
         }
         for (name, active) in [
             (NSWindow.didMiniaturizeNotification, true),
             (NSWindow.didDeminiaturizeNotification, false)
         ] {
-            center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+            notificationTokens.append(center.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     self?.compact.controller.setSuppression(.miniaturized, active: active)
                 }
-            }
+            })
         }
     }
 

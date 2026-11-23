@@ -207,7 +207,7 @@ final class DeclarativeNetRequestService {
             entry.compiled = nil
             entry.identifier = nil
             entries[recordID] = entry
-            if let previous { ruleStore.removeContentRuleList(forIdentifier: previous) { _ in } }
+            if let previous { try? await ruleStore.removeContentRuleList(forIdentifier: previous) }
             onChange?()
             return
         }
