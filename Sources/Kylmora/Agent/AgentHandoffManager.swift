@@ -120,7 +120,7 @@ public final class AgentHandoffManager {
         }
         await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
-                if Task.isCancelled || !isUserControlling {
+                if Task.isCancelled || !isUserControlling || expiry.passed {
                     continuation.resume()
                     return
                 }

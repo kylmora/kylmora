@@ -128,7 +128,7 @@ struct AgentTests {
         defer { manager.reset() }
 
         manager.takeOverByUser()
-        let long = Task { @MainActor in try await manager.waitForControl(timeout: 5) }
+        let long = Task { @MainActor in try await manager.waitForControl(timeout: 60) }
         await #expect(throws: AgentError.self) { try await manager.waitForControl(timeout: 0.05) }
         try await Task.sleep(nanoseconds: 100_000_000)
         #expect(manager.isUserControlling)
@@ -317,7 +317,7 @@ struct AgentTests {
 
         // Two waiters with different timeouts: short timeout must NOT wake the longer waiter.
         let longWaiter = Task { @MainActor in
-            try await manager.waitForControl(timeout: 5.0)
+            try await manager.waitForControl(timeout: 60.0)
         }
         await #expect(throws: AgentError.self) {
             try await manager.waitForControl(timeout: 0.05)
