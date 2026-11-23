@@ -18,9 +18,9 @@ public final class AgentInputSynthesizer {
     public static let shared = AgentInputSynthesizer()
 
     /// The cursor's last position, in CSS pixels, per web view.
-    private var cursor: [ObjectIdentifier: CGPoint] = [:]
+    private let cursor = NSMapTable<WKWebView, NSValue>.weakToStrongObjects()
     private var eventNumber = 0
-    private var overlays: [ObjectIdentifier: AgentCursorOverlayView] = [:]
+    private let overlays = NSMapTable<WKWebView, AgentCursorOverlayView>.weakToStrongObjects()
 
     private func random(in range: ClosedRange<Double>) -> Double { Double.random(in: range) }
     private func pause(_ range: ClosedRange<Double>) async throws {
@@ -28,18 +28,25 @@ public final class AgentInputSynthesizer {
     }
 
     func overlay(for webView: WKWebView) -> AgentCursorOverlayView {
-        let key = ObjectIdentifier(webView)
-        if let existing = overlays[key] { return existing }
+        if let existing = overlays.object(forKey: webView) { return existing }
         let view = AgentCursorOverlayView()
-        overlays[key] = view
+        overlays.setObject(view, forKey: webView)
         return view
     }
 
-    func cursorPosition(in webView: WKWebView) -> CGPoint? { cursor[ObjectIdentifier(webView)] }
+    func cursorPosition(in webView: WKWebView) -> CGPoint? {
+        cursor.object(forKey: webView)?.pointValue
+    }
+
+    private func setCursorPosition(_ point: CGPoint, for webView: WKWebView) {
+        cursor.setObject(NSValue(point: point), forKey: webView)
+    }
 
     /// Fades every agent cursor out, for the end of a task.
     func dismissCursors() {
-        overlays.values.forEach { $0.dismiss() }
+        for view in overlays.objectEnumerator()?.allObjects as? [AgentCursorOverlayView] ?? [] {
+            view.dismiss()
+        }
     }
 
     // MARK: - Paths
@@ -124,14 +131,13 @@ public final class AgentInputSynthesizer {
     /// Travels to `target` along a curve, with the native cursor in step with the
     /// hover events the page receives, then dwells before whatever comes next.
     public func humanMove(to target: CGPoint, in webView: WKWebView, label: String? = nil) async throws {
-        let key = ObjectIdentifier(webView)
         let scale = await scale(of: webView)
         let overlay = overlay(for: webView)
         overlay.attach(to: webView)
 
         let viewTarget = viewPoint(target, scale: scale)
         let viewStart = overlay.entryPoint(toward: viewTarget)
-        let start = cursor[key] ?? CGPoint(x: viewStart.x / scale, y: viewStart.y / scale)
+        let start = cursorPosition(in: webView) ?? CGPoint(x: viewStart.x / scale, y: viewStart.y / scale)
         let path = generateCurvedPath(from: start, to: target)
         let duration = AgentCursorOverlayView.travelDuration(from: viewStart, to: viewTarget)
         overlay.travel(along: path.map { viewPoint($0, scale: scale) }, duration: duration, label: label)
@@ -141,7 +147,7 @@ public final class AgentInputSynthesizer {
             dispatchHover(at: point, scale: scale, in: webView)
             try await Task.sleep(nanoseconds: UInt64(stepDelay * 1_000_000_000))
         }
-        cursor[key] = path.last ?? target
+        setCursorPosition(path.last ?? target, for: webView)
         try await pause(0.12...0.35)
     }
 
@@ -149,7 +155,7 @@ public final class AgentInputSynthesizer {
     public func humanClick(at target: CGPoint, in webView: WKWebView, label: String? = nil, clickCount: Int = 1) async throws -> [String: Any] {
         try await humanMove(to: target, in: webView, label: label)
         let scale = await scale(of: webView)
-        let point = cursor[ObjectIdentifier(webView)] ?? target
+        let point = cursorPosition(in: webView) ?? target
         overlay(for: webView).pulseClick()
         for count in 1...max(1, clickCount) {
             if let down = mouseEvent(.leftMouseDown, at: point, scale: scale, in: webView, clickCount: count) {
@@ -172,15 +178,14 @@ public final class AgentInputSynthesizer {
     /// the pointer get the wheel, not the document.
     public func humanScroll(deltaX: Double, deltaY: Double, in webView: WKWebView, at point: CGPoint? = nil) async throws -> [String: Any] {
         let scale = await scale(of: webView)
-        let key = ObjectIdentifier(webView)
         let viewportCSS = CGSize(width: webView.bounds.width / scale, height: webView.bounds.height / scale)
-        var anchor = point ?? cursor[key] ?? CGPoint(x: viewportCSS.width / 2, y: viewportCSS.height / 2)
+        var anchor = point ?? cursorPosition(in: webView) ?? CGPoint(x: viewportCSS.width / 2, y: viewportCSS.height / 2)
         if !CGRect(origin: .zero, size: viewportCSS).insetBy(dx: 4, dy: 4).contains(anchor) {
             anchor = CGPoint(x: viewportCSS.width / 2, y: viewportCSS.height / 2)
         }
-        if cursor[key] == nil || point != nil {
+        if cursorPosition(in: webView) == nil || point != nil {
             try await humanMove(to: anchor, in: webView, label: "Scrolling")
-            anchor = cursor[key] ?? anchor
+            anchor = cursorPosition(in: webView) ?? anchor
         } else {
             overlay(for: webView).setLabel("Scrolling")
         }

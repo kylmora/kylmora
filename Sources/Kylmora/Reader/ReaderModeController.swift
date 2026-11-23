@@ -38,8 +38,13 @@ public final class ReaderModeController: NSObject {
             completion(false)
             return
         }
-        webView.evaluateJavaScript("!!window.__kylmoraReaderActive") { res, _ in
-            completion((res as? Bool) ?? false)
+        webView.evaluateJavaScript("!!window.__kylmoraReaderActive", in: nil, in: .defaultClient) { result in
+            switch result {
+            case .success(let value):
+                completion((value as? Bool) ?? false)
+            case .failure:
+                completion(false)
+            }
         }
     }
 

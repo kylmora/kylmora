@@ -280,5 +280,54 @@ struct AgentTests {
             #expect(json["token"] as? String == server.token)
             #expect(json["version"] as? String == "1.0.0")
         }
+
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: dotRuntimeFile.path),
+           let perms = attrs[.posixPermissions] as? Int {
+            #expect(perms == 0o600)
+        }
+    }
+
+    @Test("AgentServer sanitizes non-JSON values without crashing JSONSerialization")
+    func serverSanitizesJSONValues() throws {
+        let raw: [String: Any] = [
+            "nan": Double.nan,
+            "inf": Double.infinity,
+            "date": Date(timeIntervalSince1970: 0),
+            "url": URL(string: "https://example.com")!,
+            "nested": [Double.nan, true, 42, "ok"] as [Any]
+        ]
+        let sanitized = AgentServer.sanitizeJSONValue(raw)
+        #expect(JSONSerialization.isValidJSONObject(sanitized))
+        let data = try JSONSerialization.data(withJSONObject: sanitized)
+        let decoded = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(decoded["nan"] is NSNull)
+        #expect(decoded["inf"] is NSNull)
+        #expect(decoded["date"] as? String == "1970-01-01T00:00:00Z")
+        #expect(decoded["url"] as? String == "https://example.com")
+    }
+
+    @Test("AgentHandoffManager.waitForControl respects cancellation and per-waiter timeouts")
+    func waitForControlCancellationAndIndependentTimeouts() async throws {
+        let (session, _) = TestSession.make()
+        let manager = AgentHandoffManager.shared
+        manager.reset()
+        defer { manager.reset() }
+
+        _ = manager.handOff(reason: "Login", session: session)
+
+        // Two waiters with different timeouts: short timeout must NOT wake the longer waiter.
+        let longWaiter = Task { @MainActor in
+            try await manager.waitForControl(timeout: 5.0)
+        }
+        await #expect(throws: AgentError.self) {
+            try await manager.waitForControl(timeout: 0.05)
+        }
+        #expect(manager.isUserControlling)
+
+        // Cancelling the longer waiter must wake it immediately with CancellationError.
+        longWaiter.cancel()
+        await #expect(throws: CancellationError.self) {
+            try await longWaiter.value
+        }
     }
 }

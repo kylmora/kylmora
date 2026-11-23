@@ -56,7 +56,8 @@ actor WebDAVSyncProvider {
 
     /// Verifies connectivity and credentials with the WebDAV endpoint.
     func testConnection() async throws -> Bool {
-        let request = makeRequest(url: serverURL, method: "PROPFIND")
+        var request = makeRequest(url: serverURL, method: "PROPFIND")
+        request.setValue("0", forHTTPHeaderField: "Depth")
         let (_, response) = try await session.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else { return false }
         if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
@@ -102,10 +103,12 @@ actor WebDAVSyncProvider {
             name: archive.deviceName,
             lastUpdated: archive.exportedAt
         )
-        if let manifestData = try? encoder.encode(manifest) {
-            let manifestURL = serverURL.appending(path: "manifest.json")
-            let manifestRequest = makeRequest(url: manifestURL, method: "PUT", body: manifestData)
-            _ = try? await session.data(for: manifestRequest)
+        let manifestData = try encoder.encode(manifest)
+        let manifestURL = serverURL.appending(path: "manifest.json")
+        let manifestRequest = makeRequest(url: manifestURL, method: "PUT", body: manifestData)
+        let (_, manifestResponse) = try await session.data(for: manifestRequest)
+        if let http = manifestResponse as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw WebDAVError.httpError(statusCode: http.statusCode, message: "Failed to update sync manifest")
         }
     }
 
@@ -131,8 +134,9 @@ actor WebDAVSyncProvider {
                 if let archive = try? decoder.decode(SyncArchive.self, from: decrypted) {
                     archives.append(archive)
                 }
+            } catch let cryptoError as SyncCrypto.CryptoError {
+                throw cryptoError
             } catch {
-                // If decryption fails due to wrong passphrase, ignore or log
                 continue
             }
         }

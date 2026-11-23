@@ -70,9 +70,17 @@ enum WebAppGenerator {
 
     static func sanitizeFilename(_ name: String) -> String {
         let invalid = CharacterSet(charactersIn: "/:\\?%*|\"<>")
-        let cleaned = name.components(separatedBy: invalid).joined(separator: "-")
+        var cleaned = name.components(separatedBy: invalid).joined(separator: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        while cleaned.hasPrefix(".") { cleaned.removeFirst() }
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
         return cleaned.isEmpty ? "Web App" : cleaned
+    }
+
+    /// Wraps a string in POSIX single quotes so shell metacharacters like
+    /// `$(...)`, backticks, `$VAR`, and quotes are never evaluated by bash.
+    static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     static func safeBundleID(from name: String) -> String {
@@ -134,18 +142,18 @@ enum WebAppGenerator {
         """
     }
 
-    private static func generateLauncherScript(app: InstalledWebApp) -> String {
-        let rawURL = app.url.absoluteString
-        let rawName = app.name
-        let appID = app.id.uuidString
-        let spaceID = app.spaceID?.uuidString ?? ""
+    static func generateLauncherScript(app: InstalledWebApp) -> String {
+        let quotedURL = shellQuote(app.url.absoluteString)
+        let quotedName = shellQuote(app.name)
+        let quotedAppID = shellQuote(app.id.uuidString)
+        let quotedSpaceID = shellQuote(app.spaceID?.uuidString ?? "")
 
         return """
         #!/bin/bash
-        URL="\(rawURL)"
-        NAME="\(rawName)"
-        APP_ID="\(appID)"
-        SPACE_ID="\(spaceID)"
+        URL=\(quotedURL)
+        NAME=\(quotedName)
+        APP_ID=\(quotedAppID)
+        SPACE_ID=\(quotedSpaceID)
 
         # URL encode URL and Name
         if command -v python3 >/dev/null 2>&1; then

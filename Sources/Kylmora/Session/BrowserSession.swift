@@ -2342,7 +2342,7 @@ final class BrowserSession {
     func importSyncBookmarks(_ items: [SyncBookmark]) async {
         guard let database, !items.isEmpty else { return }
         let tuples = items.map { ($0.url, $0.title, $0.folder, $0.created) }
-        try? await database.importBookmarks(tuples)
+        _ = try? await database.importBookmarks(tuples)
         loadBookmarks()
     }
 

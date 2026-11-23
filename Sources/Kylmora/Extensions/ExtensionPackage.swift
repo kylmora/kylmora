@@ -61,9 +61,10 @@ enum ExtensionPackage {
     /// The zip inside a `.crx`. Version 3 puts a length-prefixed protobuf
     /// header after the magic; version 2 puts a public key and a signature.
     static func zipData(fromCRX data: Data) -> Data? {
-        guard data.count > 16, data.prefix(4) == Data("Cr24".utf8) else { return nil }
+        let bytes = Data(data)
+        guard bytes.count > 16, bytes.prefix(4) == Data("Cr24".utf8) else { return nil }
         func uint32(at offset: Int) -> Int {
-            Int(data[offset]) | Int(data[offset + 1]) << 8 | Int(data[offset + 2]) << 16 | Int(data[offset + 3]) << 24
+            Int(bytes[offset]) | Int(bytes[offset + 1]) << 8 | Int(bytes[offset + 2]) << 16 | Int(bytes[offset + 3]) << 24
         }
         let version = uint32(at: 4)
         let start: Int
@@ -75,8 +76,8 @@ enum ExtensionPackage {
         default:
             return nil
         }
-        guard start < data.count, data[start] == 0x50, data[start + 1] == 0x4B else { return nil }
-        return data.subdata(in: start..<data.count)
+        guard start >= 0, start + 1 < bytes.count, bytes[start] == 0x50, bytes[start + 1] == 0x4B else { return nil }
+        return bytes.subdata(in: start..<bytes.count)
     }
 
     /// The shallowest folder holding a `manifest.json`, searching a few
@@ -115,9 +116,11 @@ enum ExtensionPackage {
         } catch {
             throw Failure.unpackFailed(error.localizedDescription)
         }
+        // Drain stderr before waiting for exit to avoid deadlocking if ditto fills the pipe buffer.
+        let errorData = errors.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else {
-            let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            let message = String(decoding: errorData, as: UTF8.self)
             throw Failure.unpackFailed(message.trimmingCharacters(in: .whitespacesAndNewlines))
         }
     }

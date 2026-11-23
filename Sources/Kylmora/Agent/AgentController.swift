@@ -23,7 +23,7 @@ final class AgentController {
     private(set) var agentTabID: UUID?
     /// The document each tab's refs belong to, from its last snapshot.
     private var snapshotDocuments: [UUID: String] = [:]
-    private var shields: [ObjectIdentifier: AgentInputShieldView] = [:]
+    private let shields = NSMapTable<WKWebView, AgentInputShieldView>.weakToStrongObjects()
 
     init(session: BrowserSession? = nil) {
         self.session = session
@@ -86,10 +86,9 @@ final class AgentController {
     }
 
     private func shield(for webView: WKWebView) -> AgentInputShieldView {
-        let key = ObjectIdentifier(webView)
-        if let existing = shields[key] { return existing }
+        if let existing = shields.object(forKey: webView) { return existing }
         let view = AgentInputShieldView()
-        shields[key] = view
+        shields.setObject(view, forKey: webView)
         return view
     }
 

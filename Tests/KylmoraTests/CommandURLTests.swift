@@ -11,6 +11,8 @@ struct CommandURLTests {
         let tab = CommandURL(url: URL(string: "kylmora://tab?url=https://a.example/x?y%3D1&space=Work&background=1")!)
         #expect(tab == .tab(URL(string: "https://a.example/x?y=1")!, space: "Work", background: true))
         #expect(CommandURL(url: URL(string: "kylmora://tab?url=notaurl")!) == nil)
+        #expect(CommandURL(url: URL(string: "kylmora://tab?url=file:///etc/passwd")!) == nil)
+        #expect(CommandURL(url: URL(string: "kylmora://tab?url=javascript:alert(1)")!) == nil)
         #expect(CommandURL(url: URL(string: "kylmora://space?name=Personal")!) == .space("Personal"))
         #expect(CommandURL(url: URL(string: "kylmora://command?id=print-page")!) == .command("print-page"))
         #expect(CommandURL(url: URL(string: "kylmora://new-tab")!) == .newTab)

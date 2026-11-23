@@ -165,9 +165,11 @@ final class ActivityScopeBar: NSView {
             context.timingFunction = Style.Motion.curve
             clip.animator().setBoundsOrigin(NSPoint(x: x, y: clip.bounds.origin.y))
         } completionHandler: { [weak self] in
-            guard let self else { return }
-            self.scroll.reflectScrolledClipView(clip)
-            self.updateArrows()
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.scroll.reflectScrolledClipView(clip)
+                self.updateArrows()
+            }
         }
     }
 

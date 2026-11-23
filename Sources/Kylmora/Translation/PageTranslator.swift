@@ -139,6 +139,7 @@ public final class PageTranslator {
         }
 
         guard let window = webView.window else { throw fail(TranslationFailure.noWindow) }
+        let startURL = webView.url
 
         switch await NativeTranslation.availability(from: source, to: target) {
         case .installed, .downloadable:
@@ -165,7 +166,7 @@ public final class PageTranslator {
             _ = try await NativeTranslation.translate(
                 items.map(\.text), from: source, to: target, in: window,
                 onChunk: { [weak webView] range, translated in
-                    guard let webView else { return }
+                    guard let webView, webView.url == startURL else { return }
                     var chunk: [String: String] = [:]
                     for (offset, index) in range.enumerated() where offset < translated.count {
                         chunk[items[index].id] = translated[offset]
@@ -178,6 +179,7 @@ public final class PageTranslator {
             throw fail(error)
         }
 
+        guard webView.url == startURL else { return appliedCount }
         current.status = .translated(sourceLanguage: source ?? "auto", targetLanguage: target, nodeCount: appliedCount)
         setState(current, for: tabID)
         return appliedCount

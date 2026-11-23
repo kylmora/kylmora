@@ -477,7 +477,7 @@ final class SyncSettingsViewController: NSViewController, NSTextFieldDelegate {
         savePanel.nameFieldStringValue = "Send to Kylmora.shortcut"
         savePanel.prompt = "Export"
 
-        savePanel.beginSheetModal(for: view.window ?? NSApp.mainWindow ?? NSWindow()) { response in
+        let handleExport: (NSApplication.ModalResponse) -> Void = { response in
             guard response == .OK, let destination = savePanel.url else { return }
             do {
                 let parent = destination.deletingLastPathComponent()
@@ -491,6 +491,11 @@ final class SyncSettingsViewController: NSViewController, NSTextFieldDelegate {
                 let alert = NSAlert(error: error)
                 alert.runModal()
             }
+        }
+        if let host = view.window ?? NSApp?.mainWindow {
+            savePanel.beginSheetModal(for: host, completionHandler: handleExport)
+        } else {
+            savePanel.begin(completionHandler: handleExport)
         }
     }
 }

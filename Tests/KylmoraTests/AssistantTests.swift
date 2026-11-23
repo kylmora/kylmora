@@ -160,5 +160,39 @@ struct AssistantTests {
         AssistantConfigStore.remove(custom)
         #expect(!AssistantConfigStore.allModels.contains(custom))
         #expect(AssistantConfigStore.selected == AssistantConfigStore.builtIns[0])
+        #expect(defaults.string(forKey: "AssistantSelectedModel") == AssistantConfigStore.builtIns[0].id.uuidString)
+    }
+
+    @Test("Resetting an active session does not let the cancelled task corrupt the cleared state")
+    func resetCancelsWithoutCorruptingState() async throws {
+        @MainActor
+        final class HangingBackend: AssistantBackend {
+            var onText: ((String) -> Void)?
+            var onProgress: ((String) -> Void)?
+            func send(system: String, tools: [AssistantToolSpec], turns: [AssistantTurn]) async throws -> AssistantReply {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                return AssistantReply(text: "late", calls: [], stop: .done, native: nil)
+            }
+        }
+
+        let defaults = UserDefaults(suiteName: "AssistantSessionTests-\(UUID())")!
+        let previous = AssistantConfigStore.defaults
+        AssistantConfigStore.defaults = defaults
+        defer { AssistantConfigStore.defaults = previous }
+
+        let local = model(.openai, "local-test", base: "http://localhost:11434/v1")
+        AssistantConfigStore.save(local)
+        AssistantConfigStore.selected = local
+
+        let session = AssistantSession(browser: nil)
+        session.makeBackend = { _, _ in HangingBackend() }
+
+        session.send("Hello")
+        #expect(session.isRunning)
+        session.reset()
+        // Allow cancelled task to unwind on MainActor
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(session.items.isEmpty)
+        #expect(!session.isRunning)
     }
 }

@@ -38,7 +38,7 @@ public final class BrowserLockManager: NSObject {
 
         NotificationCenter.default.post(name: .browserLockStateDidChange, object: self)
 
-        for window in NSApp.windows where shouldWindowBeLocked(window) {
+        for window in NSApp?.windows ?? [] where shouldWindowBeLocked(window) {
             presentOverlay(on: window, animated: animated)
         }
 

@@ -41,7 +41,7 @@ public final class AgentHandoffManager {
     /// fenced off forever.
     var idleTimeout: TimeInterval = 90
     private var idleTimer: Timer?
-    private var controlWaiters: [CheckedContinuation<Void, Never>] = []
+    private var controlWaiters: [(id: UUID, continuation: CheckedContinuation<Void, Never>)] = []
 
     public var isUserControlling: Bool {
         if case .userInControl = currentState { return true }
@@ -107,21 +107,34 @@ public final class AgentHandoffManager {
         return ["status": "idle", "message": "Task finished; the page is the user's again."]
     }
 
-    /// Suspends until the user gives control back, or `timeout` passes.
+    /// Suspends until the user gives control back, `timeout` passes, or the task is cancelled.
     func waitForControl(timeout: TimeInterval) async throws {
         guard isUserControlling else { return }
+        try Task.checkCancellation()
+        let waiterID = UUID()
         let expiry = Expiry()
         let timer = Task { @MainActor [weak self] in
             try await Task.sleep(nanoseconds: UInt64(max(0, timeout) * 1_000_000_000))
             expiry.passed = true
-            self?.wakeControlWaiters()
+            self?.wakeControlWaiter(id: waiterID)
         }
-        defer { timer.cancel() }
-        // Waiters are woken together, by any state change or by any waiter's
-        // timeout, so each one checks its own reason before leaving.
-        while isUserControlling {
-            if expiry.passed { throw AgentError.controlWaitTimedOut(timeout) }
-            await withCheckedContinuation { controlWaiters.append($0) }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if Task.isCancelled || !isUserControlling {
+                    continuation.resume()
+                    return
+                }
+                controlWaiters.append((id: waiterID, continuation: continuation))
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.wakeControlWaiter(id: waiterID)
+            }
+        }
+        timer.cancel()
+        try Task.checkCancellation()
+        if expiry.passed, isUserControlling {
+            throw AgentError.controlWaitTimedOut(timeout)
         }
     }
 
@@ -150,10 +163,16 @@ public final class AgentHandoffManager {
 
     @MainActor private final class Expiry { var passed = false }
 
+    private func wakeControlWaiter(id: UUID) {
+        guard let index = controlWaiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = controlWaiters.remove(at: index)
+        waiter.continuation.resume()
+    }
+
     private func wakeControlWaiters() {
         let waiters = controlWaiters
         controlWaiters.removeAll()
-        waiters.forEach { $0.resume() }
+        waiters.forEach { $0.continuation.resume() }
     }
 
     private func restartIdleTimer() {

@@ -27,14 +27,17 @@ final class AssistantSession {
     var onChange: (() -> Void)?
 
     weak var browser: BrowserSession?
+    var makeBackend: @MainActor (AssistantModelConfig, String?) -> AssistantBackend = AssistantBackends.make
     private var turns: [AssistantTurn] = []
     private var task: Task<Void, Never>?
+    private var runGeneration: UInt64 = 0
 
     init(browser: BrowserSession?) {
         self.browser = browser
     }
 
     func reset() {
+        runGeneration &+= 1
         task?.cancel()
         task = nil
         turns = []
@@ -62,12 +65,20 @@ final class AssistantSession {
         if let tab = browser?.activeTab {
             _ = AgentController.shared.selectTab(id: tab.id)
         }
+        runGeneration &+= 1
+        let generation = runGeneration
         isRunning = true
-        let backend = AssistantBackends.make(for: model, key: key)
-        backend.onText = { [weak self] in self?.appendAssistantText($0) }
-        backend.onProgress = { [weak self] in self?.appendProgress($0) }
+        let backend = makeBackend(model, key)
+        backend.onText = { [weak self] text in
+            guard let self, self.runGeneration == generation else { return }
+            self.appendAssistantText(text)
+        }
+        backend.onProgress = { [weak self] text in
+            guard let self, self.runGeneration == generation else { return }
+            self.appendProgress(text)
+        }
         task = Task { [weak self] in
-            await self?.runLoop(backend: backend, format: model.format)
+            await self?.runLoop(backend: backend, format: model.format, generation: generation)
         }
     }
 
@@ -78,18 +89,23 @@ final class AssistantSession {
         return "<current_page title=\"\(tab.displayTitle)\" url=\"\(tab.url.absoluteString)\" />\n"
     }
 
-    private func runLoop(backend: AssistantBackend, format: AssistantAPIFormat) async {
+    private func runLoop(backend: AssistantBackend, format: AssistantAPIFormat, generation: UInt64) async {
         var usedBrowser = false
         var handedOff = false
         defer {
-            isRunning = false
+            if runGeneration == generation {
+                isRunning = false
+                task = nil
+            }
             if usedBrowser, !handedOff { _ = AgentController.shared.finish() }
         }
         do {
             while true {
                 try Task.checkCancellation()
+                guard runGeneration == generation else { return }
                 items.append(.assistant(""))
                 let reply = try await backend.send(system: Self.systemPrompt, tools: AssistantTools.definitions, turns: turns)
+                guard runGeneration == generation else { return }
                 dropEmptyAssistantItem()
                 turns.append(.assistant(text: reply.text, calls: reply.calls, native: reply.native, format: format))
 
@@ -132,10 +148,12 @@ final class AssistantSession {
                 }
             }
         } catch is CancellationError {
+            guard runGeneration == generation else { return }
             dropEmptyAssistantItem()
             closeDanglingCalls()
             items.append(.step("Stopped."))
         } catch {
+            guard runGeneration == generation else { return }
             dropEmptyAssistantItem()
             closeDanglingCalls()
             items.append(.error(error.localizedDescription))
