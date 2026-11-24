@@ -176,7 +176,7 @@ public final class AgentInputSynthesizer {
     /// Scrolls with wheel input at the cursor, in uneven notches with pauses, so
     /// the page scrolls the way it does under a hand and inner scrollers under
     /// the pointer get the wheel, not the document.
-    public func humanScroll(deltaX: Double, deltaY: Double, in webView: WKWebView, at point: CGPoint? = nil) async throws -> [String: Any] {
+    public func humanScroll(deltaX: Double, deltaY: Double, in webView: WKWebView, at point: CGPoint? = nil, label: String? = nil) async throws -> [String: Any] {
         let scale = await scale(of: webView)
         let viewportCSS = CGSize(width: webView.bounds.width / scale, height: webView.bounds.height / scale)
         var anchor = point ?? cursorPosition(in: webView) ?? CGPoint(x: viewportCSS.width / 2, y: viewportCSS.height / 2)
@@ -184,10 +184,10 @@ public final class AgentInputSynthesizer {
             anchor = CGPoint(x: viewportCSS.width / 2, y: viewportCSS.height / 2)
         }
         if cursorPosition(in: webView) == nil || point != nil {
-            try await humanMove(to: anchor, in: webView, label: "Scrolling")
+            try await humanMove(to: anchor, in: webView, label: label ?? "Scrolling")
             anchor = cursorPosition(in: webView) ?? anchor
         } else {
-            overlay(for: webView).setLabel("Scrolling")
+            overlay(for: webView).setLabel(label ?? "Scrolling")
         }
 
         var remainingX = deltaX
@@ -281,7 +281,9 @@ public final class AgentInputSynthesizer {
             }
         }
         let key: AgentKey
-        if let named = AgentKey.named[keyName] ?? AgentKey.named[keyName.capitalized] {
+        if let named = AgentKey.named[keyName]
+            ?? AgentKey.named[keyName.capitalized]
+            ?? AgentKey.named.first(where: { $0.key.caseInsensitiveCompare(keyName) == .orderedSame })?.value {
             key = named
         } else if keyName.count == 1, let character = keyName.first {
             key = AgentKey.forCharacter(character)
@@ -295,6 +297,133 @@ public final class AgentInputSynthesizer {
     }
 
     /// Empties the focused field the way a person does: select all, delete.
+    /// Drags from `from` to `to` with real mouseDown, leftMouseDragged along a curve, and mouseUp.
+    public func humanDragAndDrop(from: CGPoint, to: CGPoint, in webView: WKWebView, label: String? = nil) async throws -> [String: Any] {
+        try await humanMove(to: from, in: webView, label: label ?? "Dragging")
+        let scale = await self.scale(of: webView)
+        let start = cursorPosition(in: webView) ?? from
+        let overlay = overlay(for: webView)
+        overlay.pulseClick()
+        if let down = mouseEvent(.leftMouseDown, at: start, scale: scale, in: webView, clickCount: 1) {
+            webView.mouseDown(with: down)
+        }
+        try await pause(0.08...0.16)
+
+        let path = generateCurvedPath(from: start, to: to)
+        let duration = AgentCursorOverlayView.travelDuration(from: viewPoint(start, scale: scale), to: viewPoint(to, scale: scale))
+        overlay.travel(along: path.map { viewPoint($0, scale: scale) }, duration: duration, label: label ?? "Dragging")
+        let stepDelay = duration / Double(max(1, path.count))
+        for step in path {
+            if let drag = mouseEvent(.leftMouseDragged, at: step, scale: scale, in: webView, clickCount: 1) {
+                webView.mouseDragged(with: drag)
+            }
+            try await Task.sleep(nanoseconds: UInt64(stepDelay * 1_000_000_000))
+        }
+        let end = path.last ?? to
+        setCursorPosition(end, for: webView)
+        try await pause(0.06...0.14)
+        if let up = mouseEvent(.leftMouseUp, at: end, scale: scale, in: webView, clickCount: 1) {
+            webView.mouseUp(with: up)
+        }
+        try await pause(0.15...0.3)
+        return ["success": true, "from": ["x": start.x, "y": start.y], "to": ["x": end.x, "y": end.y]]
+    }
+
+    /// Pastes text (and optional HTML) via native ⌘V, preserving ALL types/items on the user's clipboard.
+    public func humanPaste(text: String, html: String? = nil, in webView: WKWebView) async throws -> [String: Any] {
+        webView.window?.makeFirstResponder(webView)
+        let pb = NSPasteboard.general
+        let savedItems: [[(NSPasteboard.PasteboardType, Data)]] = (pb.pasteboardItems ?? []).map { item in
+            item.types.compactMap { type in
+                guard let data = item.data(forType: type) else { return nil }
+                return (type, data)
+            }
+        }
+        pb.clearContents()
+        let newItem = NSPasteboardItem()
+        newItem.setString(text, forType: .string)
+        if let html { newItem.setString(html, forType: .html) }
+        pb.writeObjects([newItem])
+        defer {
+            pb.clearContents()
+            let restored: [NSPasteboardItem] = savedItems.compactMap { pairs in
+                guard !pairs.isEmpty else { return nil }
+                let item = NSPasteboardItem()
+                for (type, data) in pairs { item.setData(data, forType: type) }
+                return item
+            }
+            if !restored.isEmpty { pb.writeObjects(restored) }
+        }
+        sendKey(AgentKey.forCharacter("v"), modifiers: .command, in: webView)
+        try await pause(0.12...0.24)
+        return ["success": true, "pasted": text.count, "hasHtml": html != nil]
+    }
+
+    /// Inserts text directly into the focused editable element (fast, Unicode-safe, no clipboard side effects).
+    public func insertText(_ text: String, in webView: WKWebView) async throws -> [String: Any] {
+        webView.window?.makeFirstResponder(webView)
+        overlay(for: webView).setLabel("Entering text")
+        webView.insertText(text)
+        try await pause(0.05...0.12)
+        return ["success": true, "inserted": text.count]
+    }
+
+    public func humanMouseDown(button: String = "left", in webView: WKWebView) async throws -> [String: Any] {
+        let scale = await scale(of: webView)
+        let point = cursorPosition(in: webView) ?? CGPoint(x: webView.bounds.width / (2 * scale), y: webView.bounds.height / (2 * scale))
+        let evType: NSEvent.EventType = button == "right" ? .rightMouseDown : (button == "middle" ? .otherMouseDown : .leftMouseDown)
+        if let ev = mouseEvent(evType, at: point, scale: scale, in: webView, clickCount: 1) {
+            if evType == .rightMouseDown { webView.rightMouseDown(with: ev) }
+            else if evType == .otherMouseDown { webView.otherMouseDown(with: ev) }
+            else { webView.mouseDown(with: ev) }
+        }
+        return ["success": true, "x": point.x, "y": point.y, "button": button]
+    }
+
+    public func humanMouseUp(button: String = "left", in webView: WKWebView) async throws -> [String: Any] {
+        let scale = await scale(of: webView)
+        let point = cursorPosition(in: webView) ?? CGPoint(x: webView.bounds.width / (2 * scale), y: webView.bounds.height / (2 * scale))
+        let evType: NSEvent.EventType = button == "right" ? .rightMouseUp : (button == "middle" ? .otherMouseUp : .leftMouseUp)
+        if let ev = mouseEvent(evType, at: point, scale: scale, in: webView, clickCount: 1) {
+            if evType == .rightMouseUp { webView.rightMouseUp(with: ev) }
+            else if evType == .otherMouseUp { webView.otherMouseUp(with: ev) }
+            else { webView.mouseUp(with: ev) }
+        }
+        return ["success": true, "x": point.x, "y": point.y, "button": button]
+    }
+
+    public func humanKeyDown(key keyName: String, in webView: WKWebView) throws -> [String: Any] {
+        webView.window?.makeFirstResponder(webView)
+        let key = try resolveSingleKey(keyName)
+        let mods: NSEvent.ModifierFlags = key.needsShift ? [.shift] : []
+        if let ev = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: mods, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: webView.window?.windowNumber ?? 0, context: nil, characters: key.needsShift ? key.shifted : key.characters, charactersIgnoringModifiers: key.characters, isARepeat: false, keyCode: key.code) {
+            webView.keyDown(with: ev)
+        }
+        return ["success": true, "key": keyName, "state": "down"]
+    }
+
+    public func humanKeyUp(key keyName: String, in webView: WKWebView) throws -> [String: Any] {
+        webView.window?.makeFirstResponder(webView)
+        let key = try resolveSingleKey(keyName)
+        let mods: NSEvent.ModifierFlags = key.needsShift ? [.shift] : []
+        if let ev = NSEvent.keyEvent(with: .keyUp, location: .zero, modifierFlags: mods, timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: webView.window?.windowNumber ?? 0, context: nil, characters: key.needsShift ? key.shifted : key.characters, charactersIgnoringModifiers: key.characters, isARepeat: false, keyCode: key.code) {
+            webView.keyUp(with: ev)
+        }
+        return ["success": true, "key": keyName, "state": "up"]
+    }
+
+    private func resolveSingleKey(_ keyName: String) throws -> AgentKey {
+        if let named = AgentKey.named[keyName]
+            ?? AgentKey.named[keyName.capitalized]
+            ?? AgentKey.named.first(where: { $0.key.caseInsensitiveCompare(keyName) == .orderedSame })?.value {
+            return named
+        }
+        if keyName.count == 1, let ch = keyName.first {
+            return AgentKey.forCharacter(ch)
+        }
+        throw AgentError.invalidTarget("Unknown key '\(keyName)'")
+    }
+
     func clearFocusedField(in webView: WKWebView) async throws {
         webView.window?.makeFirstResponder(webView)
         webView.selectAll(nil)

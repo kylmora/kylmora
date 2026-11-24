@@ -25,7 +25,9 @@ final class SidebarViewController: NSViewController {
         get { diaHeader.hostsTrafficLights }
         set { diaHeader.hostsTrafficLights = newValue }
     }
+    private let urlBar = SidebarURLBarView()
     private let pinnedTiles = PinnedTilesView()
+    private let spaceDivider = SidebarSpaceDividerView()
     private let diaFooter = SidebarFooterView()
     private let nowPlayingView = SidebarNowPlayingView()
     /// The archive, shown in place of the pins and the tab list. Held rather
@@ -233,6 +235,15 @@ final class SidebarViewController: NSViewController {
 
         diaHeader.spaceButton.menuProvider = { [weak self] in self?.spaceMenuButton.menu }
 
+        urlBar.onActivate = { [weak self] in
+            NSApp?.sendAction(#selector(BrowserWindowController.openCommandBar(_:)), to: nil, from: self)
+        }
+        urlBar.onCopyURL = { [weak self] in
+            NSApp?.sendAction(#selector(BrowserWindowController.copyCurrentURL(_:)), to: nil, from: self)
+        }
+        spaceDivider.onClear = { [weak self] in self?.clearTodayTabs() }
+        spaceDivider.onTidy = { [weak self] in self?.tidyTodayTabs() }
+
         pinnedTiles.onAdd = { [weak self] in self?.session.pinActiveTab() }
         pinnedTiles.onSelect = { [weak self] id in
             guard let self,
@@ -295,7 +306,7 @@ final class SidebarViewController: NSViewController {
         // space switch moves it as a unit. Transforming four sibling views in
         // step is four chances for them to drift apart, and AppKit will happily
         // recompute one of their opacities halfway through the animation.
-        let contentStack = NSStackView(views: [diaHeader, pinnedTiles, scrollView, archiveList])
+        let contentStack = NSStackView(views: [diaHeader, urlBar, pinnedTiles, spaceDivider, scrollView, archiveList])
         contentStack.orientation = .vertical
         // The bands of the sidebar -- title, shortcuts, tabs -- are different
         // kinds of thing, so the space between them is the gutter rather than
@@ -341,15 +352,25 @@ final class SidebarViewController: NSViewController {
 
             contentStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
             nowPlayingView.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            diaHeader.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            diaFooter.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            diaHeader.widthAnchor.constraint(equalTo: view.widthAnchor),
+            diaFooter.widthAnchor.constraint(equalTo: view.widthAnchor),
             scrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             archiveList.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            urlBar.leadingAnchor.constraint(
+                equalTo: contentStack.leadingAnchor,
+                constant: Style.Metrics.sidebarInset
+            ),
+            urlBar.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor),
             pinnedTiles.leadingAnchor.constraint(
                 equalTo: contentStack.leadingAnchor,
                 constant: Style.Metrics.sidebarInset
             ),
             pinnedTiles.trailingAnchor.constraint(lessThanOrEqualTo: contentStack.trailingAnchor),
+            spaceDivider.leadingAnchor.constraint(
+                equalTo: contentStack.leadingAnchor,
+                constant: Style.Metrics.sidebarInset
+            ),
+            spaceDivider.trailingAnchor.constraint(equalTo: contentStack.trailingAnchor),
             view.widthAnchor.constraint(
                 // The split item's own minimum, not a second one derived from
                 // the resting width. This constraint was the real floor: it held
@@ -873,10 +894,19 @@ final class SidebarViewController: NSViewController {
         if previewSpace == nil {
             ensureContentAtRest()
             rebuildSpaceMenu()
-            diaFooter.showPages(
-                count: session.spaces.count,
-                selected: session.spaces.firstIndex { $0.id == session.activeSpaceID } ?? 0
-            )
+            let selectedIndex = session.spaces.firstIndex { $0.id == session.activeSpaceID } ?? 0
+            let spaceItems = session.spaces.map { space -> SidebarFooterView.SpaceItem in
+                let image: NSImage
+                if space.isPrivate {
+                    image = NSImage(systemSymbolName: "eyeglasses", accessibilityDescription: space.name) ?? space.dotImage()
+                } else if space.icon.isCustomized {
+                    image = space.icon.image(color: space.color, title: space.name, side: 14)
+                } else {
+                    image = space.dotImage()
+                }
+                return SidebarFooterView.SpaceItem(title: space.name, icon: image, isPrivate: space.isPrivate)
+            }
+            diaFooter.showSpaces(spaceItems, selected: selectedIndex)
         }
         // One label, one concept: the space is the identity.
         let space = shownSpace
@@ -924,6 +954,79 @@ final class SidebarViewController: NSViewController {
             },
             isPrivate: space.isPrivate
         )
+        refreshArcSidebarChrome()
+    }
+
+    private func refreshArcSidebarChrome() {
+        let space = shownSpace
+        urlBar.update(url: space.activeTab?.displayURL)
+        let clearable = clearableTodayTabs(in: space)
+        spaceDivider.update(spaceName: space.name, clearableCount: clearable.count)
+    }
+
+    /// Unpinned, unlocked, loose Today tabs that Arc's Clear/Tidy actions operate on.
+    func clearableTodayTabs(in space: Space? = nil) -> [Tab] {
+        let target = space ?? shownSpace
+        return target.listedTabs.filter { tab in
+            tab.groupID == nil
+                && !tab.isLocked
+                && !tab.keepsInSidebar
+                && !session.isPinned(tab)
+        }
+    }
+
+    /// Archives all clearable Today tabs in one click (Arc's Clear button).
+    @discardableResult
+    func clearTodayTabs() -> Int {
+        let candidates = clearableTodayTabs()
+        guard !candidates.isEmpty else { return 0 }
+        session.archive(candidates)
+        let count = candidates.count
+        let noun = count == 1 ? "tab" : "tabs"
+        session.showToast?(Toast(
+            symbolName: "archivebox",
+            message: "Cleared \(count) \(noun) to Archive"
+        ))
+        return count
+    }
+
+    /// Groups unpinned Today tabs by domain into tidy folders (Arc Max Tidy Tabs).
+    @discardableResult
+    func tidyTodayTabs() -> Int {
+        let candidates = clearableTodayTabs()
+        var byHost: [String: [Tab]] = [:]
+        var hostOrder: [String] = []
+        for tab in candidates {
+            guard var host = tab.displayURL.host()?.lowercased(), !host.isEmpty else { continue }
+            if host.hasPrefix("www.") { host = String(host.dropFirst(4)) }
+            let parts = host.split(separator: ".")
+            let label = parts.count >= 2 ? String(parts[parts.count - 2]) : host
+            let key = label.prefix(1).uppercased() + label.dropFirst()
+            if byHost[key] == nil { hostOrder.append(key) }
+            byHost[key, default: []].append(tab)
+        }
+
+        var movedCount = 0
+        var folderCount = 0
+        for name in hostOrder {
+            guard let tabs = byHost[name], tabs.count >= 2 else { continue }
+            if let existing = shownSpace.groups.first(where: { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
+                for tab in tabs { session.move(tab, to: existing) }
+            } else {
+                _ = session.createGroup(named: name, containing: tabs)
+            }
+            movedCount += tabs.count
+            folderCount += 1
+        }
+
+        if movedCount > 0 {
+            let folderNoun = folderCount == 1 ? "folder" : "folders"
+            session.showToast?(Toast(
+                symbolName: "sparkles",
+                message: "Tidied \(movedCount) tabs into \(folderCount) \(folderNoun)"
+            ))
+        }
+        return movedCount
     }
 
     /// The space menu under the sidebar's title: every space with its colour,
@@ -1358,6 +1461,7 @@ final class SidebarViewController: NSViewController {
         guard visible != isShowingArchive else { return }
         isShowingArchive = visible
         pinnedTiles.isHidden = visible
+        spaceDivider.isHidden = visible
         scrollView.isHidden = visible
         archiveList.isHidden = !visible
         archiveButton?.isActive = visible

@@ -11,9 +11,18 @@ final class SidebarFooterView: NSView {
     /// Selecting a space by clicking its dot.
     var onSelectPage: ((Int) -> Void)?
 
+    /// One Space entry rendered in the footer's center Arc-style Space switcher.
+    struct SpaceItem {
+        let title: String
+        let icon: NSImage
+        let isPrivate: Bool
+    }
+
     private let leadingSlot = NSStackView()
     private let trailingSlot = NSStackView()
     private let dots = PageDotsView()
+    private let spaceStrip = NSStackView()
+    private var spaceButtons: [NSButton] = []
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -27,6 +36,13 @@ final class SidebarFooterView: NSView {
         }
         dots.onSelect = { [weak self] index in self?.onSelectPage?(index) }
         addSubview(dots)
+
+        spaceStrip.orientation = .horizontal
+        spaceStrip.spacing = 4
+        spaceStrip.alignment = .centerY
+        spaceStrip.translatesAutoresizingMaskIntoConstraints = false
+        spaceStrip.isHidden = true
+        addSubview(spaceStrip)
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: Style.Metrics.footerHeight),
@@ -57,6 +73,20 @@ final class SidebarFooterView: NSView {
             ),
             clearOfButtons(
                 dots.trailingAnchor.constraint(
+                    lessThanOrEqualTo: trailingSlot.leadingAnchor,
+                    constant: -Style.Metrics.iconButtonSpacing
+                )
+            ),
+            spaceStrip.centerXAnchor.constraint(equalTo: centerXAnchor),
+            spaceStrip.centerYAnchor.constraint(equalTo: centerYAnchor),
+            clearOfButtons(
+                spaceStrip.leadingAnchor.constraint(
+                    greaterThanOrEqualTo: leadingSlot.trailingAnchor,
+                    constant: Style.Metrics.iconButtonSpacing
+                )
+            ),
+            clearOfButtons(
+                spaceStrip.trailingAnchor.constraint(
                     lessThanOrEqualTo: trailingSlot.leadingAnchor,
                     constant: -Style.Metrics.iconButtonSpacing
                 )
@@ -102,7 +132,63 @@ final class SidebarFooterView: NSView {
     /// A single space needs no indicator, so `count <= 1` hides the dots
     /// entirely rather than showing one lonely dot.
     func showPages(count: Int, selected: Int) {
+        spaceStrip.isHidden = true
         dots.show(count: count, selected: selected)
+    }
+
+    /// Arc-style clickable Space icon strip in the footer center.
+    /// Falls back to compact dots when there are more than 6 spaces so narrow sidebars stay clean.
+    func showSpaces(_ items: [SpaceItem], selected: Int) {
+        guard items.count > 1 else {
+            spaceStrip.isHidden = true
+            dots.show(count: items.count, selected: selected)
+            return
+        }
+        if items.count > 6 {
+            spaceStrip.isHidden = true
+            dots.show(count: items.count, selected: selected)
+            return
+        }
+        dots.isHidden = true
+        spaceStrip.isHidden = false
+        for view in spaceStrip.arrangedSubviews {
+            spaceStrip.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        spaceButtons.removeAll()
+        for (index, item) in items.enumerated() {
+            let isSelected = index == selected
+            let button = NSButton()
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.isBordered = false
+            button.bezelStyle = .inline
+            button.wantsLayer = true
+            button.layer?.cornerRadius = 6
+            button.image = item.icon
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
+            button.toolTip = item.title
+            button.setAccessibilityLabel(item.title)
+            button.tag = index
+            button.target = self
+            button.action = #selector(spaceButtonClicked(_:))
+            button.alphaValue = isSelected ? 1.0 : 0.45
+            if isSelected {
+                button.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.11).cgColor
+            } else {
+                button.layer?.backgroundColor = NSColor.clear.cgColor
+            }
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: 24),
+                button.heightAnchor.constraint(equalToConstant: 24),
+            ])
+            spaceStrip.addArrangedSubview(button)
+            spaceButtons.append(button)
+        }
+    }
+
+    @objc private func spaceButtonClicked(_ sender: NSButton) {
+        onSelectPage?(sender.tag)
     }
 
     private func fill(_ stack: NSStackView, with actions: [TopBarAction]) {
