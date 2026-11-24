@@ -20,12 +20,17 @@ final class SidebarSpaceDividerView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
+        setContentCompressionResistancePriority(.fittingSizeCompression, for: .horizontal)
 
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
         titleLabel.textColor = .tertiaryLabelColor
         titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.setContentHuggingPriority(.required, for: .horizontal)
+        titleLabel.cell?.usesSingleLineMode = true
+        for v in [titleLabel, self] as [NSView] {
+            v.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+            v.setContentHuggingPriority(.init(1), for: .horizontal)
+        }
         addSubview(titleLabel)
 
         rule.translatesAutoresizingMaskIntoConstraints = false

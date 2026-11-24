@@ -411,7 +411,12 @@ struct AgentTests {
         </body></html>
         """
         webView.loadHTMLString(html, baseURL: nil)
-        try await Task.sleep(nanoseconds: 500_000_000)
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline {
+            let ready = (try? await webView.evaluateJavaScript("Boolean(document.getElementById('b2') && document.getElementById('fr')?.contentDocument?.getElementById('inbtn'))") as? Bool) ?? false
+            if ready { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
 
         // 1. Ambiguity rejection vs >> nth=1
         let ambig = try await AgentSnapshotScript.call("return agent.target('text=Save', null);", in: webView) as? [String: Any]

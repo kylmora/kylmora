@@ -41,6 +41,8 @@ final class SidebarFooterView: NSView {
         spaceStrip.spacing = 4
         spaceStrip.alignment = .centerY
         spaceStrip.translatesAutoresizingMaskIntoConstraints = false
+        spaceStrip.setContentCompressionResistancePriority(.fittingSizeCompression, for: .horizontal)
+        spaceStrip.setClippingResistancePriority(.fittingSizeCompression, for: .horizontal)
         spaceStrip.isHidden = true
         addSubview(spaceStrip)
 
@@ -79,13 +81,13 @@ final class SidebarFooterView: NSView {
             ),
             spaceStrip.centerXAnchor.constraint(equalTo: centerXAnchor),
             spaceStrip.centerYAnchor.constraint(equalTo: centerYAnchor),
-            clearOfButtons(
+            yieldsToSidebarWidth(
                 spaceStrip.leadingAnchor.constraint(
                     greaterThanOrEqualTo: leadingSlot.trailingAnchor,
                     constant: Style.Metrics.iconButtonSpacing
                 )
             ),
-            clearOfButtons(
+            yieldsToSidebarWidth(
                 spaceStrip.trailingAnchor.constraint(
                     lessThanOrEqualTo: trailingSlot.leadingAnchor,
                     constant: -Style.Metrics.iconButtonSpacing
@@ -111,6 +113,11 @@ final class SidebarFooterView: NSView {
     /// there to take over.
     private func clearOfButtons(_ constraint: NSLayoutConstraint) -> NSLayoutConstraint {
         constraint.priority = .defaultHigh
+        return constraint
+    }
+
+    private func yieldsToSidebarWidth(_ constraint: NSLayoutConstraint) -> NSLayoutConstraint {
+        constraint.priority = NSLayoutConstraint.Priority(200)
         return constraint
     }
 

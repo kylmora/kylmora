@@ -39,9 +39,13 @@ final class SidebarURLBarView: NSView {
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = NSFont.systemFont(ofSize: 12.5, weight: .regular)
         label.lineBreakMode = .byTruncatingTail
+        label.cell?.usesSingleLineMode = true
         label.maximumNumberOfLines = 1
         label.textColor = .tertiaryLabelColor
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        for v in [label, self] as [NSView] {
+            v.setContentCompressionResistancePriority(.init(1), for: .horizontal)
+            v.setContentHuggingPriority(.init(1), for: .horizontal)
+        }
         addSubview(label)
 
         copyButton.translatesAutoresizingMaskIntoConstraints = false

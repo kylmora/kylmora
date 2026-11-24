@@ -352,8 +352,8 @@ final class SidebarViewController: NSViewController {
 
             contentStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
             nowPlayingView.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            diaHeader.widthAnchor.constraint(equalTo: view.widthAnchor),
-            diaFooter.widthAnchor.constraint(equalTo: view.widthAnchor),
+            diaHeader.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            diaFooter.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scrollView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             archiveList.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             urlBar.leadingAnchor.constraint(
