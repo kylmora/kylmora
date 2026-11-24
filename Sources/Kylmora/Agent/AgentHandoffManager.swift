@@ -180,7 +180,7 @@ public final class AgentHandoffManager {
         idleTimer = Timer.scheduledTimer(withTimeInterval: idleTimeout, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, self.isAgentDriving else { return }
-                _ = self.finish()
+                _ = AgentController.shared.finish()
             }
         }
     }

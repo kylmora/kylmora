@@ -63,7 +63,7 @@ final class AssistantSession {
 
         // The model works on the tab the user is looking at.
         if let tab = browser?.activeTab {
-            _ = AgentController.shared.selectTab(id: tab.id)
+            _ = try? AgentController.shared.selectTab(id: tab.id)
         }
         runGeneration &+= 1
         let generation = runGeneration

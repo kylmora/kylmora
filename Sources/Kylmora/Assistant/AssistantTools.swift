@@ -12,7 +12,7 @@ enum AssistantTools {
         ])
     }
 
-    private static let ref: [String: Any] = ["type": "string", "description": "A ref from read_page, such as \"@12\"."]
+    private static let ref: [String: Any] = ["type": "string", "description": "A ref from read_page (\"@12\") or selector (css, text=..., loc=role:button[name='Sign in'], xpath=...)."]
     private static let label: [String: Any] = ["type": "string", "description": "A 3-6 word description of the action, shown beside the cursor."]
 
     static let definitions: [AssistantToolSpec] = [
@@ -31,6 +31,15 @@ enum AssistantTools {
              ["url": ["type": "string"]], required: ["url"]),
         tool("open_tab", "Opens a URL in a new tab in the user's current profile and switches to it.",
              ["url": ["type": "string"]], required: ["url"]),
+        tool("select_option", "Selects an option in a <select> dropdown by value, visible label, or zero-based index.",
+             ["ref": ref, "value": ["type": "string"], "label": ["type": "string"], "index": ["type": "integer"]], required: ["ref"]),
+        tool("wait_for_selector", "Waits for an element matching a selector to become visible, hidden, or attached.",
+             ["selector": ["type": "string"], "state": ["type": "string", "enum": ["visible", "hidden", "attached"]], "timeout": ["type": "number"]], required: ["selector"]),
+        tool("paste", "Pastes text via Cmd+V (preserving the clipboard), useful for long text or unicode.",
+             ["text": ["type": "string"], "ref": ref, "clear": ["type": "boolean"]], required: ["text"]),
+        tool("go_back", "Navigates back in the current tab history."),
+        tool("go_forward", "Navigates forward in the current tab history."),
+        tool("reload", "Reloads the current tab."),
         tool("hand_off_to_user", "Gives the page to the user for a sign-in, captcha, two-factor code or payment. Stop after calling it.",
              ["reason": ["type": "string", "description": "What the user needs to do."]], required: ["reason"]),
     ]
@@ -46,6 +55,12 @@ enum AssistantTools {
         case "press_key": return "→ Pressing \(input["key"] as? String ?? "")"
         case "scroll": return "→ Scrolling"
         case "navigate", "open_tab": return "→ Opening \(input["url"] as? String ?? "")"
+        case "select_option": return "→ Selecting option in \(ref)"
+        case "wait_for_selector": return "→ Waiting for \(input["selector"] as? String ?? "element")"
+        case "paste": return "→ Pasting text"
+        case "go_back": return "→ Going back"
+        case "go_forward": return "→ Going forward"
+        case "reload": return "→ Reloading page"
         case "hand_off_to_user": return "→ Over to you: \(input["reason"] as? String ?? "")"
         default: return "→ \(name)"
         }
@@ -94,6 +109,34 @@ enum AssistantTools {
         case "open_tab":
             let result = try agent.openTab(url: try url("url"))
             return "Opened a new tab (\(result["id"] ?? ""))."
+        case "select_option":
+            let result = try await agent.selectOption(
+                ref: try string("ref"),
+                value: input["value"] as? String,
+                label: input["label"] as? String,
+                index: input["index"] as? Int
+            )
+            return "Selected \(result["label"] ?? result["value"] ?? "option")."
+        case "wait_for_selector":
+            let result = try await agent.waitForSelector(
+                selector: try string("selector"),
+                state: (input["state"] as? String) ?? "visible",
+                timeout: (input["timeout"] as? Double) ?? 10
+            )
+            return "Selector \(result["selector"] ?? "") is \(result["state"] ?? "ready")."
+        case "paste":
+            let text = try string("text")
+            _ = try await agent.paste(text: text, ref: input["ref"] as? String, clear: (input["clear"] as? Bool) ?? false)
+            return "Pasted \(text.count) characters."
+        case "go_back":
+            let result = try await agent.goBack()
+            return "Went back to \(result["url"] ?? "")."
+        case "go_forward":
+            let result = try await agent.goForward()
+            return "Went forward to \(result["url"] ?? "")."
+        case "reload":
+            let result = try await agent.reload()
+            return "Reloaded \(result["url"] ?? "")."
         case "hand_off_to_user":
             let result = agent.handOff(reason: try string("reason"))
             return result["message"] as? String ?? "Handed off."

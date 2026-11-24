@@ -1103,6 +1103,9 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
         // WebKit performs the navigation itself once we hand back a web view
         // built from its configuration, so nothing is loaded here.
         guard let child = tab?.makeChildTab(with: configuration) else { return nil }
+        if let parentId = tab?.id {
+            AgentController.shared.recordPopup(from: parentId, childTab: child)
+        }
         return child.webView()
     }
 
@@ -1366,6 +1369,10 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
 
     @MainActor
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        if let tabId = tab?.id, AgentDownloadManager.shared.shouldIntercept(tabId: tabId) {
+            AgentDownloadManager.shared.attach(download, tabId: tabId)
+            return
+        }
         DownloadManager.shared.adopt(download)
     }
 
@@ -1390,7 +1397,115 @@ private final class TabNavigationHandler: NSObject, WKUIDelegate, WKNavigationDe
             }
             return
         }
+        if let tabId = tab?.id, AgentDownloadManager.shared.shouldIntercept(tabId: tabId) {
+            AgentDownloadManager.shared.attach(download, tabId: tabId)
+            return
+        }
         DownloadManager.shared.adopt(download)
+    }
+
+    @MainActor
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptAlertPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor () -> Void
+    ) {
+        if let tabId = tab?.id,
+           AgentController.shared.interceptDialog(tabId: tabId, type: "alert", message: message, defaultText: nil, resolve: { _, _ in completionHandler() }) {
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = webView.url?.host ?? "Page Alert"
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        if let window = webView.window {
+            alert.beginSheetModal(for: window) { _ in completionHandler() }
+        } else {
+            alert.runModal()
+            completionHandler()
+        }
+    }
+
+    @MainActor
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptConfirmPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor (Bool) -> Void
+    ) {
+        if let tabId = tab?.id,
+           AgentController.shared.interceptDialog(tabId: tabId, type: "confirm", message: message, defaultText: nil, resolve: { accepted, _ in completionHandler(accepted) }) {
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = webView.url?.host ?? "Confirm"
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        if let window = webView.window {
+            alert.beginSheetModal(for: window) { response in completionHandler(response == .alertFirstButtonReturn) }
+        } else {
+            completionHandler(alert.runModal() == .alertFirstButtonReturn)
+        }
+    }
+
+    @MainActor
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptTextInputPanelWithPrompt prompt: String,
+        defaultText: String?,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor (String?) -> Void
+    ) {
+        if let tabId = tab?.id,
+           AgentController.shared.interceptDialog(tabId: tabId, type: "prompt", message: prompt, defaultText: defaultText, resolve: { accepted, text in completionHandler(accepted ? (text ?? defaultText ?? "") : nil) }) {
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = webView.url?.host ?? "Prompt"
+        alert.informativeText = prompt
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        input.stringValue = defaultText ?? ""
+        alert.accessoryView = input
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        if let window = webView.window {
+            alert.beginSheetModal(for: window) { response in
+                completionHandler(response == .alertFirstButtonReturn ? input.stringValue : nil)
+            }
+        } else {
+            completionHandler(alert.runModal() == .alertFirstButtonReturn ? input.stringValue : nil)
+        }
+    }
+
+    @MainActor
+    func webView(
+        _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping @MainActor ([URL]?) -> Void
+    ) {
+        if let tabId = tab?.id,
+           AgentController.shared.interceptOpenPanel(
+               tabId: tabId,
+               allowsMultiple: parameters.allowsMultipleSelection,
+               allowsDirectories: parameters.allowsDirectories,
+               completionHandler: completionHandler
+           ) {
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = parameters.allowsMultipleSelection
+        panel.canChooseDirectories = parameters.allowsDirectories
+        panel.canChooseFiles = true
+        if let window = webView.window {
+            panel.beginSheetModal(for: window) { response in
+                completionHandler(response == .OK ? panel.urls : nil)
+            }
+        } else {
+            completionHandler(panel.runModal() == .OK ? panel.urls : nil)
+        }
     }
 }
 

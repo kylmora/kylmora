@@ -81,7 +81,11 @@ final class CommandBar: NSView, NSTextFieldDelegate {
     private let shadowHost = NSView()
     private let panel = NSVisualEffectView()
     private let fieldRow = NSView()
+    private let fieldStack = NSStackView()
+    private let siteSearchPill = NSTextField(labelWithString: "")
+    private let siteSearchHint = NSTextField(labelWithString: "")
     private let field = NSTextField()
+    private(set) var activeSiteSearch: SiteSearch?
     private let divider = NSBox()
     private let rowsStack = NSStackView()
     private let resultsContainer = NSStackView()
@@ -209,20 +213,43 @@ final class CommandBar: NSView, NSTextFieldDelegate {
         field.setAccessibilityLabel("Search, enter address, or type a command")
         field.translatesAutoresizingMaskIntoConstraints = false
 
+        siteSearchPill.font = .systemFont(ofSize: 12, weight: .semibold)
+        siteSearchPill.textColor = .white
+        siteSearchPill.wantsLayer = true
+        siteSearchPill.layer?.cornerRadius = 6
+        siteSearchPill.layer?.masksToBounds = true
+        siteSearchPill.isHidden = true
+        siteSearchPill.setContentHuggingPriority(.required, for: .horizontal)
+        siteSearchPill.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        siteSearchHint.font = .systemFont(ofSize: 11, weight: .medium)
+        siteSearchHint.textColor = Style.Colors.secondaryText
+        siteSearchHint.isHidden = true
+        siteSearchHint.setContentHuggingPriority(.required, for: .horizontal)
+        siteSearchHint.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        fieldStack.orientation = .horizontal
+        fieldStack.alignment = .centerY
+        fieldStack.spacing = 8
+        fieldStack.translatesAutoresizingMaskIntoConstraints = false
+        fieldStack.addArrangedSubview(siteSearchPill)
+        fieldStack.addArrangedSubview(field)
+        fieldStack.addArrangedSubview(siteSearchHint)
+
         fieldRow.translatesAutoresizingMaskIntoConstraints = false
-        fieldRow.addSubview(field)
+        fieldRow.addSubview(fieldStack)
 
         NSLayoutConstraint.activate([
             fieldRow.heightAnchor.constraint(equalToConstant: CommandBarMetrics.fieldHeight),
-            field.leadingAnchor.constraint(
+            fieldStack.leadingAnchor.constraint(
                 equalTo: fieldRow.leadingAnchor,
                 constant: CommandBarMetrics.fieldInset
             ),
-            field.trailingAnchor.constraint(
+            fieldStack.trailingAnchor.constraint(
                 equalTo: fieldRow.trailingAnchor,
                 constant: -CommandBarMetrics.fieldInset
             ),
-            field.centerYAnchor.constraint(equalTo: fieldRow.centerYAnchor)
+            fieldStack.centerYAnchor.constraint(equalTo: fieldRow.centerYAnchor)
         ])
     }
 
@@ -301,6 +328,7 @@ final class CommandBar: NSView, NSTextFieldDelegate {
         queryTask?.cancel()
         queryTask = nil
         isHidden = true
+        setSiteSearch(nil)
         field.stringValue = ""
         setResults([])
         restoreResponder()
@@ -455,6 +483,18 @@ final class CommandBar: NSView, NSTextFieldDelegate {
     /// same way the omnibox resolves it, so "kylmora" searches and "kylmora.dev"
     /// navigates without the two needing different keystrokes.
     func submit() {
+        if let site = activeSiteSearch {
+            guard let url = site.searchURL(for: field.stringValue) else { return }
+            if NSEvent.modifierFlags.contains(.command) {
+                isNewTabMode = true
+            }
+            let openInNewTab = isNewTabMode
+            close()
+            isNewTabMode = openInNewTab
+            onRun?(.openURL(url))
+            isNewTabMode = false
+            return
+        }
         if let selectedIndex {
             run(at: selectedIndex)
             return
@@ -524,7 +564,37 @@ final class CommandBar: NSView, NSTextFieldDelegate {
 
     // MARK: - NSTextFieldDelegate
 
+    func setSiteSearch(_ site: SiteSearch?) {
+        activeSiteSearch = site
+        if let site {
+            siteSearchPill.stringValue = "  Search \(site.name)  "
+            siteSearchPill.layer?.backgroundColor = site.badgeColor.cgColor
+            siteSearchPill.isHidden = false
+            siteSearchHint.isHidden = true
+            field.placeholderString = "Search \(site.name)..."
+            setResults([])
+        } else {
+            siteSearchPill.isHidden = true
+            field.placeholderString = "Search, enter address, or type a command"
+            updateSiteSearchHint(for: field.stringValue)
+        }
+    }
+
+    private func updateSiteSearchHint(for text: String) {
+        if activeSiteSearch == nil, let site = SiteSearch.match(text) {
+            siteSearchHint.stringValue = "Tab ⇥ Search \(site.name)"
+            siteSearchHint.isHidden = false
+        } else {
+            siteSearchHint.isHidden = true
+        }
+    }
+
     func controlTextDidChange(_ obj: Notification) {
+        updateSiteSearchHint(for: field.stringValue)
+        if activeSiteSearch != nil {
+            setResults([])
+            return
+        }
         scheduleQuery(for: field.stringValue)
     }
 
@@ -543,6 +613,11 @@ final class CommandBar: NSView, NSTextFieldDelegate {
             moveSelection(by: -1)
             return true
         case #selector(NSResponder.insertTab(_:)):
+            if activeSiteSearch == nil, let site = SiteSearch.match(field.stringValue) {
+                setSiteSearch(site)
+                field.stringValue = ""
+                return true
+            }
             if let selectedIndex, visibleResults.indices.contains(selectedIndex) {
                 let item = visibleResults[selectedIndex]
                 let fillText: String
@@ -561,6 +636,12 @@ final class CommandBar: NSView, NSTextFieldDelegate {
         case #selector(NSResponder.insertNewline(_:)):
             submit()
             return true
+        case #selector(NSResponder.deleteBackward(_:)):
+            if activeSiteSearch != nil, field.stringValue.isEmpty {
+                setSiteSearch(nil)
+                return true
+            }
+            return false
         case #selector(NSResponder.cancelOperation(_:)):
             close()
             return true

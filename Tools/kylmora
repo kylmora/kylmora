@@ -146,11 +146,13 @@ if [ "$1" = "agent" ]; then
             ;;
         select)
             [ $# -ge 1 ] || usage
-            rpc_call "kylmora.tabs.select" "{\"id\": \"$1\"}"
+            params=$(python3 -c "import sys, json; print(json.dumps({'id': sys.argv[1]}))" "$1")
+            rpc_call "kylmora.tabs.select" "$params"
             ;;
         close)
             [ $# -ge 1 ] || usage
-            rpc_call "kylmora.tabs.close" "{\"id\": \"$1\"}"
+            params=$(python3 -c "import sys, json; print(json.dumps({'id': sys.argv[1]}))" "$1")
+            rpc_call "kylmora.tabs.close" "$params"
             ;;
         navigate)
             [ $# -ge 1 ] || usage
@@ -158,34 +160,237 @@ if [ "$1" = "agent" ]; then
             rpc_call "kylmora.page.navigate" "$params"
             ;;
         snapshot)
-            scope="viewport"
-            if [ "$1" = "--scope" ] && [ "$2" = "full_page" ]; then
-                scope="full_page"
-            fi
-            # Output the markdown representation directly
+            scope="viewport"; root=""; tab=""
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --full) scope="full_page"; shift ;;
+                    --scope) scope="$2"; shift 2 ;;
+                    --root) root="$2"; shift 2 ;;
+                    --tab) tab="$2"; shift 2 ;;
+                    *) shift ;;
+                esac
+            done
+            params=$(python3 -c "import sys, json; d={'scope': sys.argv[1]}; (d.__setitem__('root', sys.argv[2]) if sys.argv[2] else None); (d.__setitem__('tabId', sys.argv[3]) if sys.argv[3] else None); print(json.dumps(d))" "$scope" "$root" "$tab")
             get_agent_config
             curl -s -X POST "http://127.0.0.1:$PORT/rpc" \
                 -H "Content-Type: application/json" \
                 -H "Authorization: Bearer $TOKEN" \
-                -d "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"kylmora.page.snapshot\", \"params\": {\"scope\": \"$scope\"}}" \
-                | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('result', {}).get('markdown', json.dumps(d, indent=2)))"
+                -d "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"kylmora.page.snapshot\", \"params\": $params}" \
+                | python3 -c "import sys, json; d=json.load(sys.stdin); (print('Error:', d['error'].get('message'), file=sys.stderr) or sys.exit(1)) if 'error' in d else print(d.get('result', {}).get('markdown', json.dumps(d, indent=2)))"
             ;;
-        click|hover)
+        click|dblclick|hover)
             [ $# -ge 1 ] || usage
             target="$1"
             shift
             label=""
-            if [ "$1" = "--label" ]; then label="$2"; shift 2; fi
+            if [ "${1-}" = "--label" ]; then label="$2"; shift 2; fi
 
-            if echo "$target" | grep -qE '^@[0-9]+$'; then
-                params=$(python3 -c "import sys, json; print(json.dumps({'ref': sys.argv[1], 'label': sys.argv[2] if sys.argv[2] else None}))" "$target" "$label")
-            else
-                # Coordinates x,y
+            if echo "$target" | grep -qE '^-?[0-9]+(\.[0-9]+)?,-?[0-9]+(\.[0-9]+)?$'; then
                 x=$(echo "$target" | cut -d',' -f1)
                 y=$(echo "$target" | cut -d',' -f2)
                 params=$(python3 -c "import sys, json; print(json.dumps({'x': float(sys.argv[1]), 'y': float(sys.argv[2]), 'label': sys.argv[3] if sys.argv[3] else None}))" "$x" "$y" "$label")
+            else
+                params=$(python3 -c "import sys, json; print(json.dumps({'ref': sys.argv[1], 'label': sys.argv[2] if sys.argv[2] else None}))" "$target" "$label")
             fi
             rpc_call "kylmora.page.$sub" "$params"
+            ;;
+        drag)
+            [ $# -ge 2 ] || usage
+            from="$1"; to="$2"; shift 2
+            label=""
+            if [ "${1-}" = "--label" ]; then label="$2"; shift 2; fi
+            params=$(python3 -c "import sys, json; print(json.dumps({'from': sys.argv[1], 'to': sys.argv[2], 'label': sys.argv[3] if sys.argv[3] else None}))" "$from" "$to" "$label")
+            rpc_call "kylmora.page.drag" "$params"
+            ;;
+        paste)
+            [ $# -ge 1 ] || usage
+            text="$1"; shift
+            ref=""; clear="false"
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --ref) ref="$2"; shift 2 ;;
+                    --clear) clear="true"; shift ;;
+                    *) usage ;;
+                esac
+            done
+            params=$(python3 -c "import sys, json; print(json.dumps({'text': sys.argv[1], 'ref': sys.argv[2] if sys.argv[2] else None, 'clear': sys.argv[3] == 'true'}))" "$text" "$ref" "$clear")
+            rpc_call "kylmora.page.paste" "$params"
+            ;;
+        select-option)
+            [ $# -ge 2 ] || usage
+            ref="$1"; shift
+            val=""; lbl=""; idx=""
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --value) val="$2"; shift 2 ;;
+                    --label) lbl="$2"; shift 2 ;;
+                    --index) idx="$2"; shift 2 ;;
+                    *) val="$1"; shift ;;
+                esac
+            done
+            params=$(python3 -c "import sys, json; d={'ref': sys.argv[1]}; (d.__setitem__('value', sys.argv[2]) if sys.argv[2] else None); (d.__setitem__('label', sys.argv[3]) if sys.argv[3] else None); (d.__setitem__('index', int(sys.argv[4])) if sys.argv[4] else None); print(json.dumps(d))" "$ref" "$val" "$lbl" "$idx")
+            rpc_call "kylmora.page.selectOption" "$params"
+            ;;
+        wait-for)
+            [ $# -ge 1 ] || usage
+            sel="$1"; shift
+            state="visible"; timeout="10"
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --state) state="$2"; shift 2 ;;
+                    --timeout) timeout="$2"; shift 2 ;;
+                    *) usage ;;
+                esac
+            done
+            params=$(python3 -c "import sys, json; print(json.dumps({'selector': sys.argv[1], 'state': sys.argv[2], 'timeout': float(sys.argv[3])}))" "$sel" "$state" "$timeout")
+            rpc_call "kylmora.page.waitForSelector" "$params"
+            ;;
+        wait-fn)
+            [ $# -ge 1 ] || usage
+            expr="$1"; shift
+            timeout="10"
+            if [ "${1-}" = "--timeout" ]; then timeout="$2"; shift 2; fi
+            params=$(python3 -c "import sys, json; print(json.dumps({'expression': sys.argv[1], 'timeout': float(sys.argv[2])}))" "$expr" "$timeout")
+            rpc_call "kylmora.page.waitForFunction" "$params"
+            ;;
+        text)
+            get_agent_config
+            curl -s -X POST "http://127.0.0.1:$PORT/rpc" \
+                -H "Content-Type: application/json" \
+                -H "Authorization: Bearer $TOKEN" \
+                -d "{\"jsonrpc\": \"2.0\", \"id\": 1, \"method\": \"kylmora.page.text\", \"params\": {}}" \
+                | python3 -c "import sys, json; d=json.load(sys.stdin); print(d.get('result', {}).get('text', json.dumps(d, indent=2)))"
+            ;;
+        back|forward|reload)
+            rpc_call "kylmora.page.$sub" "{}"
+            ;;
+        info)
+            tab=""
+            if [ "${1:-}" = "--tab" ]; then tab="$2"; shift 2; fi
+            params=$(python3 -c "import sys, json; print(json.dumps({'tabId': sys.argv[1]} if sys.argv[1] else {}))" "$tab")
+            rpc_call "kylmora.page.info" "$params"
+            ;;
+        focus)
+            [ $# -ge 1 ] || usage
+            params=$(python3 -c "import sys, json; print(json.dumps({'ref': sys.argv[1]}))" "$1")
+            rpc_call "kylmora.page.focus" "$params"
+            ;;
+        fill)
+            [ $# -ge 2 ] || usage
+            params=$(python3 -c "import sys, json; print(json.dumps({'ref': sys.argv[1], 'value': sys.argv[2]}))" "$1" "$2")
+            rpc_call "kylmora.page.fill" "$params"
+            ;;
+        insert-text)
+            [ $# -ge 1 ] || usage
+            params=$(python3 -c "import sys, json; print(json.dumps({'text': sys.argv[1]}))" "$1")
+            rpc_call "kylmora.page.insertText" "$params"
+            ;;
+        wait-url)
+            [ $# -ge 1 ] || usage
+            pat="$1"; shift; timeout="10"
+            if [ "${1:-}" = "--timeout" ]; then timeout="$2"; shift 2; fi
+            params=$(python3 -c "import sys, json; print(json.dumps({'pattern': sys.argv[1], 'timeout': float(sys.argv[2])}))" "$pat" "$timeout")
+            rpc_call "kylmora.page.waitForURL" "$params"
+            ;;
+        wait-load)
+            st="${1:-load}"; timeout="15"
+            if [ "${2:-}" = "--timeout" ]; then timeout="$3"; fi
+            params=$(python3 -c "import sys, json; print(json.dumps({'state': sys.argv[1], 'timeout': float(sys.argv[2])}))" "$st" "$timeout")
+            rpc_call "kylmora.page.waitForLoadState" "$params"
+            ;;
+        accept-dialog)
+            txt=""
+            if [ "${1:-}" = "--text" ]; then txt="$2"; shift 2; fi
+            params=$(python3 -c "import sys, json; print(json.dumps({'promptText': sys.argv[1]} if sys.argv[1] else {}))" "$txt")
+            rpc_call "kylmora.page.acceptDialog" "$params"
+            ;;
+        dismiss-dialog)
+            rpc_call "kylmora.page.dismissDialog" "{}"
+            ;;
+        upload)
+            [ $# -ge 2 ] || usage
+            ref="$1"; shift
+            params=$(python3 -c "import sys, json; print(json.dumps({'ref': sys.argv[1], 'files': sys.argv[2:]}))" "$ref" "$@")
+            rpc_call "kylmora.page.setInputFiles" "$params"
+            ;;
+        wait-popup)
+            timeout="10"
+            if [ "${1:-}" = "--timeout" ]; then timeout="$2"; fi
+            params=$(python3 -c "import sys, json; print(json.dumps({'timeout': float(sys.argv[1])}))" "$timeout")
+            rpc_call "kylmora.page.waitForPopup" "$params"
+            ;;
+        wait-download)
+            timeout="30"
+            if [ "${1:-}" = "--timeout" ]; then timeout="$2"; fi
+            params=$(python3 -c "import sys, json; print(json.dumps({'timeout': float(sys.argv[1])}))" "$timeout")
+            rpc_call "kylmora.page.waitForDownload" "$params"
+            ;;
+        fetch)
+            [ $# -ge 1 ] || usage
+            url="$1"; shift; method="GET"; body=""; saveas=""
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --method) method="$2"; shift 2 ;;
+                    --body) body="$2"; shift 2 ;;
+                    --save-as) saveas="$2"; shift 2 ;;
+                    *) shift ;;
+                esac
+            done
+            params=$(python3 -c "import sys, json; d={'url': sys.argv[1], 'method': sys.argv[2]}; (d.__setitem__('body', sys.argv[3]) if sys.argv[3] else None); (d.__setitem__('saveAs', sys.argv[4]) if sys.argv[4] else None); print(json.dumps(d))" "$url" "$method" "$body" "$saveas")
+            rpc_call "kylmora.page.fetch" "$params"
+            ;;
+        pdf)
+            [ $# -ge 1 ] || usage
+            params=$(python3 -c "import sys, json; print(json.dumps({'path': sys.argv[1]}))" "$1")
+            rpc_call "kylmora.page.pdf" "$params"
+            ;;
+        cookies)
+            url="${1:-}"
+            params=$(python3 -c "import sys, json; print(json.dumps({'url': sys.argv[1]} if sys.argv[1] else {}))" "$url")
+            rpc_call "kylmora.cookies.list" "$params"
+            ;;
+        batch)
+            body=$(cat)
+            rpc_call "kylmora.batch" "$body"
+            ;;
+        skill)
+            cat <<'SKILL'
+# Kylmora Agent Browser Control Guide (ego-lite compatible)
+
+Kylmora exposes an authenticated loopback HTTP JSON-RPC (/rpc) and MCP (/mcp) server
+configured in ~/.kylmora/agent-runtime.json (127.0.0.1, 0600 permissions).
+
+## Core Commands
+- kylmora agent status                       Show control state, active space, agent tab
+- kylmora agent profiles                     List profiles (spaces) with login identities
+- kylmora agent tabs                         List open tabs with short page labels (p1, p2, ...)
+- kylmora agent open <url> [--profile name]  Open a tab in a profile
+- kylmora agent navigate <url>               Navigate current agent tab and wait for load
+- kylmora agent back | forward | reload      History navigation
+- kylmora agent snapshot [--full]            Semantic accessibility tree + Shadow DOM with @refs
+- kylmora agent text                         Readable page text
+- kylmora agent screenshot [--out /abs.png]  Save PNG screenshot to disk and print path
+
+## Humanized Actions (accept @ref, CSS, text=..., loc=role:..., loc=href:..., xpath=..., >> nth=N, or x,y)
+- kylmora agent click <target> [--label "..."]
+- kylmora agent dblclick <target> [--label "..."]
+- kylmora agent hover <target> [--label "..."]
+- kylmora agent drag <from> <to> [--label "..."]
+- kylmora agent type <text> [--ref <target>] [--clear]
+- kylmora agent paste <text> [--ref <target>] [--clear]
+- kylmora agent press <key-or-chord>         e.g. Enter, Tab, Escape, Meta+a
+- kylmora agent scroll [deltaY]
+- kylmora agent select-option <target> (--value V | --label L | --index N)
+- kylmora agent wait-for <selector> [--state visible|hidden|attached] [--timeout 10]
+- kylmora agent wait-fn <js-expression> [--timeout 10]
+
+## Handoff & Collaboration
+- kylmora agent handoff "<reason>"           Give control to user (login, 2FA, captcha, payment)
+- kylmora agent wait [timeout]               Wait for user to hand control back
+- kylmora agent resume                       Resume agent control
+- kylmora agent finish                       Drop input shield & cursor when done
+- kylmora agent mcp                          Stdio-to-HTTP MCP bridge for Claude/Cursor/Codex
+SKILL
             ;;
         type)
             [ $# -ge 1 ] || usage
@@ -219,7 +424,10 @@ if [ "$1" = "agent" ]; then
             rpc_call "kylmora.page.evaluate" "$params"
             ;;
         screenshot)
-            rpc_call "kylmora.page.screenshot" "{}"
+            out_path=""
+            if [ "${1-}" = "--out" ]; then out_path="$2"; shift 2; fi
+            params=$(python3 -c "import sys, json; print(json.dumps({'path': sys.argv[1] if sys.argv[1] else None, 'base64': False}))" "$out_path")
+            rpc_call "kylmora.page.screenshot" "$params"
             ;;
         handoff)
             reason="${1:-User interaction required (e.g. login or captcha)}"
@@ -233,7 +441,14 @@ if [ "$1" = "agent" ]; then
             rpc_call "kylmora.agent.waitForControl" "{\"timeout\": ${1:-600}}"
             ;;
         finish)
-            rpc_call "kylmora.agent.finish" "{}"
+            keep=""
+            if [ "${1:-}" = "--keep" ]; then keep="$2"; shift 2; fi
+            if [ -n "$keep" ]; then
+                params=$(python3 -c "import sys, json; print(json.dumps({'keep': [x for x in sys.argv[1].split(',') if x]}))" "$keep")
+            else
+                params="{}"
+            fi
+            rpc_call "kylmora.agent.finish" "$params"
             ;;
         mcp)
             mcp_bridge
